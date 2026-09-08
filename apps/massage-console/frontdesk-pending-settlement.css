@@ -1,0 +1,13 @@
+.pending-service-queue { margin:12px 15px 0; padding-top:12px; border-top:1px solid #e3ece8; }
+.pending-service-heading { display:flex; align-items:center; justify-content:space-between; color:#50615d; font-size:12px; font-weight:700; }
+.pending-service-heading .icon-button { width:26px; height:26px; font-size:16px; }
+#pending-service-list { display:grid; gap:6px; margin-top:8px; }
+.pending-service-item { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px; width:100%; padding:8px; border:1px solid #dce9e4; border-radius:5px; color:#31413e; background:#f8fbfa; text-align:left; font:inherit; }
+.pending-service-item:hover { border-color:#7ba99d; background:#f0f8f5; }
+.pending-service-item:disabled { border-color:#e3ebe7; color:#87948f; background:#f5f7f6; cursor:default; }
+.pending-service-item span { min-width:0; display:grid; gap:3px; }
+.pending-service-item b { overflow:hidden; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.pending-service-item small { overflow:hidden; color:#778681; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.pending-service-item em { color:#176d63; font-size:12px; font-style:normal; font-weight:700; white-space:nowrap; }
+.pending-service-item:disabled em { color:#7d8b86; }
+.pending-service-empty { margin:3px 0 0; color:#82908b; font-size:11px; text-align:center; }

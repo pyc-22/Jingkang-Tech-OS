@@ -1,0 +1,21 @@
+{
+  "name": "jingkang-massage-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "靖康科技按摩门店运营平台",
+  "scripts": {
+    "start": "node server.massage.js",
+    "dev": "node server.massage.js",
+    "test": "npm run test:console && npm run test:api",
+    "test:console": "node --test apps/massage-console/tests/*.test.js",
+    "test:api": "services\\massage-api\\mvnw.cmd -f services\\massage-api\\pom.xml test",
+    "build:api": "services\\massage-api\\mvnw.cmd -f services\\massage-api\\pom.xml clean package",
+    "android:technician:sync": "npm --prefix apps/technician-android run android:sync",
+    "android:technician:debug": "npm --prefix apps/technician-android run android:build:debug",
+    "android:manager:sync": "npm --prefix apps/manager-android run android:sync",
+    "android:manager:debug": "npm --prefix apps/manager-android run android:build:debug"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

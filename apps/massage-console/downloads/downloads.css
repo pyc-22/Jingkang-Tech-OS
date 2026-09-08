@@ -1,0 +1,27 @@
+:root { font-family:"Microsoft YaHei","Noto Sans SC",Arial,sans-serif; color:#172222; background:#f3f7f5; }
+* { box-sizing:border-box; }
+body { margin:0; min-height:100vh; background:#f3f7f5; }
+main { width:min(720px,calc(100% - 28px)); margin:0 auto; padding:40px 0; }
+header { display:flex; align-items:center; gap:13px; padding-bottom:22px; border-bottom:1px solid #d7e3df; }
+.brand-mark { display:grid; place-items:center; width:44px; height:44px; border-radius:8px; color:#16352f; background:#cce35f; font-weight:800; }
+header p,header h1 { margin:0; }
+header p { margin-bottom:4px; color:#61736e; font-size:12px; }
+header h1 { font-size:22px; letter-spacing:0; }
+.download-list { display:grid; gap:12px; margin-top:22px; }
+article { display:grid; grid-template-columns:52px minmax(0,1fr) auto; align-items:center; gap:14px; padding:18px; border:1px solid #d7e3df; border-radius:8px; background:#fff; }
+.app-icon { display:grid; place-items:center; width:52px; height:52px; border-radius:8px; color:#fff; font-size:20px; font-weight:800; }
+.app-icon.technician { background:#176fc1; }
+.app-icon.manager { background:#087b73; }
+article h2,article p { margin:0; }
+article h2 { font-size:16px; }
+article p { margin:5px 0; color:#63736f; font-size:12px; }
+article small { color:#87938f; font-size:11px; }
+article a { min-width:92px; padding:10px 13px; border-radius:6px; color:#fff; background:#087b73; text-align:center; text-decoration:none; font-size:13px; font-weight:700; }
+article a:active { background:#05635d; }
+.notice { margin:18px 0 0; color:#6b7976; font-size:12px; text-align:center; }
+@media (max-width:520px) {
+  main { padding:24px 0; }
+  article { grid-template-columns:48px minmax(0,1fr); }
+  .app-icon { width:48px; height:48px; }
+  article a { grid-column:1 / -1; width:100%; }
+}

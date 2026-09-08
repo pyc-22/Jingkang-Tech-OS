@@ -1,0 +1,71 @@
+.mobile-action {
+  width:100%;
+  min-height:40px;
+  margin-top:15px;
+  border:0;
+  border-radius:5px;
+  color:#fff;
+  background:var(--teal);
+  font:inherit;
+  font-size:13px;
+  font-weight:700;
+}
+.mobile-action:hover { background:var(--teal-dark); }
+.mobile-action.danger { color:#95491d; background:var(--orange-bg); }
+.mobile-action.danger:hover { background:#ffe6c8; }
+dialog#mobile-clock-dialog {
+  width:min(calc(100% - 32px),520px);
+  padding:0;
+  border:0;
+  border-radius:7px;
+  box-shadow:0 16px 48px rgba(17,43,39,.24);
+}
+dialog#mobile-room-transfer-dialog {
+  width:min(calc(100% - 32px),520px);
+  padding:0;
+  border:0;
+  border-radius:7px;
+  box-shadow:0 16px 48px rgba(17,43,39,.24);
+}
+dialog#mobile-room-transfer-dialog::backdrop { background:rgba(18,38,35,.36); }
+dialog#mobile-room-transfer-dialog textarea {
+  width:100%;
+  min-height:78px;
+  padding:8px 10px;
+  border:1px solid #cddbd6;
+  border-radius:5px;
+  color:var(--ink);
+  background:#fff;
+  font:inherit;
+  font-size:13px;
+  resize:vertical;
+}
+dialog#mobile-clock-dialog::backdrop { background:rgba(18,38,35,.36); }
+.mobile-clock-dialog { display:grid; gap:13px; padding:18px; background:var(--surface); }
+.mobile-clock-dialog label { display:grid; gap:6px; color:#50615d; font-size:12px; font-weight:700; }
+.mobile-clock-duration-summary { padding:10px 12px; border:1px solid #cddbd6; border-radius:5px; color:#245f56; background:#eef7f3; font-size:12px; font-weight:700; }
+.mobile-clock-dialog select,.mobile-clock-dialog input {
+  width:100%;
+  min-height:40px;
+  padding:8px 10px;
+  border:1px solid #cddbd6;
+  border-radius:5px;
+  color:var(--ink);
+  background:#fff;
+  font:inherit;
+  font-size:13px;
+}
+.mobile-dialog-close {
+  display:grid;
+  place-items:center;
+  width:28px;
+  height:28px;
+  border:0;
+  border-radius:4px;
+  color:#4d5f5a;
+  background:#edf2ef;
+  font-size:20px;
+  line-height:1;
+}
+.mobile-dialog-actions { padding-top:2px; }
+.status-chip.blocked { color:#9a4240; background:#fce9e7; }

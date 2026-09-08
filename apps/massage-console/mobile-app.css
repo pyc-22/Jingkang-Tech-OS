@@ -1,0 +1,174 @@
+:root {
+  --app-deep: #123d39;
+  --app-teal: #0d8a7d;
+  --app-bg: #f4f7f5;
+  --app-paper: #ffffff;
+  --app-ink: #162d29;
+  --app-muted: #70817d;
+  --app-line: #e1e9e6;
+}
+
+body { background: #dfe7e4; }
+.mobile-app-shell {
+  width: min(100%, 430px);
+  min-height: 100vh;
+  padding: 0 16px 92px;
+  overflow: hidden;
+  color: var(--app-ink);
+  background: var(--app-bg);
+}
+.app-header {
+  position: relative;
+  min-height: 148px;
+  margin: 0 -16px 18px;
+  padding: 29px 20px 23px;
+  overflow: hidden;
+  color: #ffffff;
+  background: var(--app-deep);
+}
+.app-header::after {
+  position: absolute;
+  right: -42px;
+  bottom: -61px;
+  width: 184px;
+  height: 184px;
+  border: 32px solid rgba(174, 232, 217, .11);
+  border-radius: 50%;
+  content: "";
+  pointer-events: none;
+}
+.app-header p { color: #8de0ca; font-size: 12px; }
+.app-header h1 { position: relative; z-index: 1; margin-top: 8px; font-size: 26px; line-height: 1.18; }
+.app-header h1::after { display: block; width: 25px; height: 3px; margin-top: 11px; border-radius: 2px; background: #65d5bd; content: ""; }
+.app-header > div:first-child { min-width: 0; flex: 1 1 0; }
+.app-header .header-actions { position: relative; z-index: 2; flex: 0 1 185px; flex-wrap: wrap; justify-content: flex-end; max-width: 185px; }
+.app-header .store-badge { max-width: 88px; overflow: hidden; text-overflow: ellipsis; }
+.app-header .store-badge { color: #eafff8; border-color: rgba(177, 240, 222, .48); background: rgba(255, 255, 255, .1); }
+.app-header .mobile-sound-button { color: #d8fff2; border-color: transparent; background: rgba(91, 209, 179, .2); }
+.app-header .mobile-sound-button.enabled { color: #123d39; background: #98ead3; }
+.app-header .logout-button { color: #d9ece7; border-color: rgba(255, 255, 255, .27); background: transparent; }
+
+#dashboard-screen { display: grid; gap: 14px; }
+#dashboard-screen.hidden { display: none; }
+.mobile-page-hidden { display: none !important; }
+.current-service, .leave-section, .performance-section, .recent-section {
+  margin: 0;
+  padding: 17px;
+  border: 1px solid var(--app-line);
+  border-radius: 8px;
+  background: var(--app-paper);
+  box-shadow: 0 5px 15px rgba(25, 60, 52, .035);
+}
+.current-service { border-color: #cee8df; background: linear-gradient(145deg, #f4fffb 0%, #ffffff 72%); }
+.section-title { align-items: center; margin-bottom: 13px; }
+.section-title h2 { font-size: 16px; }
+.section-title > div > p, .section-title > span { color: var(--app-muted); }
+.section-title > div > p { margin-top: 4px; }
+.status-chip { padding: 5px 8px; border-radius: 4px; }
+.status-chip.neutral { color: #39746a; background: #e6f2ee; }
+.status-chip.serving { color: #a85d1f; background: #fff0df; }
+.status-chip.blocked { color: #9a4240; background: #fce9e7; }
+.service-empty { padding: 20px 0 6px; color: var(--app-muted); }
+.current-service .mobile-action { min-height: 48px; margin-top: 15px; border-radius: 6px; background: var(--app-teal); font-size: 15px; box-shadow: 0 7px 15px rgba(13, 138, 125, .18); }
+.active-service { gap: 10px; align-items: start; }
+.active-service b { font-size: 18px; }
+.active-service small { line-height: 1.6; }
+.active-service time { padding-top: 3px; color: var(--app-teal); }
+.mobile-service-actions { gap: 9px; margin-top: 18px; }
+.mobile-service-actions .mobile-action, .mobile-service-actions .mobile-secondary-action { min-height: 43px; border-radius: 6px; font-size: 13px; }
+.mobile-service-actions .mobile-secondary-action { border-color: #b8dcd1; color: #187266; background: #f4fbf8; }
+.mobile-action.danger { color: #a5541d; background: #fff0df; box-shadow: none; }
+.mobile-room-transfer-notice { margin:14px 0 -4px; padding:8px 10px; border-radius:5px; font-size:12px; line-height:1.5; }
+.mobile-room-transfer-notice.pending { color:#856019; background:#fff6df; }
+.mobile-room-transfer-notice.approved { color:#176b58; background:#e9f7f1; }
+.mobile-room-transfer-notice.rejected { color:#9a4541; background:#fdeeed; }
+
+.leave-section .section-title { margin-bottom: 8px; }
+.mobile-secondary-action { min-height: 34px; border-radius: 5px; }
+.mobile-leave-row { padding: 13px 0; }
+.mobile-leave-row b { color: #314c47; }
+.leave-status { border-radius: 4px; }
+.performance-grid { border: 0; gap: 8px; }
+.performance-grid article { min-height: 86px; padding: 13px; border: 0; border-radius: 6px; background: #f6f9f8; }
+.performance-grid article:nth-child(2), .performance-grid article:nth-child(4) { background: #ecf8f4; }
+.performance-grid strong { margin: 8px 0 4px; color: var(--app-deep); font-size: 21px; }
+.mobile-performance-range { margin-top: 15px; padding: 14px 0 0; }
+.mobile-range-tabs { gap: 0; padding: 0; overflow: hidden; border: 1px solid #dce9e4; border-radius: 6px; background: #f2f7f5; }
+.mobile-range-tabs button { min-height: 34px; border-radius: 0; }
+.mobile-range-tabs button.selected { color: #ffffff; background: var(--app-teal); box-shadow: none; }
+.mobile-range-summary { padding: 0 2px; }
+.mobile-range-summary strong { color: var(--app-deep); }
+.recent-section .section-title { margin-bottom: 10px; }
+.session-row { padding: 14px 0; }
+.session-row b { color: #243c37; }
+.session-row-right strong { color: var(--app-deep); }
+.session-status { border-radius: 4px; }
+.mobile-footer { padding: 0 8px; font-size: 10px; }
+
+.mobile-tabbar {
+  position: fixed;
+  z-index: 40;
+  bottom: 0;
+  left: 50%;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  width: min(100%, 430px);
+  min-height: 68px;
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid #dce7e3;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, .97);
+  box-shadow: 0 -7px 22px rgba(20, 58, 49, .07);
+}
+.mobile-tabbar.hidden { display: none; }
+.mobile-tabbar button { min-height: 42px; border: 0; border-radius: 5px; color: #72817d; background: transparent; font: inherit; font-size: 11px; }
+.mobile-tabbar button.selected { color: var(--app-teal); background: #eaf8f4; font-weight: 700; }
+.login-panel { margin-top: 24px; padding: 22px; border: 0; border-radius: 8px; box-shadow: 0 8px 24px rgba(25, 60, 52, .08); }
+.login-panel button[type="submit"] { height: 46px; border-radius: 6px; background: var(--app-teal); }
+.login-panel input { height: 44px; border-radius: 6px; }
+.mobile-toast { bottom: 84px; border-radius: 6px; }
+
+@media (min-width: 431px) {
+  body { min-height: 100vh; background: #dfe7e4; }
+  .mobile-app-shell { box-shadow: 0 0 0 1px rgba(20, 58, 49, .05), 0 12px 42px rgba(20, 58, 49, .13); }
+}
+@media (max-width: 375px) {
+  .app-header .header-actions { max-width: 174px; gap: 4px; }
+  .app-header .store-badge { max-width: 78px; overflow: hidden; text-overflow: ellipsis; }
+  .app-header .mobile-sound-button { padding: 0 5px; }
+}
+.mobile-commission-list { margin-top:16px; border-top:1px solid var(--line,#e5e9e7); }
+.commission-reversal strong { color:#b23b32; }
+.commission-tier-detail { color:var(--app-teal,#08786f) !important; font-weight:700; }
+.mobile-range-money { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:10px 0 7px; }
+.mobile-range-money > div { min-width:0; padding:10px; background:#f4f8f6; }
+.mobile-range-money small { display:block; margin-bottom:6px; color:#71817c; }
+.mobile-range-money strong { display:block; margin:0; font-size:18px; }
+.mobile-range-money .commission-total { background:#e8f4f0; }
+.mobile-range-money .commission-total strong { color:var(--app-teal,#08786f); }
+.commission-record-money { min-width:105px; }
+.commission-record-money small { color:#75837f; font-size:10px; white-space:nowrap; }
+.commission-record-money strong { margin:4px 0; color:var(--app-teal,#08786f); font-size:13px; white-space:nowrap; }
+
+/* Keep operational identity and service text readable on narrow phones. */
+.app-header .store-badge {
+  max-width:min(46vw,180px);
+  overflow:visible;
+  text-align:right;
+  text-overflow:clip;
+  white-space:normal;
+  overflow-wrap:anywhere;
+}
+.session-row > div,
+.section-title > div,
+.active-service > div {
+  min-width:0;
+}
+.session-row b,
+.session-row small,
+.section-title h2,
+.section-title p,
+.active-service b,
+.active-service small {
+  overflow-wrap:anywhere;
+}

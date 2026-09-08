@@ -1,0 +1,17 @@
+{
+  "appId": "com.jingkang.operations.manager",
+  "appName": "靖康店长端",
+  "webDir": "www",
+  "server": {
+    "url": "https://manager.jkyygl.xyz/manager-mobile.html",
+    "cleartext": false,
+    "allowNavigation": [
+      "manager.jkyygl.xyz",
+      "api.jkyygl.xyz"
+    ]
+  },
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#f4f8ff"
+  }
+}

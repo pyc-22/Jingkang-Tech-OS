@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: massage-api
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
+  datasource:
+    url: ${MASSAGE_DB_URL:jdbc:postgresql://localhost:5432/massage_platform}
+    username: ${MASSAGE_DB_USER:postgres}
+    password: ${MASSAGE_DB_PASSWORD}
+  flyway:
+    enabled: true
+server:
+  port: ${MASSAGE_API_PORT:8080}
+  address: ${MASSAGE_API_ADDRESS:0.0.0.0}
+massage:
+  dispatch:
+    acceptance-timeout-seconds: ${MASSAGE_DISPATCH_ACCEPTANCE_TIMEOUT_SECONDS:300}
+  expense:
+    storage-dir: ${MASSAGE_EXPENSE_STORAGE_DIR:data/expense-attachments}

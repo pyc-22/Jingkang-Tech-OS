@@ -1,0 +1,11 @@
+.header-actions { display:flex; align-items:center; gap:7px; }
+.logout-button { min-height:28px; padding:0 8px; border:1px solid var(--line); border-radius:5px; color:#53635f; background:#fff; font:inherit; font-size:11px; }
+.login-panel { display:grid; gap:20px; margin-top:12vh; padding:20px; border:1px solid var(--line); border-radius:7px; background:var(--surface); }
+.login-panel.hidden { display:none; }
+.login-panel h2 { font-size:19px; }
+.login-panel p { margin-top:7px; color:var(--muted); font-size:12px; }
+.login-panel form { display:grid; gap:13px; }
+.login-panel label { display:grid; gap:7px; color:#52625e; font-size:12px; font-weight:700; }
+.login-panel input { height:40px; padding:0 10px; border:1px solid var(--line); border-radius:5px; outline:0; color:var(--ink); background:#fff; font:inherit; }
+.login-panel input:focus { border-color:#5e9d90; box-shadow:0 0 0 3px rgba(8,123,115,.1); }
+.login-panel button[type="submit"] { height:42px; margin-top:5px; border:1px solid var(--teal); border-radius:5px; color:#fff; background:var(--teal); font:inherit; font-size:13px; font-weight:700; }

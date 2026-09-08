@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <!-- Keep Spring Boot's normal application logging and add the commission channel below. -->
+  <include resource="org/springframework/boot/logging/logback/base.xml" />
+
+  <property name="COMMISSION_LOG_DIR" value="${COMMISSION_LOG_DIR:-logs}" />
+  <property name="COMMISSION_PATTERN" value="[%d{yyyy-MM-dd HH:mm:ss.SSS}] [COMMISSION] [%level] %msg%n" />
+
+  <appender name="COMMISSION_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>${COMMISSION_PATTERN}</pattern>
+      <charset>UTF-8</charset>
+    </encoder>
+  </appender>
+
+  <appender name="COMMISSION_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <encoder>
+      <pattern>${COMMISSION_PATTERN}</pattern>
+      <charset>UTF-8</charset>
+    </encoder>
+    <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+      <fileNamePattern>${COMMISSION_LOG_DIR}/commission-%d{yyyy-MM-dd}.log</fileNamePattern>
+      <maxHistory>90</maxHistory>
+    </rollingPolicy>
+  </appender>
+
+  <logger name="COMMISSION" level="DEBUG" additivity="false">
+    <appender-ref ref="COMMISSION_CONSOLE" />
+    <appender-ref ref="COMMISSION_FILE" />
+  </logger>
+</configuration>

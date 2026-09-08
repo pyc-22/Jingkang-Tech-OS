@@ -1,0 +1,7 @@
+dialog#mobile-extension-dialog { width:min(calc(100% - 32px),520px); padding:0; border:0; border-radius:7px; box-shadow:0 16px 48px rgba(17,43,39,.24); }
+dialog#mobile-extension-dialog::backdrop { background:rgba(18,38,35,.36); }
+.mobile-service-actions { display:grid; grid-template-columns:1fr 1.35fr; gap:8px; margin-top:15px; }
+.mobile-service-actions .mobile-action { margin-top:0; }
+.mobile-extension-preview { min-height:42px; padding:11px; border:1px solid #d5e7e1; border-radius:5px; color:#14675f; background:#f1faf7; font-size:12px; font-weight:700; }
+#mobile-extension-dialog .mobile-dialog-actions { display:grid; grid-template-columns:auto 1fr; gap:8px; }
+#mobile-extension-dialog .mobile-action { margin-top:0; }

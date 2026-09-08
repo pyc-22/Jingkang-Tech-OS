@@ -1,0 +1,9 @@
+{
+  "name": "Jingkang Operations - Technician",
+  "short_name": "Jingkang Tech",
+  "start_url": "./mobile.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f8ff",
+  "theme_color": "#0b5bce"
+}

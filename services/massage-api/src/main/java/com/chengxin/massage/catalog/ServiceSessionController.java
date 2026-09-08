@@ -1,0 +1,510 @@
+package com.chengxin.massage.catalog;
+
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+import com.chengxin.massage.admin.AdminSessionService;
+import com.chengxin.massage.admin.StoreContextService;
+import com.chengxin.massage.audit.AuditService;
+import com.chengxin.massage.operations.BusinessClockService;
+import com.chengxin.massage.catalog.ServiceItemVersionService.ResolvedServiceItem;
+
+@RestController
+@RequestMapping("/api/v1/service-sessions")
+@CrossOrigin(origins = "*")
+public class ServiceSessionController {
+  private static final UUID TENANT_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
+  private final JdbcClient jdbc;
+  private final StoreContextService storeContext;
+  private final AdminSessionService adminSessions;
+  private final TechnicianSchedulePolicy schedulePolicy;
+  private final AuditService audits;
+  private final BusinessClockService businessClock;
+  private final ServiceItemVersionService itemVersions;
+  private final ServiceDispatchEventService dispatchEvents;
+  private final TechnicianQueueService technicianQueue;
+
+  @Value("${massage.dispatch.acceptance-timeout-seconds:300}")
+  private int acceptanceTimeoutSeconds;
+
+  ServiceSessionController(JdbcClient jdbc, StoreContextService storeContext, AdminSessionService adminSessions, TechnicianSchedulePolicy schedulePolicy, AuditService audits, BusinessClockService businessClock, ServiceItemVersionService itemVersions, ServiceDispatchEventService dispatchEvents, TechnicianQueueService technicianQueue) {
+    this.jdbc = jdbc;
+    this.storeContext = storeContext;
+    this.adminSessions = adminSessions;
+    this.schedulePolicy = schedulePolicy;
+    this.audits = audits;
+    this.businessClock = businessClock;
+    this.itemVersions = itemVersions;
+    this.dispatchEvents = dispatchEvents;
+    this.technicianQueue = technicianQueue;
+  }
+
+  @GetMapping
+  List<ServiceSession> sessions(@RequestParam(required = false) String status,
+                                @RequestParam(required = false) OffsetDateTime from,
+                                @RequestParam(required = false) OffsetDateTime to,
+                                @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                                @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+    UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    StringBuilder where = new StringBuilder("where ss.store_id=:store");
+    if (status != null && !status.isBlank()) where.append(" and ss.status=:status");
+    if (from != null) where.append(" and ss.started_at>=:fromTime");
+    if (to != null) where.append(" and ss.started_at<=:toTime");
+    String sql = sessionListSql(where.toString());
+    JdbcClient.StatementSpec statement = jdbc.sql(sql).param("store", storeId);
+    if (status != null && !status.isBlank()) statement = statement.param("status", status);
+    if (from != null) statement = statement.param("fromTime", from);
+    if (to != null) statement = statement.param("toTime", to);
+    return statement.query(ServiceSession.class).list();
+  }
+
+  @PostMapping("/clock-in")
+  @Transactional
+  ServiceSession clockIn(@Valid @RequestBody ClockInInput input,
+                         @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                         @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+    UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    AdminSessionService.AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
+    List<ParticipantInput> participants = normalizeParticipants(input);
+    for (ParticipantInput participant : participants) {
+      ensureActive(storeId, "technician", participant.technicianId(), "Technician is unavailable");
+      schedulePolicy.requireClockInEligibility(storeId, participant.technicianId());
+      if (hasActiveTechnician(storeId, participant.technicianId())) throw conflict("Technician already has a pending or active service");
+    }
+    ensureActive(storeId, "room", input.roomId(), "Room is unavailable");
+    ResolvedServiceItem service = itemVersions.activeItem(storeId, input.serviceItemId(), businessClock.currentBusinessDate(storeId))
+      .orElseThrow(() -> badRequest("Service item is unavailable"));
+    UUID bedId = resolveBed(storeId, input.roomId(), input.bedId());
+
+    String clockType = normalizeClockType(input.clockType());
+    UUID id = UUID.randomUUID();
+    OffsetDateTime acceptanceDeadline = OffsetDateTime.now().plusSeconds(acceptanceTimeoutSeconds);
+    UUID primaryTechnicianId = participants.getFirst().technicianId();
+    jdbc.sql("insert into service_session(id,tenant_id,store_id,technician_id,room_id,bed_id,service_item_id,service_name_snapshot,service_price_cents,planned_duration_minutes,started_at,expected_end_at,status,note,clock_type,price_version_id,counts_as_clock_snapshot,acceptance_deadline_at) values(:id,:tenant,:store,:technician,:room,:bed,:service,:name,:price,:duration,null,null,'PENDING_ACCEPTANCE',:note,:clockType,:priceVersion,:countsAsClock,:deadline)")
+      .param("id", id).param("tenant", TENANT_ID).param("store", storeId).param("technician", primaryTechnicianId)
+      .param("room", input.roomId()).param("bed", bedId).param("service", service.id()).param("name", service.name()).param("price", service.priceCents())
+      .param("duration", input.plannedDurationMinutes()).param("note", input.note()).param("clockType", clockType).param("priceVersion", service.priceVersionId()).param("countsAsClock", service.countsAsClock()).param("deadline", acceptanceDeadline).update();
+    for (int index = 0; index < participants.size(); index++) {
+      ParticipantInput participant = participants.get(index);
+      UUID participantId = UUID.randomUUID();
+      jdbc.sql("insert into service_session_participant(id,tenant_id,store_id,service_session_id,technician_id,slot_no,sequence_no,participation_type,allocation_bp,status,acceptance_deadline_at) values(:id,:tenant,:store,:session,:technician,:slot,1,:type,:allocation,'PENDING_ACCEPTANCE',:deadline)")
+        .param("id", participantId).param("tenant", TENANT_ID).param("store", storeId).param("session", id).param("technician", participant.technicianId())
+        .param("slot", index + 1).param("type", index == 0 ? "PRIMARY" : "ADDITIONAL").param("allocation", participant.allocationBp()).param("deadline", acceptanceDeadline).update();
+      dispatchEvents.record(storeId, id, participantId, "ASSIGNED", null, participant.technicianId(), acceptanceDeadline,
+        null, actor.userId(), actor.displayName());
+    }
+    recordRoomStatus(storeId, input.roomId(), "RESERVED", "Awaiting " + participants.size() + " technician acceptance(s): " + service.name());
+    ServiceSession created = session(storeId, id);
+    audits.record(authorization, storeId, "SERVICE", "SERVICE_ASSIGNED", "service_session", id, "Front desk assigned service; awaiting technician acceptance", null, created);
+    return created;
+  }
+
+  @PostMapping("/{id}/clock-out")
+  @Transactional
+  ServiceSession clockOut(@PathVariable UUID id,
+                          @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                          @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+    UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    AdminSessionService.AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
+    jdbc.sql("select id from service_session where id=:id and store_id=:store for update")
+      .param("id", id).param("store", storeId).query(UUID.class).optional()
+      .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Service session not found"));
+    ServiceSession current = session(storeId, id);
+    if (!"IN_SERVICE".equals(current.status())) throw conflict("Service is already finished");
+    OffsetDateTime endedAt = OffsetDateTime.now();
+    jdbc.sql("update service_session set status='COMPLETED',ended_at=:ended,updated_at=now(),version=version+1 where id=:id and store_id=:store and status='IN_SERVICE'")
+      .param("id", id).param("store", storeId).param("ended", endedAt).update();
+    jdbc.sql("update service_session_participant set status='COMPLETED',service_ended_at=:ended where service_session_id=:session and store_id=:store and status='IN_SERVICE'")
+      .param("ended", endedAt).param("session", id).param("store", storeId).update();
+    recordRoomStatus(storeId, current.roomId(), "PENDING_PAYMENT", "Service clock-out; awaiting payment");
+    promoteNextReservation(storeId, current.technicianId(), authorization, actor.displayName(), actor.userId());
+    ServiceSession completed = session(storeId, id);
+    audits.record(authorization, storeId, "SERVICE", "SERVICE_CLOCKED_OUT", "service_session", id, "前台确认技师下钟", current, completed);
+    return completed;
+  }
+
+  private void promoteNextReservation(UUID storeId, UUID technicianId, String authorization, String actorName, UUID actorId) {
+    boolean pendingDispatch = jdbc.sql("select exists(select 1 from service_session_participant where store_id=:store and technician_id=:technician and status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE'))")
+      .param("store", storeId).param("technician", technicianId).query(Boolean.class).single();
+    if (pendingDispatch) return;
+    QueuedReservation reservation = jdbc.sql("select sr.id,sr.room_id,sr.service_item_id,sr.reservation_type,sr.service_name_snapshot,sr.service_price_cents,sr.planned_duration_minutes,sr.note,sr.price_version_id,sr.counts_as_clock_snapshot from service_reservation sr where sr.store_id=:store and sr.technician_id=:technician and sr.status='WAITING' order by sr.created_at,sr.id limit 1 for update")
+      .param("store", storeId).param("technician", technicianId).query(QueuedReservation.class).optional().orElse(null);
+    if (reservation == null) return;
+    UUID sessionId = UUID.randomUUID();
+    OffsetDateTime deadline = OffsetDateTime.now().plusSeconds(acceptanceTimeoutSeconds);
+    String clockType = "BOOKED_CALL".equals(reservation.reservationType()) ? "BOOKED_CALL" : "BOOKED_QUEUE";
+    jdbc.sql("insert into service_session(id,tenant_id,store_id,technician_id,room_id,service_item_id,service_name_snapshot,service_price_cents,planned_duration_minutes,started_at,expected_end_at,status,note,clock_type,price_version_id,counts_as_clock_snapshot,acceptance_deadline_at) values(:id,:tenant,:store,:technician,:room,:service,:name,:price,:duration,null,null,'PENDING_ACCEPTANCE',:note,:clockType,:priceVersion,:countsAsClock,:deadline)")
+      .param("id", sessionId).param("tenant", TENANT_ID).param("store", storeId).param("technician", technicianId).param("room", reservation.roomId())
+      .param("service", reservation.serviceItemId()).param("name", reservation.serviceNameSnapshot()).param("price", reservation.servicePriceCents()).param("duration", reservation.plannedDurationMinutes())
+      .param("note", reservation.note()).param("clockType", clockType).param("priceVersion", reservation.priceVersionId()).param("countsAsClock", reservation.countsAsClockSnapshot()).param("deadline", deadline).update();
+    UUID participantId = UUID.randomUUID();
+    jdbc.sql("insert into service_session_participant(id,tenant_id,store_id,service_session_id,technician_id,slot_no,sequence_no,participation_type,allocation_bp,status,acceptance_deadline_at) values(:id,:tenant,:store,:session,:technician,1,1,'PRIMARY',10000,'PENDING_ACCEPTANCE',:deadline)")
+      .param("id", participantId).param("tenant", TENANT_ID).param("store", storeId).param("session", sessionId).param("technician", technicianId).param("deadline", deadline).update();
+    jdbc.sql("update service_reservation set status='DISPATCHED',dispatched_at=now(),updated_at=now(),version=version+1 where id=:id and store_id=:store and status='WAITING'")
+      .param("id", reservation.id()).param("store", storeId).update();
+    dispatchEvents.record(storeId, sessionId, participantId, "ASSIGNED", null, technicianId, deadline, "Reserved service promoted after front desk clock-out", actorId, actorName);
+    audits.record(authorization, storeId, "SERVICE", "SERVICE_RESERVATION_PROMOTED", "service_reservation", reservation.id(), "前台下钟后自动推进预约", reservation, sessionId);
+  }
+
+  @PostMapping("/{id}/start-service")
+  @Transactional
+  ServiceSession startServiceFromFrontdesk(@PathVariable UUID id,
+                                           @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                                           @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+    UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    AdminSessionService.AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
+    jdbc.sql("select id from service_session where id=:id and store_id=:store for update")
+      .param("id", id).param("store", storeId).query(UUID.class).optional()
+      .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Service session not found"));
+    ServiceSession accepted = session(storeId, id);
+    if (!Set.of("PENDING_ACCEPTANCE", "ACCEPTED").contains(accepted.status())) {
+      throw conflict("Only a pending or accepted service can be started by front desk");
+    }
+    OffsetDateTime startedAt = OffsetDateTime.now();
+    OffsetDateTime expectedEndAt = startedAt.plusMinutes(accepted.plannedDurationMinutes());
+    LocalDate businessDate = businessClock.businessDate(storeId, startedAt);
+    UUID commissionVersionId = itemVersions.commissionRule(storeId, accepted.serviceItemId(), businessDate).id();
+    int updated = jdbc.sql("update service_session set status='IN_SERVICE',started_at=:started,expected_end_at=:expected,business_date=:businessDate,commission_rule_version_id=:commissionVersion,acceptance_deadline_at=null,updated_at=now(),version=version+1 where id=:id and store_id=:store and status in ('PENDING_ACCEPTANCE','ACCEPTED')")
+      .param("started", startedAt).param("expected", expectedEndAt).param("businessDate", businessDate).param("commissionVersion", commissionVersionId).param("id", id).param("store", storeId).update();
+    if (updated == 0) throw conflict("Service state has changed");
+    jdbc.sql("update service_session_participant set status='IN_SERVICE',service_started_at=:started,acceptance_deadline_at=null where service_session_id=:session and store_id=:store and status in ('PENDING_ACCEPTANCE','ACCEPTED')")
+      .param("started", startedAt).param("session", id).param("store", storeId).update();
+    List<UUID> participants = jdbc.sql("select technician_id from service_session_participant where service_session_id=:session and store_id=:store and status='IN_SERVICE' order by slot_no,sequence_no")
+      .param("session", id).param("store", storeId).query(UUID.class).list();
+    technicianQueue.rotateAfterServiceStart(storeId, businessDate, id, accepted.clockType(), participants, actor.userId(), actor.displayName());
+    recordRoomStatus(storeId, accepted.roomId(), "IN_SERVICE", "Front desk started service");
+    ServiceSession started = session(storeId, id);
+    audits.record(authorization, storeId, "SERVICE", "FRONTDESK_SERVICE_STARTED", "service_session", id, "前台代技师开始服务", accepted, started);
+    return started;
+  }
+
+  @PostMapping("/{id}/void")
+  @Transactional
+  ServiceSession voidSession(@PathVariable UUID id,
+                             @Valid @RequestBody VoidInput input,
+                             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                             @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+    UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    jdbc.sql("select id from service_session where id=:id and store_id=:store for update")
+      .param("id", id).param("store", storeId).query(UUID.class).optional()
+      .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Service session not found"));
+    ServiceSession current = session(storeId, id);
+    Set<String> voidableStatuses = Set.of("PENDING_ACCEPTANCE", "ACCEPTED", "REASSIGNMENT_REQUIRED", "DISPATCH_CANCELLED", "COMPLETED");
+    if (!voidableStatuses.contains(current.status())) {
+      if ("IN_SERVICE".equals(current.status())) throw conflict("服务进行中，请先完成服务或使用换房、加钟等受控操作");
+      if ("VOIDED".equals(current.status())) throw conflict("该服务已经作废");
+      throw conflict("当前服务状态不允许作废");
+    }
+    boolean settled = jdbc.sql("""
+      select exists(
+        select 1
+          from sales_order_service_session link
+          join sales_order linked_order on linked_order.id=link.order_id
+         where link.service_session_id=:session
+           and linked_order.status <> 'CANCELLED'
+           and linked_order.refund_status <> 'FULL'
+      )
+      """)
+      .param("session", id).query(Boolean.class).single();
+    if (settled) throw conflict("该服务已经生成结算单，请使用退款或红冲处理");
+
+    String reason = input.reason().trim();
+    AdminSessionService.AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
+    OffsetDateTime voidedAt = OffsetDateTime.now();
+    List<VoidParticipant> participants = jdbc.sql("select id,status,service_started_at,service_ended_at from service_session_participant where service_session_id=:session and store_id=:store for update")
+      .param("session", id).param("store", storeId).query(VoidParticipant.class).list();
+    for (VoidParticipant participant : participants) {
+      if (Set.of("REJECTED", "EXPIRED", "VOIDED").contains(participant.status())) continue;
+      jdbc.sql("update service_session_participant set status='VOIDED',service_ended_at=:ended,change_reason=:reason where id=:id and store_id=:store and status=:status")
+        .param("ended", voidedParticipantEndedAt(participant.serviceStartedAt(), participant.serviceEndedAt(), voidedAt))
+        .param("reason", reason).param("id", participant.id()).param("store", storeId).param("status", participant.status()).update();
+    }
+    jdbc.sql("update service_session set status='VOIDED',void_reason=:reason,voided_at=:voidedAt,voided_by=:actor,updated_at=now(),version=version+1 where id=:id and store_id=:store")
+      .param("reason", reason).param("voidedAt", voidedAt).param("actor", actor.userId()).param("id", id).param("store", storeId).update();
+
+    boolean completedService = "COMPLETED".equals(current.status());
+    recordRoomStatus(storeId, current.roomId(), completedService ? "CLEANING" : "IDLE",
+      completedService ? "Unsettled completed service voided; room requires cleaning" : "Unstarted service voided");
+    ServiceSession voided = session(storeId, id);
+    audits.record(authorization, storeId, "SERVICE", "SERVICE_VOIDED", "service_session", id,
+      "未结算服务已作废；原因：" + reason, current, voided);
+    return voided;
+  }
+
+  @PutMapping("/{id}/clock-type")
+  @Transactional
+  ServiceSession changeClockType(@PathVariable UUID id,
+                                 @Valid @RequestBody ClockTypeChangeInput input,
+                                 @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                                 @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+    UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    String clockType = normalizeEditableClockType(input.clockType());
+    jdbc.sql("select id from service_session where id=:id and store_id=:store for update")
+      .param("id", id).param("store", storeId).query(UUID.class).optional()
+      .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Service session not found"));
+    ServiceSession current = session(storeId, id);
+    if (!canChangeClockType(current.status())) {
+      throw conflict("Only a pending, accepted, or in-service session can change clock type");
+    }
+    if (clockType.equals(current.clockType())) return current;
+    int updated = jdbc.sql("update service_session set clock_type=:clockType,updated_at=now(),version=version+1 where id=:id and store_id=:store and status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE') and version=:version")
+      .param("clockType", clockType).param("id", id).param("store", storeId).param("version", current.version()).update();
+    if (updated == 0) throw conflict("Service state has changed; refresh and retry");
+    ServiceSession changed = session(storeId, id);
+    String reason = input.reason() == null ? "前台更换服务钟类" : input.reason().trim();
+    audits.record(authorization, storeId, "SERVICE", "SERVICE_CLOCK_TYPE_CHANGED", "service_session", id,
+      reason.isBlank() ? "前台更换服务钟类" : reason, current, changed);
+    return changed;
+  }
+
+  static OffsetDateTime voidedParticipantEndedAt(OffsetDateTime serviceStartedAt, OffsetDateTime serviceEndedAt, OffsetDateTime voidedAt) {
+    return serviceStartedAt != null && serviceEndedAt == null ? voidedAt : serviceEndedAt;
+  }
+
+  private void ensureActive(UUID storeId, String table, UUID id, String message) {
+    boolean exists = jdbc.sql("select exists(select 1 from " + table + " where id=:id and store_id=:store and active=true)")
+      .param("id", id).param("store", storeId).query(Boolean.class).single();
+    if (!exists) throw badRequest(message);
+  }
+
+  private boolean hasActiveSession(UUID storeId, String column, UUID id) {
+    return jdbc.sql("select exists(select 1 from service_session where store_id=:store and " + column + "=:id and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'))")
+      .param("store", storeId).param("id", id).query(Boolean.class).single();
+  }
+
+  private UUID resolveBed(UUID storeId, UUID roomId, UUID requestedBedId) {
+    // Rooms created after the bed-occupancy migration may not have generated
+    // room_bed rows yet.  Front-desk assignment requires a concrete bed so the
+    // active-bed uniqueness constraint can protect concurrent assignments;
+    // provision the configured default beds lazily for those legacy rooms.
+    ensureRoomBeds(storeId, roomId);
+    String sql = "select b.id from room_bed b where b.store_id=:store and b.room_id=:room and b.active=true "
+      + (requestedBedId == null ? "" : "and b.id=:bed ")
+      + "and not exists(select 1 from service_session ss where ss.store_id=:store and ss.bed_id=b.id and ss.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE')) order by b.sort_order limit 1 for update skip locked";
+    var statement = jdbc.sql(sql).param("store", storeId).param("room", roomId);
+    if (requestedBedId != null) statement = statement.param("bed", requestedBedId);
+    return statement.query(UUID.class).optional().orElseThrow(() -> conflict("该房间没有可用床位"));
+  }
+
+  /**
+   * Backfills only missing bed slots and serializes the operation on the room
+   * row.  Existing disabled/customized beds are left untouched.  This keeps
+   * the fix compatible with rooms created before and after V75 without adding
+   * a migration or changing room capacity semantics.
+   */
+  private void ensureRoomBeds(UUID storeId, UUID roomId) {
+    RoomCapacity room = jdbc.sql("select id,tenant_id,store_id,code,name,bed_count from room where id=:room and store_id=:store for update")
+      .param("room", roomId).param("store", storeId).query(RoomCapacity.class).optional()
+      .orElseThrow(() -> badRequest("Room is unavailable"));
+    jdbc.sql("""
+      insert into room_bed(id,tenant_id,store_id,room_id,code,name,sort_order)
+      select gen_random_uuid(),r.tenant_id,r.store_id,r.id,
+             left(r.code || '-' || n::text,40),
+             left(r.name || ' 床位 ' || n::text,80),
+             n
+        from room r
+        cross join lateral generate_series(1,r.bed_count) n
+       where r.id=:room and r.store_id=:store
+         and not exists(
+           select 1 from room_bed existing
+            where existing.room_id=r.id and existing.sort_order=n
+         )
+      on conflict (room_id,code) do nothing
+      """)
+      .param("room", room.id()).param("store", room.storeId()).update();
+  }
+
+  private boolean hasActiveTechnician(UUID storeId, UUID technicianId) {
+    return jdbc.sql("select exists(select 1 from service_session_participant where store_id=:store and technician_id=:technician and status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE'))")
+      .param("store", storeId).param("technician", technicianId).query(Boolean.class).single();
+  }
+
+  private ServiceSession session(UUID storeId, UUID id) {
+    return jdbc.sql(sessionListSql("where ss.id=:id and ss.store_id=:store"))
+      .param("id", id).param("store", storeId).query(ServiceSession.class).optional()
+      .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Service session not found"));
+  }
+
+  static String sessionListSql(String whereClause) {
+    return """
+      select ss.id,
+             ss.technician_id,
+             coalesce(
+               (select string_agg(tech.name, '、' order by participant.slot_no, participant.sequence_no)
+                  from service_session_participant participant
+                  join technician tech on tech.id=participant.technician_id
+                 where participant.service_session_id=ss.id
+                   and participant.status not in ('CANCELLED','REJECTED','EXPIRED')),
+               case when ss.status='REASSIGNMENT_REQUIRED' then '待重新派单'
+                    when ss.status='DISPATCH_CANCELLED' then '待与客沟通'
+                    else t.name end) technician_name,
+             ss.room_id,
+             r.code room_code,
+             ss.service_item_id,
+             ss.service_name_snapshot,
+             ss.service_price_cents,
+             ss.planned_duration_minutes,
+             ss.started_at,
+             ss.expected_end_at,
+             ss.ended_at,
+             ss.business_date,
+             ss.status,
+             ss.note,
+             ss.clock_type,
+             ss.version,
+             coalesce((select sum(extension.service_price_cents)
+                         from service_session_extension extension
+                        where extension.service_session_id=ss.id), 0) extension_total_cents,
+             coalesce((select sum(extension.planned_duration_minutes)
+                         from service_session_extension extension
+                        where extension.service_session_id=ss.id), 0) extension_total_minutes,
+             coalesce((select count(*)::integer
+                         from service_session_extension extension
+                        where extension.service_session_id=ss.id), 0) extension_count,
+             coalesce((select string_agg(extension.technician_id::text, ',' order by extension.added_at, extension.id)
+                         from service_session_extension extension
+                        where extension.service_session_id=ss.id), '') extension_technician_ids,
+             coalesce((select string_agg(extension.service_name_snapshot || ' ' || extension.planned_duration_minutes || '分钟', '、' order by extension.added_at)
+                         from service_session_extension extension
+                        where extension.service_session_id=ss.id), '') extension_summary,
+             coalesce((select string_agg(participant.technician_id::text, ',' order by participant.slot_no, participant.sequence_no)
+                         from service_session_participant participant
+                        where participant.service_session_id=ss.id
+                          and participant.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE','COMPLETED')),
+                      ss.technician_id::text) participant_technician_ids,
+             coalesce((select string_agg(participant.technician_id::text, ',' order by participant.slot_no, participant.sequence_no)
+                         from service_session_participant participant
+                        where participant.service_session_id=ss.id
+                          and participant.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')),
+                      case when ss.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')
+                           then ss.technician_id::text end) active_participant_technician_ids,
+             coalesce((select string_agg(tech.name, '、' order by participant.slot_no, participant.sequence_no)
+                         from service_session_participant participant
+                         join technician tech on tech.id=participant.technician_id
+                        where participant.service_session_id=ss.id
+                          and participant.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')),
+                      case when ss.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')
+                           then t.name end) active_technician_name,
+             coalesce((select count(distinct participant.slot_no)
+                         from service_session_participant participant
+                        where participant.service_session_id=ss.id
+                          and participant.status not in ('CANCELLED','REJECTED','EXPIRED')), 1) participant_count,
+             upper('FW-' || substr(replace(ss.id::text, '-', ''), 1, 12)) service_no,
+             sales_order.order_no,
+             sales_order.settlement_no,
+             sales_order.receivable_cents,
+             sales_order.paid_cents,
+             coalesce((select string_agg(payment.payment_method_name_snapshot || ' ' || to_char(payment.amount_cents/100.0, 'FM999999990.00'), '、' order by payment.created_at)
+                         from payment_record payment
+                        where payment.order_id=sales_order.id), '') payment_methods,
+             coalesce((select sum(commission.commission_cents)
+                         from technician_commission_record commission
+                        where commission.service_session_id=ss.id), 0) commission_cents
+        from service_session ss
+        join technician t on t.id=ss.technician_id
+        join room r on r.id=ss.room_id
+        left join lateral (
+          select linked_order.id,
+                 linked_order.order_no,
+                 linked_order.settlement_no,
+                 linked_order.receivable_cents,
+                 linked_order.paid_cents
+            from sales_order_service_session order_link
+            join sales_order linked_order on linked_order.id=order_link.order_id
+           where order_link.service_session_id=ss.id
+           order by (linked_order.status <> 'CANCELLED' and linked_order.refund_status <> 'FULL') desc,
+                    linked_order.settled_at desc nulls last,
+                    order_link.created_at desc
+           limit 1
+        ) sales_order on true
+      """ + whereClause + " order by ss.started_at desc";
+  }
+
+  private List<ParticipantInput> normalizeParticipants(ClockInInput input) {
+    List<ParticipantInput> requested = input.participants() == null || input.participants().isEmpty()
+      ? List.of(new ParticipantInput(input.technicianId(), 10000)) : input.participants();
+    if (requested.size() > 4) throw badRequest("A service supports at most four technicians");
+    Set<UUID> unique = new HashSet<>();
+    for (ParticipantInput participant : requested) {
+      if (participant.technicianId() == null || !unique.add(participant.technicianId())) throw badRequest("Technicians must be distinct");
+    }
+    boolean missingAllocation = requested.stream().anyMatch(item -> item.allocationBp() == null);
+    if (missingAllocation) {
+      int base = 10000 / requested.size();
+      int remainder = 10000 - base * requested.size();
+      List<ParticipantInput> equal = new ArrayList<>();
+      for (int index = 0; index < requested.size(); index++) equal.add(new ParticipantInput(requested.get(index).technicianId(), base + (index == 0 ? remainder : 0)));
+      return equal;
+    }
+    int total = requested.stream().mapToInt(ParticipantInput::allocationBp).sum();
+    if (total != 10000) throw badRequest("Technician allocation percentages must total 100 percent");
+    return requested;
+  }
+
+  private String normalizeClockType(String clockType) {
+    if (clockType == null || clockType.isBlank()) return "QUEUE";
+    if ("QUEUE".equals(clockType) || "CALL".equals(clockType) || "SELECTED".equals(clockType)
+      || "BOOKED_QUEUE".equals(clockType) || "BOOKED_CALL".equals(clockType)) return clockType;
+    throw badRequest("Unsupported clock type");
+  }
+
+  static boolean canChangeClockType(String status) {
+    return Set.of("PENDING_ACCEPTANCE", "ACCEPTED", "IN_SERVICE").contains(status);
+  }
+
+  static String normalizeEditableClockType(String clockType) {
+    if (clockType == null || clockType.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Clock type is required");
+    if ("QUEUE".equals(clockType) || "CALL".equals(clockType)) return clockType;
+    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only queue or call clock type can be selected");
+  }
+
+  private void recordRoomStatus(UUID storeId, UUID roomId, String status, String reason) {
+    boolean hasInService = jdbc.sql("select exists(select 1 from service_session where store_id=:store and room_id=:room and status='IN_SERVICE')")
+      .param("store", storeId).param("room", roomId).query(Boolean.class).single();
+    boolean hasPending = jdbc.sql("select exists(select 1 from service_session where store_id=:store and room_id=:room and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED'))")
+      .param("store", storeId).param("room", roomId).query(Boolean.class).single();
+    if (hasInService && !"MAINTENANCE".equals(status)) status = "IN_SERVICE";
+    else if (hasPending && Set.of("IDLE", "PENDING_PAYMENT", "CLEANING").contains(status)) status = "RESERVED";
+    jdbc.sql("insert into room_status_event(id,tenant_id,store_id,room_id,status,reason,source) values(:id,:tenant,:store,:room,:status,:reason,'SERVICE_SESSION')")
+      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("room", roomId)
+      .param("status", status).param("reason", reason).update();
+  }
+
+  private ResponseStatusException badRequest(String message) { return new ResponseStatusException(HttpStatus.BAD_REQUEST, message); }
+  private ResponseStatusException conflict(String message) { return new ResponseStatusException(HttpStatus.CONFLICT, message); }
+
+  record ServiceItem(UUID id, String name, Integer priceCents) {}
+  record RoomCapacity(UUID id, UUID tenantId, UUID storeId, String code, String name, Short bedCount) {}
+  record VoidParticipant(UUID id, String status, OffsetDateTime serviceStartedAt, OffsetDateTime serviceEndedAt) {}
+  record QueuedReservation(UUID id, UUID roomId, UUID serviceItemId, String reservationType, String serviceNameSnapshot, Integer servicePriceCents, Short plannedDurationMinutes, String note, UUID priceVersionId, Boolean countsAsClockSnapshot) {}
+  record ServiceSession(UUID id, UUID technicianId, String technicianName, UUID roomId, String roomCode, UUID serviceItemId, String serviceNameSnapshot, Integer servicePriceCents, Short plannedDurationMinutes, OffsetDateTime startedAt, OffsetDateTime expectedEndAt, OffsetDateTime endedAt, LocalDate businessDate, String status, String note, String clockType, Long version, Integer extensionTotalCents, Integer extensionTotalMinutes, Integer extensionCount, String extensionTechnicianIds, String extensionSummary, String participantTechnicianIds, String activeParticipantTechnicianIds, String activeTechnicianName, Long participantCount, String serviceNo, String orderNo, String settlementNo, Long receivableCents, Long paidCents, String paymentMethods, Long commissionCents) {}
+  record ParticipantInput(@NotNull UUID technicianId, @Min(1) @Max(10000) Integer allocationBp) {}
+  record VoidInput(@NotBlank String reason) {}
+  record ClockTypeChangeInput(@NotBlank String clockType, String reason) {}
+  record ClockInInput(UUID technicianId, List<@Valid ParticipantInput> participants, @NotNull UUID roomId, UUID bedId, @NotNull UUID serviceItemId, @NotNull @Min(15) @Max(360) Short plannedDurationMinutes, String note, String clockType) {}
+}

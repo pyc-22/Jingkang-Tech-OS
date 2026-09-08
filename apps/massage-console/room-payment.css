@@ -1,0 +1,13 @@
+.dot.pending-payment { background:#9b6ac5; }
+.room.pending-payment { background:#faf4ff; border-color:#d9c4eb; }
+.room.pending-payment:hover { border-color:#ae87d1; }
+.room-paid-action { min-height:30px; margin:0 8px 8px; border:1px solid #b894d5; border-radius:4px; color:#6f3d96; background:#f8efff; font:inherit; font-size:11px; font-weight:700; }
+.room-paid-action:hover { border-color:#9664bd; background:#f1e2fc; }
+.dot.pending-payment { background:#5b2d91; }
+.room.pending-payment { background:#8b5cc7; border-color:#633a9e; color:#fff; }
+.room.pending-payment:hover { border-color:#45216f; }
+.room.pending-payment strong,
+.room.pending-payment small,
+.room.pending-payment .room-service-timer { color:inherit; }
+.room.pending-payment .room-paid-action { border-color:#fff; color:#fff; background:#633a9e; }
+.room.pending-payment .room-paid-action:hover { border-color:#fff; background:#45216f; }

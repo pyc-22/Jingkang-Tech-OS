@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>靖康科技运营 - 管理看板</title>
+    <link rel="stylesheet" href="./manager-mobile.css?v=20260903-manager-daily-report-sync-v1" />
+    <link rel="stylesheet" href="./login-portal.css" />
+  </head>
+  <body class="login-portal-page">
+    <main class="manager-shell">
+      <header class="manager-header">
+        <div><p>靖康科技运营</p><h1>管理看板</h1></div>
+        <button class="icon-button hidden" id="manager-refresh" type="button" title="刷新数据" aria-label="刷新数据">↻</button>
+      </header>
+
+      <section class="manager-login login-portal-surface" id="manager-login-screen">
+        <div class="login-portal-brand"><span class="login-portal-mark">JK</span><h1>靖康科技运营</h1><span class="login-portal-role">店长手机管理端</span><p>随时查看授权门店经营数据</p></div>
+        <div><h2>店长手机管理端登录</h2><p>登录后仅可查看已授权门店的经营数据</p></div>
+        <form id="manager-login-form">
+          <label>账号<input name="loginName" autocomplete="username" required /></label>
+          <label>密码<input name="password" type="password" autocomplete="current-password" required /></label>
+          <button type="submit">登录查看</button>
+        </form>
+      </section>
+
+      <section class="manager-dashboard hidden" id="manager-dashboard">
+        <div class="manager-context"><label>当前门店<select id="manager-store-select" aria-label="当前门店"></select></label><button id="manager-logout" type="button">退出</button></div>
+        <section class="manager-home-overview" data-manager-page-panel="home">
+          <div><p>今日经营</p><h2 id="manager-business-date">今日经营概览</h2></div>
+          <span class="manager-home-sync"><i aria-hidden="true"></i><small id="manager-sync-time">正在同步</small></span>
+        </section>
+
+        <section class="manager-metrics" aria-label="经营数据" data-manager-page-panel="home">
+          <article class="manager-metric-primary"><div class="manager-metric-label"><span>当日营业额</span><em>日报</em></div><strong id="metric-sales">--</strong><small id="metric-order-count">前台日报同步</small></article>
+          <article class="manager-metric-service"><div class="manager-metric-label"><span>当日现金流</span><em>日报</em></div><strong id="metric-service">--</strong><small id="metric-service-count">前台日报同步</small></article>
+          <article><div class="manager-metric-label"><span>会员充值</span></div><strong id="metric-recharge">¥0.00</strong><small id="metric-bonus">赠送 ¥0.00</small></article>
+          <article><div class="manager-metric-label"><span>开卡数量</span><em>张</em></div><strong id="metric-card-open-count">0</strong><small>首笔充值会员数</small></article>
+          <article><div class="manager-metric-label"><span>余额消费</span></div><strong id="metric-consumption">¥0.00</strong><small id="metric-net-sales">净订单收入 ¥0.00</small></article>
+        </section>
+
+        <section class="manager-business-heading" data-manager-page-panel="business" data-manager-permission="DAILY_REPORT_VIEW">
+           <div><p>经营分析</p><h2>营业数据</h2><small id="manager-business-page-date">当前营业日</small></div><label class="manager-report-date"><span>营业日期</span><input id="manager-report-date" type="date" aria-label="选择营业日期"></label>
+          <span><i aria-hidden="true"></i>实时同步</span>
+        </section>
+
+        <section class="manager-business-metrics" data-manager-page-panel="business" data-manager-permission="DAILY_REPORT_VIEW" aria-label="营业核心数据">
+          <article class="sales"><span>当日营业额</span><strong id="manager-business-sales">--</strong><small id="manager-business-order-count">前台日报同步</small></article>
+          <article class="service"><span>当日现金流</span><strong id="manager-business-service">--</strong><small id="manager-business-service-count">前台日报同步</small></article>
+          <article><span>会员充值</span><strong id="manager-business-recharge">¥0.00</strong><small id="manager-business-bonus">赠送 ¥0.00</small></article>
+          <article><span>开卡数量</span><strong id="manager-business-card-open-count">0</strong><small>张 · 首笔充值会员数</small></article>
+          <article><span>余额消费</span><strong id="manager-business-consumption">¥0.00</strong><small id="manager-business-net-sales">净收入 ¥0.00</small></article>
+        </section>
+
+        <section class="manager-section manager-service-section" id="manager-service-section" data-manager-page-panel="business" data-manager-permission="DAILY_REPORT_VIEW">
+          <div class="section-heading manager-business-section-heading"><div><p class="manager-section-kicker">服务结构</p><h2>客流与钟数</h2></div><div class="manager-period-tabs" id="manager-business-period-tabs"><button class="selected" type="button" data-business-period="daily">当日</button><button type="button" data-business-period="monthly">当月</button></div></div>
+           <div class="manager-service-group" data-business-period-panel="daily"><div class="manager-service-title"><b>当日数据</b><small>所选营业日</small></div><div class="manager-service-grid" id="manager-service-daily"></div></div>
+           <div class="manager-service-group" data-business-period-panel="monthly" hidden><div class="manager-service-title"><b>当月累计</b><small>累计至所选日期</small></div><div class="manager-service-grid" id="manager-service-monthly"></div></div>
+        </section>
+
+        <section class="manager-section manager-commission-section" id="manager-commission-section" data-manager-page-panel="commission" data-manager-permission="REPORT_VIEW">
+          <div class="section-heading manager-commission-heading"><div><p class="manager-section-kicker">结算数据</p><h2>技师项目提成</h2><p>按项目规则、钟类和退款结果同步</p></div><label class="manager-commission-month"><span>统计月份</span><input id="manager-commission-month" type="month" aria-label="提成月份"></label></div>
+          <div class="manager-commission-sync"><i aria-hidden="true"></i><span>数据来自已结算订单</span><small>退款会自动冲减</small></div>
+          <div class="manager-commission-metrics"><article class="project"><span>项目业绩</span><strong id="manager-commission-base">¥0.00</strong><small>结算项目金额</small></article><article class="actual"><span>实际提成</span><strong id="manager-commission-total">¥0.00</strong><small>按当前月份</small></article><article class="tech-count"><span>技师人数</span><strong id="manager-commission-tech-count">0</strong><small>有结算记录</small></article></div>
+          <label class="manager-commission-filter"><span>筛选技师</span><select id="manager-commission-technician"><option value="">全部技师汇总</option></select></label>
+          <div class="manager-commission-list-heading"><b id="manager-commission-record-title">技师汇总</b><small>点击技师查看项目明细</small></div>
+          <div id="manager-commission-records" class="manager-commission-records"><p class="comparison-empty">正在加载提成数据</p></div>
+          <div class="manager-commission-list-heading"><b>提成调整记录</b><small>退款、作废和改单冲回单独展示</small></div>
+          <div id="manager-commission-adjustments" class="manager-commission-records"><p class="comparison-empty">正在加载调整记录</p></div>
+        </section>
+
+        <section class="manager-section manager-home-operation" id="manager-operation-section" data-manager-page-panel="home">
+          <div class="section-heading manager-home-section-heading"><div><p class="manager-section-kicker">现场状态</p><h2>实时运营</h2><small>房间与技师同步更新</small></div><span id="technician-count">启用技师 0 位</span></div>
+          <div class="operation-grid">
+            <div class="operation-row"><span class="operation-icon idle" aria-hidden="true"></span><div><b>空闲房间</b><small>可立即安排</small></div><strong id="room-idle-count">0</strong></div>
+            <div class="operation-row"><span class="operation-icon serving" aria-hidden="true"></span><div><b>服务中房间</b><small>正在计时</small></div><strong id="room-serving-count">0</strong></div>
+            <div class="operation-row"><span class="operation-icon cleaning" aria-hidden="true"></span><div><b>待清理房间</b><small>需要处理</small></div><strong id="room-cleaning-count">0</strong></div>
+            <div class="operation-row"><span class="operation-icon tech" aria-hidden="true"></span><div><b>服务中技师</b><small>当前上钟</small></div><strong id="active-tech-count">0</strong></div>
+          </div>
+          <div class="manager-live-room-heading"><div><b>房间实时明细</b><small>优先显示使用中和待处理房间</small></div><span id="manager-live-room-summary">正在同步</span></div>
+          <div class="manager-live-room-list" id="manager-live-room-list"><p class="comparison-empty">正在加载房间状态</p></div>
+          <div class="manager-live-technician-heading"><div><b>技师实时明细</b><small>服务、接单和当日轮钟状态</small></div><span id="manager-live-technician-summary">正在同步</span></div>
+          <div class="manager-live-technician-attention hidden" id="manager-live-technician-attention"></div>
+          <div class="manager-live-technician-groups" id="manager-live-technician-groups"><p class="comparison-empty">正在加载技师状态</p></div>
+        </section>
+
+        <section class="manager-section attention-section manager-home-attention" data-manager-page-panel="home">
+          <div class="section-heading manager-home-section-heading"><div><p class="manager-section-kicker">工作提醒</p><h2>待处理事项</h2></div><small>及时跟进</small></div>
+          <div class="attention-row" data-manager-permission="FRONTDESK_SETTLE"><span><i class="attention-icon settlement" aria-hidden="true">¥</i><b>待结算服务</b></span><strong id="pending-service-count">0</strong></div>
+          <div class="attention-row" data-manager-permission="ORDER_REFUND"><span><i class="attention-icon refund" aria-hidden="true">↩</i><b>待确认退款</b></span><strong id="pending-refund-count">0</strong></div>
+        </section>
+        <section class="manager-home-shortcuts-section" data-manager-page-panel="home" aria-label="常用管理">
+          <div class="section-heading manager-home-section-heading"><div><p class="manager-section-kicker">快捷入口</p><h2>常用管理</h2></div><small>进入详细页面</small></div>
+          <div class="manager-home-shortcuts">
+            <button type="button" data-manager-shortcut="business" data-manager-permission="DAILY_REPORT_VIEW"><span aria-hidden="true">▥</span><b>营业数据</b><small>日报与渠道</small></button>
+            <button type="button" data-manager-shortcut="commission" data-manager-permission="REPORT_VIEW"><span aria-hidden="true">¥</span><b>技师提成</b><small>汇总与明细</small></button>
+            <button type="button" data-manager-shortcut="expense" data-manager-permission="EXPENSE_STORE_VIEW"><span aria-hidden="true">▣</span><b>费用报销</b><small>提交与进度</small></button>
+            <button type="button" data-manager-shortcut="more"><span aria-hidden="true">•••</span><b>更多管理</b><small>跨门店查询</small></button>
+          </div>
+        </section>
+        <section class="manager-section manager-business-operation" data-manager-page-panel="business"><div class="section-heading manager-business-section-heading"><div><p class="manager-section-kicker">当前门店</p><h2>运营状态</h2></div><small>实时</small></div><div class="manager-business-operation-grid"><article><span class="idle"></span><div><small>空闲房间</small><strong id="manager-business-room-idle">0</strong></div></article><article><span class="serving"></span><div><small>服务中房间</small><strong id="manager-business-room-serving">0</strong></div></article><article><span class="cleaning"></span><div><small>待清理房间</small><strong id="manager-business-room-cleaning">0</strong></div></article><article><span class="tech"></span><div><small>服务中技师</small><strong id="manager-business-active-tech">0</strong></div></article></div></section>
+        <section class="manager-section manager-business-channels" data-manager-page-panel="business"><div class="section-heading manager-business-section-heading"><div><p class="manager-section-kicker">收款构成</p><h2>资金渠道</h2></div><small>收入减退款</small></div><div id="manager-channel-list" class="manager-channel-list"></div></section>
+        <section class="manager-section store-comparison-section" data-manager-page-panel="more"><div class="section-heading"><div><h2>多门店经营对比</h2><p>仅显示当前账号已授权的门店</p></div><select id="manager-comparison-sort" aria-label="对比排序"><option value="SALES">按订单实收</option><option value="SERVICE">按服务业绩</option><option value="CASH">按现金净额</option></select></div><div id="manager-store-comparison" class="manager-store-comparison"></div></section>
+        <section class="manager-section manager-alert-section" data-manager-page-panel="more"><div class="section-heading"><div><h2>经营预警与待办</h2><p id="manager-alert-subtitle">正在同步待处理事项</p></div></div><div id="manager-store-alerts" class="manager-store-alerts"></div></section>
+        <section class="manager-section manager-cross-store-section" data-manager-page-panel="more"><div class="section-heading"><div><h2>跨门店订单与消费</h2><p>搜索已授权门店内的会员记录</p></div></div><div class="manager-cross-store-filters"><input id="manager-cross-store-search" placeholder="订单号、会员或手机号" /><select id="manager-cross-store-type" aria-label="记录类型"><option value="ALL">全部记录</option><option value="ORDER">订单</option><option value="REFUND">退款</option><option value="CONSUMPTION">会员消费</option></select></div><div id="manager-cross-store-records" class="manager-cross-store-records"></div></section>
+        <section class="manager-section expense-section" data-manager-page-panel="expense" data-manager-permission="EXPENSE_STORE_VIEW">
+          <div class="section-heading expense-heading"><div><p class="manager-section-kicker">门店费用</p><h2>费用报销</h2><p>提交本店开销，跟踪财务审核进度</p></div><button class="manager-primary-button" id="manager-expense-new" type="button" data-manager-permission="EXPENSE_SUBMIT"><span aria-hidden="true">＋</span>新增报销</button></div>
+          <div id="manager-expense-browser">
+            <div class="manager-expense-summary"><article><span>当前记录</span><strong id="manager-expense-visible-count">0</strong><small>筛选结果</small></article><article><span>有效申请金额</span><strong id="manager-expense-visible-amount">¥0.00</strong><small>不含草稿、退回、驳回、撤回</small></article><article><span>待审核</span><strong id="manager-expense-pending-count">0</strong><small>需要财务处理</small></article></div>
+            <div class="expense-toolbar"><label><span>状态筛选</span><select id="manager-expense-status" aria-label="报销状态"><option value="">全部状态</option><option value="DRAFT">草稿</option><option value="SUBMITTED">待审核</option><option value="RETURNED">已退回</option><option value="APPROVED">已通过</option><option value="REJECTED">已驳回</option><option value="PAID">已付款</option><option value="WITHDRAWN">已撤回</option></select></label><button class="manager-secondary-button" id="manager-expense-refresh" type="button" title="刷新报销记录">刷新</button></div>
+            <div class="manager-expense-list-heading"><b>报销记录</b><small>点击详情查看审核意见和凭证</small></div>
+            <div id="manager-expense-list" class="manager-expense-list"><p class="comparison-empty">正在加载报销记录</p></div>
+          </div>
+          <div id="manager-expense-editor" class="manager-expense-editor hidden">
+            <div class="expense-editor-title"><div><p>门店费用</p><h3 id="manager-expense-editor-title">新增报销</h3></div><button class="manager-quiet-button" id="manager-expense-close" type="button">关闭</button></div>
+            <form id="manager-expense-form">
+              <label>费用分类<select name="expenseCategoryId" id="manager-expense-category" required></select></label>
+              <div class="expense-form-grid"><label>发生日期<input name="expenseDate" id="manager-expense-date" type="date" required></label><label>金额（元）<input name="amount" id="manager-expense-amount" type="number" min="0.01" step="0.01" required></label></div>
+              <div class="expense-form-grid"><label>付款来源<select name="paymentSource" required><option value="PERSONAL_ADVANCE">个人垫付</option><option value="STORE_PETTY_CASH">门店备用金</option><option value="COMPANY_DIRECT">公司直接支付</option></select></label><label>凭证类型<select name="receiptType" id="manager-expense-receipt" required><option value="INVOICE">发票</option><option value="RECEIPT">收据</option><option value="NO_RECEIPT">无票</option></select></label></div>
+              <label>收款方<input name="payeeName" maxlength="160" placeholder="可选"></label><label>发票号码<input name="invoiceNo" maxlength="100" placeholder="有发票时填写"></label>
+              <label>费用说明<textarea name="description" rows="3" maxlength="4000" required placeholder="填写用途、事由和明细"></textarea></label>
+              <label id="manager-expense-reason-field" class="hidden">无票说明<textarea name="noReceiptReason" rows="2" maxlength="4000" placeholder="填写无票原因"></textarea></label>
+              <label class="expense-upload">上传凭证<input name="files" id="manager-expense-files" type="file" accept="image/jpeg,image/png,application/pdf" multiple><span>选择 JPG、PNG 或 PDF，最多 9 个文件</span></label><p class="expense-file-hint">单个文件不超过 10MB，保存后上传。</p>
+              <div id="manager-expense-attachments" class="manager-expense-attachments"></div>
+              <div id="manager-expense-local-files" class="manager-expense-attachments"></div>
+              <div class="expense-editor-actions"><button class="manager-secondary-button" id="manager-expense-cancel" type="button">取消</button><button class="manager-secondary-button" id="manager-expense-save" type="submit">保存草稿</button><button class="manager-primary-button" id="manager-expense-save-submit" type="button">保存并提交</button></div>
+            </form>
+          </div>
+        </section>
+        <nav class="manager-tabbar" id="manager-tabbar" aria-label="店长端主导航">
+          <button class="selected" type="button" data-manager-nav="home" title="首页"><span aria-hidden="true">⌂</span><b>首页</b></button>
+          <button type="button" data-manager-nav="business" data-manager-permission="DAILY_REPORT_VIEW" title="营业数据"><span aria-hidden="true">▥</span><b>营业</b></button>
+          <button type="button" data-manager-nav="commission" data-manager-permission="REPORT_VIEW" title="技师提成"><span aria-hidden="true">¥</span><b>技师</b></button>
+          <button type="button" data-manager-nav="expense" data-manager-permission="EXPENSE_STORE_VIEW" title="费用报销"><span aria-hidden="true">▣</span><b>费用</b></button>
+          <button type="button" data-manager-nav="more" title="门店管理"><span aria-hidden="true">•••</span><b>管理</b></button>
+        </nav>
+      </section>
+    </main>
+    <div class="manager-toast hidden" id="manager-toast"></div>
+    <dialog id="manager-expense-preview"><div class="manager-expense-preview-card"><div class="expense-editor-title"><h3 id="manager-expense-preview-title">凭证预览</h3><button class="manager-quiet-button" id="manager-expense-preview-close" type="button">关闭</button></div><div id="manager-expense-preview-content" class="manager-expense-preview-content"></div></div></dialog>
+    <dialog id="manager-expense-detail-dialog"><div class="manager-expense-detail-card"><div class="expense-editor-title"><div><p>费用报销单</p><h3 id="manager-expense-detail-title">报销详情</h3></div><button class="manager-quiet-button" id="manager-expense-detail-close" type="button">关闭</button></div><div id="manager-expense-detail-content" class="manager-expense-detail-content"></div><div class="expense-editor-actions" id="manager-expense-detail-actions"></div></div></dialog>
+    <script src="./manager-mobile.js?v=20260903-manager-daily-report-sync-v1"></script>
+  </body>
+</html>

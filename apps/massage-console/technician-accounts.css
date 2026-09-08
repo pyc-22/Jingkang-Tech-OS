@@ -1,0 +1,22 @@
+.technician-accounts-card { width:760px; }
+.account-security-note { margin:13px 0; color:var(--muted); font-size:12px; line-height:1.55; }
+.technician-account-row { display:grid; grid-template-columns:minmax(205px,1fr) minmax(175px,.8fr) auto; align-items:center; gap:16px; min-height:88px; padding:13px 2px; border-top:1px solid #edf1ef; }
+.technician-account-identity,.technician-account-status { display:grid; gap:5px; min-width:0; }
+.technician-account-identity b { color:#213c37; font-size:14px; }
+.technician-account-identity small { color:var(--muted); font-size:11px; overflow-wrap:anywhere; }
+.technician-account-status small { overflow:hidden; color:var(--muted); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+.technician-account-status .record-type { width:max-content; font-style:normal; }
+.technician-account-actions { display:flex; justify-content:flex-end; align-items:center; gap:7px; min-width:160px; }
+.technician-account-actions .record-delete { margin:0; }
+.technician-account-actions > small { color:var(--muted); font-size:11px; white-space:nowrap; }
+.reset-account-card { width:460px; }
+.reset-account-subject { display:grid; gap:5px; margin:2px 0 8px; padding:11px; border:1px solid #dce9e4; border-radius:5px; background:#f5faf8; }
+.reset-account-subject b { color:#1c413b; font-size:13px; }
+.reset-account-subject small { color:var(--muted); font-size:11px; }
+.show-password-option { display:flex; align-items:center; gap:7px; margin-top:10px; color:#52625e; font-size:12px; font-weight:400; }
+.show-password-option input { width:14px; height:14px; accent-color:var(--teal); }
+.reset-password-result { display:grid; gap:7px; margin-top:15px; padding:13px; border:1px solid #b9d8ce; border-radius:5px; background:#eef8f4; }
+.reset-password-result span,.reset-password-result small { color:#52625e; font-size:11px; }
+.reset-password-result b { color:#12655e; font-size:18px; letter-spacing:0; overflow-wrap:anywhere; }
+.reset-password-result .button { justify-self:end; margin-top:3px; }
+@media (max-width:760px) { .technician-account-row { grid-template-columns:1fr; gap:10px; }.technician-account-actions { justify-content:flex-start; }.technician-accounts-card,.reset-account-card { width:calc(100vw - 28px); } }

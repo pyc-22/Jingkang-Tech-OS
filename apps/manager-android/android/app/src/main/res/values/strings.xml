@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">靖康店长端</string>
+    <string name="title_activity_main">靖康店长端</string>
+    <string name="package_name">com.jingkang.operations.manager</string>
+    <string name="custom_url_scheme">com.jingkang.operations.manager</string>
+</resources>

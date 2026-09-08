@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>独立账本 · 靖康科技运营</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="ledger-page">
+      <header class="ledger-topbar">
+        <a class="back-link" id="ledger-back" href="./index.html" title="返回前台收银" aria-label="返回前台收银">‹</a>
+        <div><p class="eyebrow" id="ledger-eyebrow">前台独立数据区</p><h1 id="ledger-title">前台订单与消费账本</h1></div>
+        <button class="button primary" id="add-record">新增记录</button>
+      </header>
+
+      <main class="ledger-content">
+        <div class="ledger-notice"><span>账</span><p><b id="ledger-notice-title">前台独立账本</b><small id="ledger-notice-description">这里的金额和记录仅在本页面统计，不会写入前台收银订单或会员余额。</small></p></div>
+        <section class="metric-grid ledger-metrics">
+          <article class="metric"><span>订单金额</span><strong id="order-amount">¥0.00</strong><small>独立订单累计</small></article>
+          <article class="metric"><span>消费金额</span><strong id="consumption-amount">¥0.00</strong><small>会员/散客消费累计</small></article>
+          <article class="metric"><span>订单记录</span><strong id="order-count">0</strong><small>本账本订单笔数</small></article>
+          <article class="metric"><span>消费记录</span><strong id="consumption-count">0</strong><small>本账本消费笔数</small></article>
+        </section>
+
+        <section class="panel ledger-panel">
+          <div class="ledger-toolbar">
+            <div class="segment-control" role="group" aria-label="记录类型筛选"><button class="selected" data-filter="all">全部记录</button><button data-filter="order">订单金额</button><button data-filter="consumption">消费记录</button></div>
+            <label class="search-field"><span>⌕</span><input id="record-search" placeholder="搜索会员、单号或说明" /></label>
+          </div>
+          <div class="ledger-table-wrap"><table><thead><tr><th>时间</th><th>类型</th><th>会员 / 客户</th><th>单号</th><th>说明</th><th class="align-right">金额</th><th></th></tr></thead><tbody id="ledger-records"></tbody></table></div>
+          <p class="table-empty hidden" id="empty-records">没有符合条件的独立记录</p>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="record-dialog"><form id="record-form" class="dialog-card"><div class="dialog-heading"><div><p class="eyebrow">独立账本</p><h2>新增记录</h2></div><button class="icon-button" type="button" id="close-record-dialog" aria-label="关闭">×</button></div><div class="form-grid"><label>记录类型<select name="type"><option value="order">订单金额</option><option value="consumption">消费记录</option></select></label><label>金额<input name="amount" type="number" min="0.01" step="0.01" placeholder="例如 298.00" required /></label><label>会员 / 客户<input name="customer" maxlength="32" placeholder="例如 林女士" required /></label><label>单号<input name="orderNo" maxlength="32" placeholder="可选" /></label><label class="form-full">说明<input name="note" maxlength="80" placeholder="例如 肩颈舒缓 90 分钟" required /></label></div><div class="dialog-actions"><button class="button secondary" type="button" id="cancel-record">取消</button><button class="button primary" type="submit">保存记录</button></div></form></dialog>
+    <div class="toast hidden" id="toast"></div>
+    <script src="./ledger.js"></script>
+  </body>
+</html>

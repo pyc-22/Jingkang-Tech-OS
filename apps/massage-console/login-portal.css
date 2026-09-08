@@ -1,0 +1,70 @@
+:root { --portal-blue: #071a42; --portal-panel: #0a2860; --portal-line: rgba(91, 177, 255, .48); --portal-text: #f4f8ff; --portal-muted: #a9bce0; --portal-action: #2875f7; }
+
+body.login-portal-page,
+body.frontdesk-auth-locked {
+  background: #031337 url('./assets/jingkang-login-background.png') center / cover fixed no-repeat;
+}
+
+.login-portal-surface {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--portal-line) !important;
+  border-radius: 8px !important;
+  color: var(--portal-text) !important;
+  background: rgba(5, 26, 68, .94) !important;
+  box-shadow: 0 20px 54px rgba(0, 7, 24, .52), inset 0 1px 0 rgba(255, 255, 255, .1) !important;
+}
+.login-portal-surface::before {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: #4b9eff;
+  content: "";
+}
+.login-portal-brand { display: grid; justify-items: center; gap: 8px; margin-bottom: 25px; text-align: center; }
+.login-portal-mark { display: grid; place-items: center; width: 46px; height: 46px; border: 1px solid #69b2ff; border-radius: 7px; color: #d9ecff; background: #1f64c9; box-shadow: 0 0 24px rgba(60, 148, 255, .36); font-family: Arial, sans-serif; font-size: 16px; font-weight: 800; letter-spacing: 1px; }
+.login-portal-brand h1 { margin: 3px 0 0; color: #ffffff; font-size: 23px; line-height: 1.2; letter-spacing: 0; }
+.login-portal-brand p { margin: 0; color: var(--portal-muted); font-size: 12px; }
+.login-portal-role { display: inline-flex; align-items: center; min-height: 25px; padding: 0 10px; border: 1px solid rgba(114, 188, 255, .55); border-radius: 4px; color: #c6e6ff; background: rgba(38, 112, 212, .22); font-size: 12px; font-weight: 700; }
+.login-portal-surface h2 { color: var(--portal-text); }
+.login-portal-surface p { color: var(--portal-muted); }
+.login-portal-surface label { color: #d8e7ff !important; }
+.login-portal-surface input { border-color: rgba(119, 177, 246, .34) !important; border-radius: 6px !important; color: #ffffff !important; background: rgba(2, 18, 53, .72) !important; }
+.login-portal-surface input:focus { border-color: #58a5ff !important; box-shadow: 0 0 0 3px rgba(61, 142, 255, .18) !important; }
+.login-portal-surface button[type="submit"] { border: 1px solid #4c98ff !important; border-radius: 6px !important; color: #ffffff !important; background: #2875f7 !important; box-shadow: 0 8px 18px rgba(31, 102, 240, .3); }
+.login-portal-surface button[type="submit"]:hover { background: #1c66df !important; }
+
+body.login-portal-page .manager-shell,
+body.login-portal-page .mobile-app-shell { background: transparent; }
+body.login-portal-page .manager-login,
+body.login-portal-page .login-panel { max-width: 430px; margin: clamp(64px, 14vh, 138px) auto 0; padding: 30px 28px; }
+body.login-portal-page .manager-login { display: block; }
+body.login-portal-page .login-panel { display: block; }
+body.login-portal-page .manager-login.hidden,
+body.login-portal-page .login-panel.hidden { display: none; }
+body.login-portal-page .manager-login > div:not(.login-portal-brand),
+body.login-portal-page .login-panel > div:not(.login-portal-brand) { text-align: center; }
+body.login-portal-page .manager-login form,
+body.login-portal-page .login-panel form { margin-top: 20px; }
+body.login-portal-page .manager-login button[type="submit"],
+body.login-portal-page .login-panel button[type="submit"] { width: 100%; min-height: 46px; }
+body.login-portal-page:has(#manager-login-screen:not(.hidden)) .manager-header,
+body.login-portal-page:has(#login-screen:not(.hidden)) .app-header,
+body.login-portal-page:has(#login-screen:not(.hidden)) .mobile-tabbar { display: none; }
+body.login-portal-page:has(#manager-login-screen:not(.hidden)) .manager-shell,
+body.login-portal-page:has(#login-screen:not(.hidden)) .mobile-app-shell { width: min(100%, 600px); padding-top: 1px; }
+
+body.frontdesk-auth-locked #admin-login-dialog { width: min(420px, calc(100vw - 32px)); border: 0; background: transparent; box-shadow: none; }
+body.frontdesk-auth-locked #admin-login-dialog::backdrop { background: rgba(1, 11, 35, .32); backdrop-filter: blur(3px); }
+body.frontdesk-auth-locked #admin-login-dialog .dialog-heading { display: none; }
+body.frontdesk-auth-locked #admin-login-dialog .login-portal-surface { display: block; width: 100%; padding: 32px 30px 28px; }
+body.frontdesk-auth-locked #admin-login-dialog .dialog-actions { margin-top: 20px; }
+body.frontdesk-auth-locked #admin-login-dialog .button.primary { width: 100%; min-height: 46px; }
+
+@media (max-width: 430px) {
+  body.login-portal-page .manager-login,
+  body.login-portal-page .login-panel { margin-top: 54px; padding: 28px 22px; }
+  .login-portal-brand h1 { font-size: 21px; }
+}

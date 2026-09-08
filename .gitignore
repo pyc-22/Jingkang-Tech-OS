@@ -1,0 +1,94 @@
+# Node dependencies and package-manager caches
+node_modules/
+**/node_modules/
+.npm/
+.yarn/
+.yarn-cache/
+.pnpm-store/
+
+# Local environment and secrets
+.env
+.env.local
+.env.*.local
+*.jks
+*.keystore
+**/google-services.json
+
+# Runtime logs and diagnostics
+.runtime-logs/
+runtime-logs/
+*.log
+*.out
+*.err
+*.err.log
+*.out.log
+
+# Java and Maven outputs
+services/*/target/
+.m2/
+.tools/
+.tmp-maven/
+apache-maven-*-bin.zip
+maven-download.zip
+/*.jar
+/*.war
+/*.class
+/*.hprof
+
+# Android and Gradle outputs
+.gradle/
+**/.gradle/
+**/build/
+**/.cxx/
+**/.externalNativeBuild/
+*.apk
+*.aab
+
+# Generated previews, screenshots, media, and archives
+.artifacts/
+artifacts/
+output/
+tmp/
+video-frames/
+*-preview.png
+*-check.png
+*-final.png
+*-desktop.png
+*-mobile.png
+douyin-search-*.png
+*.mp4
+/*.zip
+
+# Root-level transient analysis and extracted artifacts
+.tmp-*
+.tmp_*
+.tmpjar/
+.tmpjar2/
+META-INF/
+
+# Historical deployment artifacts; source templates remain tracked
+deploy/package/
+deploy/releases/
+deploy/patches/
+deploy/snapshots/
+deploy/secure/
+deploy/*.zip
+deploy/20*-*/
+deploy/preflight-*/
+deploy/*-staging/
+deploy/*-stage/
+deploy/*-package/
+deploy/repair-fw-*.sql
+deploy/run-repair-fw-*.ps1
+deploy/run.cmd
+
+# Runtime data and uploaded files; keep only documented examples in source
+data/
+services/*/data/
+
+# IDE, assistant, and platform-local files
+.claude/settings.local.json
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
