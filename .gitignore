@@ -86,6 +86,10 @@ deploy/run.cmd
 data/
 services/*/data/
 
+# Python caches
+__pycache__/
+*.py[cod]
+
 # IDE, assistant, and platform-local files
 .claude/settings.local.json
 .idea/
