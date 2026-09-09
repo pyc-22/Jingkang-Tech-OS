@@ -154,3 +154,39 @@ h1,h2,p { margin:0; } h1 { margin-top:5px; font-size:25px; line-height:1.15; } h
 .manager-live-technician p { margin:7px 0 4px; color:#17685f; font-size:10px; font-weight:700; overflow-wrap:anywhere; }
 .manager-live-technician > small { display:block; margin-top:3px; color:#778680; font-size:9px; line-height:1.45; overflow-wrap:anywhere; }
 .manager-live-technician-empty { margin:0; padding:10px; color:#83908c; font-size:10px; }
+.manager-dispatch-section { border-color:#b9ddd3; background:#f8fcfa; }
+.manager-dispatch-section .manager-home-section-heading { margin-bottom:8px; }
+.manager-dispatch-section .manager-primary-button { min-width:82px; }
+.manager-dispatch-summary { display:flex; align-items:center; justify-content:space-between; gap:8px; color:#5f7770; font-size:10px; line-height:1.5; }
+.manager-dispatch-summary span:last-child { color:#168276; white-space:nowrap; }
+.manager-live-room-actions,.manager-live-technician-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+.manager-live-arrange-button { min-height:26px; padding:0 8px; border:1px solid #9acfc1; border-radius:4px; color:#08786f; background:#effaf6; font-size:10px; font-weight:800; cursor:pointer; }
+.manager-live-arrange-button:hover { color:#fff; background:#08786f; }
+#manager-clock-dialog { width:min(560px,calc(100vw - 20px)); max-width:calc(100vw - 20px); max-height:calc(100dvh - 20px); padding:0; border:0; border-radius:7px; background:#fff; box-shadow:0 18px 60px rgba(15,46,42,.24); }
+#manager-clock-dialog::backdrop { background:rgba(14,39,34,.38); }
+.manager-clock-dialog-card { display:grid; gap:12px; padding:16px; }
+.manager-clock-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+.manager-clock-grid label,.manager-clock-picker { display:grid; gap:5px; color:#566863; font-size:11px; font-weight:700; }
+.manager-clock-grid label select { width:100%; min-height:35px; padding:0 8px; border:1px solid #ccdcd5; border-radius:4px; color:var(--ink); background:#fff; font-size:11px; }
+.manager-clock-full { grid-column:1/-1; }
+.manager-clock-picker { padding-top:11px; border-top:1px solid #e5eeea; }
+.manager-clock-picker-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.manager-clock-picker-heading small { color:#899590; font-size:9px; font-weight:400; }
+.manager-clock-tech-list { display:grid; grid-template-columns:1fr 1fr; gap:7px; max-height:245px; overflow:auto; }
+.manager-clock-tech-choice { display:grid; grid-template-columns:28px minmax(0,1fr) auto; align-items:center; gap:7px; min-width:0; min-height:52px; padding:7px; border:1px solid #dce8e3; border-radius:5px; color:var(--ink); background:#fbfdfc; text-align:left; cursor:pointer; }
+.manager-clock-tech-choice:hover { border-color:#8fcabb; background:#f1faf7; }
+.manager-clock-tech-choice.selected { border-color:#08786f; background:#e5f5f0; box-shadow:inset 0 0 0 1px #08786f; }
+.manager-clock-tech-avatar { display:grid; place-items:center; width:28px; height:28px; border-radius:6px; color:#08786f; background:#d9f0e9; font-size:13px; font-weight:800; }
+.manager-clock-tech-choice span:not(.manager-clock-tech-avatar) { display:grid; gap:2px; min-width:0; }
+.manager-clock-tech-choice b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+.manager-clock-tech-choice small { color:#82908b; font-size:9px; }
+.manager-clock-tech-choice em { padding:3px 4px; color:#28744f; background:#e5f4eb; font-size:9px; font-style:normal; white-space:nowrap; }
+.manager-clock-tech-choice:not(.selected) em { color:#6e6a35; background:#f7f4dc; }
+.manager-clock-allocation { display:grid; gap:7px; padding:10px; border:1px solid #dce9e4; border-radius:5px; background:#f7fbf9; }
+.manager-clock-allocation-heading { display:flex; justify-content:space-between; gap:8px; color:#315f57; font-size:10px; }
+.manager-clock-allocation-heading small { color:#8a9692; font-size:9px; }
+.manager-clock-allocation label { display:grid; grid-template-columns:minmax(0,1fr) 90px auto; align-items:center; gap:7px; color:#566863; font-size:10px; }
+.manager-clock-allocation input { width:100%; min-height:30px; padding:0 7px; border:1px solid #ccdcd5; border-radius:4px; color:var(--ink); background:#fff; font-size:11px; }
+.manager-clock-allocation em { color:#73827d; font-style:normal; }
+.manager-clock-note { padding:8px 9px; color:#647770; background:#f1f7f4; font-size:10px; line-height:1.5; }
+@media (max-width:420px) { .manager-clock-grid,.manager-clock-tech-list { grid-template-columns:1fr; } .manager-clock-full { grid-column:auto; } .manager-dispatch-summary { align-items:flex-start; flex-direction:column; } }

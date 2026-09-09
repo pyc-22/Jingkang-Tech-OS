@@ -10,7 +10,6 @@ const mobileClockTypeLabel = (value) => ({ QUEUE:'排钟', CALL:'点钟', SELECT
 const mobileScheduleReasonLabel={APPROVED_LEAVE:'今日请假',REST:'今日休息',CANCELLED:'班次已取消',NOT_SCHEDULED:'今日未排班',AVAILABLE:'可上钟',SCHEDULED:'已排班'};
 document.querySelector('.performance-section').insertAdjacentHTML('beforeend','<div class="mobile-performance-range"><div class="mobile-range-tabs" id="mobile-performance-tabs"><button type="button" data-mobile-range="TODAY">今日</button><button type="button" class="selected" data-mobile-range="MONTH">本月</button><button type="button" data-mobile-range="LAST_7_DAYS">近 7 天</button></div><div class="mobile-range-summary"><span id="mobile-range-label">本月汇总</span><div class="mobile-range-money"><div><small>项目业绩</small><strong id="mobile-range-amount">¥0.00</strong></div><div class="commission-total"><small>实际提成</small><strong id="mobile-range-commission">¥0.00</strong></div></div><small><b id="mobile-range-count">0</b> 次服务 · <b id="mobile-range-minutes">0</b> 分钟 · 提成按结算及退款实时同步</small></div></div>');
 document.querySelector('.performance-section .section-title').insertAdjacentHTML('afterend','<section class="mobile-daily-data"><div class="mobile-daily-toolbar"><label>查看日期<input id="mobile-daily-date" type="date"></label><button class="mobile-secondary-action" id="load-mobile-daily-data" type="button">查询</button></div><div class="performance-grid mobile-daily-grid"><article><span>排钟</span><strong id="mobile-daily-queue">0</strong><small>当天已上钟</small></article><article><span>点钟</span><strong id="mobile-daily-call">0</strong><small>含选钟</small></article><article><span>加钟</span><strong id="mobile-daily-extension">0</strong><small>有效加钟</small></article><article><span>完成服务</span><strong id="mobile-daily-completed">0</strong><small>次</small></article><article><span>服务时长</span><strong id="mobile-daily-minutes">0</strong><small>分钟</small></article><article><span>待结算</span><strong id="mobile-daily-pending">0</strong><small>完成但未结算</small></article><article><span>项目业绩</span><strong id="mobile-daily-base">¥0.00</strong><small>结算后金额</small></article><article><span>实际提成</span><strong id="mobile-daily-commission">¥0.00</strong><small>含退款冲减</small></article></div><div class="mobile-daily-list-heading"><h3>当日服务明细</h3><span id="mobile-daily-business-date"></span></div><div class="session-list" id="mobile-daily-service-list"><p class="service-empty">正在加载当日数据</p></div></section>');
-document.body.insertAdjacentHTML('beforeend','<dialog id="mobile-clock-dialog"><form id="mobile-clock-form" class="mobile-clock-dialog"><div class="section-title"><div><h2>本人上钟</h2><p>仅可安排绑定门店的空闲房间</p></div><button class="mobile-dialog-close" type="button" id="close-mobile-clock" aria-label="关闭">×</button></div><label>服务项目<select id="mobile-clock-service" name="serviceItemId" required></select></label><label>服务房间<select id="mobile-clock-room" name="roomId" required></select></label><div class="mobile-clock-duration-summary" id="mobile-clock-duration-summary">项目时长由前台项目管理设置</div><label>备注<input name="note" maxlength="240" placeholder="可不填" /></label><div class="mobile-dialog-actions"><button class="mobile-action" type="submit">确认上钟</button></div></form></dialog>');
 document.body.insertAdjacentHTML('beforeend','<dialog id="mobile-extension-dialog"><form id="mobile-extension-form" class="mobile-clock-dialog"><div class="section-title"><div><h2>服务加钟</h2><p id="mobile-extension-subtitle">请选择加钟项目</p></div><button class="mobile-dialog-close" type="button" id="close-mobile-extension" aria-label="关闭">×</button></div><label>加钟项目<select id="mobile-extension-service" name="serviceItemId" required></select></label><div class="mobile-extension-preview" id="mobile-extension-preview"></div><div class="mobile-dialog-actions"><button class="mobile-secondary-action" type="button" id="cancel-mobile-extension">取消</button><button class="mobile-action" type="submit">确认加钟</button></div></form></dialog>');
 document.body.insertAdjacentHTML('beforeend','<dialog id="mobile-room-transfer-dialog"><form id="mobile-room-transfer-form" class="mobile-clock-dialog"><div class="section-title"><div><h2>申请换房</h2><p id="mobile-room-transfer-subtitle">选择服务中的目标房间</p></div><button class="mobile-dialog-close" type="button" id="close-mobile-room-transfer" aria-label="关闭">×</button></div><label>目标房间<select id="mobile-room-transfer-room" name="toRoomId" required></select></label><label>换房原因<textarea name="reason" rows="3" maxlength="240" required placeholder="例如：客户加钟后需要更换大房"></textarea></label><div class="mobile-dialog-actions"><button class="mobile-secondary-action" type="button" id="cancel-mobile-room-transfer">取消</button><button class="mobile-action" type="submit">提交申请</button></div></form></dialog>');
 document.body.insertAdjacentHTML('beforeend','<dialog id="mobile-leave-dialog" class="mobile-leave-dialog"><form id="mobile-leave-form"><div class="section-title"><div><h2>请假申请</h2><p>提交后需要等待管理员审批</p></div><button class="mobile-dialog-close" type="button" id="close-mobile-leave" aria-label="关闭">×</button></div><label>开始日期<input name="startDate" type="date" required></label><label>结束日期<input name="endDate" type="date" required></label><label>请假原因<input name="reason" maxlength="240" placeholder="可不填"></label><div class="mobile-dialog-actions"><button class="mobile-secondary-action" type="button" id="cancel-mobile-leave">取消</button><button class="mobile-action" type="submit">提交申请</button></div></form></dialog>');
@@ -19,7 +18,6 @@ document.body.insertAdjacentHTML('beforeend','<dialog id="mobile-reject-dispatch
 document.body.insertAdjacentHTML('beforeend','<dialog id="mobile-transfer-dialog"><form id="mobile-transfer-form" class="mobile-clock-dialog"><div class="section-title"><div><h2>申请转单</h2><p>前台审核同意后，新技师才会收到派单</p></div><button class="mobile-dialog-close" type="button" id="close-mobile-transfer" aria-label="关闭">×</button></div><label>接收技师<select name="toTechnicianId" id="mobile-transfer-technician" required></select></label><label>转单原因<textarea name="reason" rows="4" maxlength="240" required placeholder="请填写转单原因"></textarea></label><div class="mobile-dialog-actions"><button class="mobile-secondary-action" type="button" id="cancel-mobile-transfer">取消</button><button class="mobile-action" type="submit">提交申请</button></div></form></dialog>');
 
 let mobilePerformanceRange='MONTH';
-let mobileClockOptions={services:[],rooms:[]};
 let mobileExtensionOptions={services:[]};
 let mobileRoomTransferOptions={rooms:[]};
 let mobileRoomTransferSessionId=null;
@@ -335,8 +333,8 @@ function renderCurrentService(session, acceptedSession, pendingSession, clockInE
   }
   if (!session) {
     stopMobileServiceReminders();
-    const label=mobileScheduleReasonLabel[clockInReason]||'当前不可上钟';
-    target.innerHTML=`<div class="section-title"><h2>当前服务</h2><span class="status-chip ${clockInEligible?'neutral':'blocked'}">${label}</span></div><div class="service-empty">${clockInEligible?'当前没有进行中的服务':'请联系门店管理员确认排班或请假状态'}</div>${clockInEligible?'<button class="mobile-action" type="button" id="open-mobile-clock-in">我要上钟</button>':''}`;
+    const label=mobileScheduleReasonLabel[clockInReason]||'等待安排';
+    target.innerHTML=`<div class="section-title"><h2>当前服务</h2><span class="status-chip ${clockInEligible?'neutral':'blocked'}">${label}</span></div><div class="service-empty">${clockInEligible?'等待前台或店长安排上钟':'请联系门店管理员确认排班或请假状态'}</div>`;
     return;
   }
   const extension = session.extensionSummary ? `<small>加钟：${session.extensionSummary}</small>` : '';
@@ -387,30 +385,6 @@ async function submitMobileExtensionIntent() {
   const response=await fetch('/api/v1/service-extension-intents',{method:'POST',headers:{...mobileAuthHeaders(),'Content-Type':'application/json'},body:JSON.stringify({serviceSessionId:mobileActiveSession.id,technicianNote:note.trim()||null})});
   if(!response.ok){const detail=(await response.text()).replace(/^"|"$/g,'');return mobileToast(response.status===404?'意向加钟服务尚未更新，请联系管理员重启 API':(detail||'意向加钟提交失败，请刷新后重试'));}
   const created=await response.json(); mobileExtensionIntents=[created,...mobileExtensionIntents.filter(item=>String(item.id)!==String(created.id))]; renderCurrentService(mobileActiveSession,null,null); mobileToast('意向加钟已通知前台');
-}
-
-function renderMobileClockForm() {
-  const services=document.querySelector('#mobile-clock-service');
-  const rooms=document.querySelector('#mobile-clock-room');
-  services.innerHTML=mobileClockOptions.services.map(service=>`<option value="${service.id}" data-duration="${service.defaultDurationMinutes}">${service.name} · ${mobileMoney(service.priceCents)}</option>`).join('');
-  rooms.innerHTML=mobileClockOptions.rooms.map(room=>`<option value="${room.id}">${room.code} · ${room.name}</option>`).join('');
-  const durationSummary=document.querySelector('#mobile-clock-duration-summary');
-  const renderDuration=()=>{const selected=services.selectedOptions[0];durationSummary.textContent=selected?.dataset.duration?`项目时长：${selected.dataset.duration} 分钟（由前台项目管理设置）`:'项目时长由前台项目管理设置';};
-  services.onchange=renderDuration;
-  renderDuration();
-}
-
-async function openMobileClockDialog() {
-  const response=await fetch(`${mobileApi}/technician/clock-options`,{headers:mobileAuthHeaders()});
-  if(response.status===401){clearMobileSession();showLogin('登录已失效，请重新登录');return;}
-  if(!response.ok)throw new Error(response.status);
-  mobileClockOptions=await response.json();
-  if(!mobileClockOptions.clockInEligible)return mobileToast(mobileScheduleReasonLabel[mobileClockOptions.clockInReason]||'当前不可上钟');
-  if(!mobileClockOptions.services.length)return mobileToast('当前门店没有可用服务项目');
-  if(!mobileClockOptions.rooms.length)return mobileToast('当前没有可安排的空闲房间');
-  document.querySelector('#mobile-clock-form').reset();
-  renderMobileClockForm();
-  document.querySelector('#mobile-clock-dialog').showModal();
 }
 
 function renderMobileExtensionForm() {
@@ -602,7 +576,6 @@ document.querySelector('#confirm-mobile-dispatch').addEventListener('click',asyn
 });
 document.querySelector('#current-service').addEventListener('click',async event=>{
   if(event.target.closest('#mobile-confirm-pending')){document.querySelector('#confirm-mobile-dispatch').click();return;}
-  if(event.target.closest('#open-mobile-clock-in')){try{await openMobileClockDialog();}catch{mobileToast('上钟资料暂时无法加载，请稍后重试');}}
   if(event.target.closest('#open-mobile-extension')){try{await openMobileExtensionDialog();}catch{mobileToast('加钟资料暂时无法加载，请稍后重试');}}
   if(event.target.closest('#mobile-extension-intent'))await submitMobileExtensionIntent();
   if(event.target.closest('#open-mobile-room-transfer')){const button=event.target.closest('#open-mobile-room-transfer');if(button.disabled)return;try{if(mobileActiveSession)await openMobileRoomTransferDialog(mobileActiveSession);else mobileToast('当前没有可换房的服务');}catch{mobileToast('换房资料暂时无法加载，请稍后重试');}}
@@ -610,7 +583,6 @@ document.querySelector('#current-service').addEventListener('click',async event=
   if(event.target.closest('#mobile-transfer-current'))await openMobileTransferDialog();
   if(event.target.closest('#mobile-clock-out'))await mobileClockOut();
 });
-document.querySelector('#close-mobile-clock').addEventListener('click',()=>document.querySelector('#mobile-clock-dialog').close());
 document.querySelector('#close-mobile-extension').addEventListener('click',()=>document.querySelector('#mobile-extension-dialog').close());
 document.querySelector('#cancel-mobile-extension').addEventListener('click',()=>document.querySelector('#mobile-extension-dialog').close());
 document.querySelector('#close-mobile-room-transfer').addEventListener('click',()=>document.querySelector('#mobile-room-transfer-dialog').close());
@@ -626,15 +598,6 @@ document.querySelector('#mobile-leave-form').addEventListener('submit',async eve
   document.querySelector('#mobile-leave-dialog').close();
   await loadMobileLeaveRequests();
   mobileToast('请假申请已提交，等待管理员审批');
-});
-document.querySelector('#mobile-clock-form').addEventListener('submit',async event=>{
-  event.preventDefault();
-  const form=new FormData(event.currentTarget);
-  const response=await fetch(`${mobileApi}/technician/clock-in`,{method:'POST',headers:{...mobileAuthHeaders(),'Content-Type':'application/json'},body:JSON.stringify({roomId:form.get('roomId'),serviceItemId:form.get('serviceItemId'),note:form.get('note')||null})});
-  if(!response.ok){mobileToast(response.status===409?'房间或技师状态已变化，请重新选择':'上钟失败，请检查填写内容');return;}
-  document.querySelector('#mobile-clock-dialog').close();
-  await loadMobileDashboard();
-  mobileToast('已成功上钟');
 });
 document.querySelector('#mobile-extension-form').addEventListener('submit',async event=>{
   event.preventDefault();

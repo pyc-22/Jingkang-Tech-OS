@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>靖康科技运营 - 管理看板</title>
-    <link rel="stylesheet" href="./manager-mobile.css?v=20260903-manager-daily-report-sync-v1" />
+    <link rel="stylesheet" href="./manager-mobile.css?v=20260909-manager-dispatch-clock-v1" />
     <link rel="stylesheet" href="./login-portal.css" />
   </head>
   <body class="login-portal-page">
@@ -83,6 +83,10 @@
           <div class="manager-live-technician-attention hidden" id="manager-live-technician-attention"></div>
           <div class="manager-live-technician-groups" id="manager-live-technician-groups"><p class="comparison-empty">正在加载技师状态</p></div>
         </section>
+        <section class="manager-section manager-dispatch-section" id="manager-dispatch-section" data-manager-page-panel="home" data-manager-permission="FRONTDESK_SETTLE">
+          <div class="section-heading manager-home-section-heading"><div><p class="manager-section-kicker">现场安排</p><h2>安排技师上钟</h2><small>复用前台派钟流程，提交后由技师端确认接单</small></div><button class="manager-primary-button" id="manager-open-dispatch" type="button">安排上钟</button></div>
+          <div class="manager-dispatch-summary"><span>钟类、项目、房间和技师均按当前门店实时状态加载</span><span id="manager-dispatch-sync">等待同步</span></div>
+        </section>
 
         <section class="manager-section attention-section manager-home-attention" data-manager-page-panel="home">
           <div class="section-heading manager-home-section-heading"><div><p class="manager-section-kicker">工作提醒</p><h2>待处理事项</h2></div><small>及时跟进</small></div>
@@ -139,6 +143,7 @@
     <div class="manager-toast hidden" id="manager-toast"></div>
     <dialog id="manager-expense-preview"><div class="manager-expense-preview-card"><div class="expense-editor-title"><h3 id="manager-expense-preview-title">凭证预览</h3><button class="manager-quiet-button" id="manager-expense-preview-close" type="button">关闭</button></div><div id="manager-expense-preview-content" class="manager-expense-preview-content"></div></div></dialog>
     <dialog id="manager-expense-detail-dialog"><div class="manager-expense-detail-card"><div class="expense-editor-title"><div><p>费用报销单</p><h3 id="manager-expense-detail-title">报销详情</h3></div><button class="manager-quiet-button" id="manager-expense-detail-close" type="button">关闭</button></div><div id="manager-expense-detail-content" class="manager-expense-detail-content"></div><div class="expense-editor-actions" id="manager-expense-detail-actions"></div></div></dialog>
-    <script src="./manager-mobile.js?v=20260903-manager-daily-report-sync-v1"></script>
+    <dialog id="manager-clock-dialog"><form id="manager-clock-form" class="manager-clock-dialog-card"><div class="expense-editor-title"><div><p>现场安排</p><h3>安排技师上钟</h3></div><button class="manager-quiet-button" id="manager-clock-close" type="button">关闭</button></div><div class="manager-clock-grid"><label>上钟类别<select id="manager-clock-type" name="clockType"><option value="QUEUE">排钟</option><option value="CALL">点钟</option><option value="SELECTED">选钟</option><option value="BOOKED_QUEUE">预定排钟</option><option value="BOOKED_CALL">预定点钟</option></select></label><label>服务房间<select id="manager-clock-room" name="roomId" required></select></label><label class="manager-clock-full">服务项目<select id="manager-clock-service" name="serviceItemId" required></select></label></div><div class="manager-clock-picker"><div class="manager-clock-picker-heading"><b>选择技师</b><small id="manager-clock-tech-count">最多选择 4 位</small></div><div id="manager-clock-tech-list" class="manager-clock-tech-list"></div></div><div id="manager-clock-allocation" class="manager-clock-allocation"></div><p class="manager-clock-note">即时派钟会进入技师端待接单；预定钟会先占用房间并在前一单结束后提醒技师。</p><div class="expense-editor-actions"><button class="manager-secondary-button" id="manager-clock-cancel" type="button">取消</button><button class="manager-primary-button" type="submit">确认安排</button></div></form></dialog>
+    <script src="./manager-mobile.js?v=20260909-manager-dispatch-clock-v1"></script>
   </body>
 </html>
