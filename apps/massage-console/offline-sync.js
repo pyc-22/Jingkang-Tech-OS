@@ -33,13 +33,12 @@
     const path = new URL(url, location.href).pathname;
     return path.startsWith('/api/v1/service-sessions') || path.startsWith('/api/v1/service-reservations')
       || path.startsWith('/api/v1/service-room-transfers') || /^\/api\/v1\/rooms\/[^/]+\/(status|complete-cleaning|confirm-payment)$/.test(path)
-      || /^\/api\/v1\/mobile\/technician\/(dispatch-notification\/(confirm|reject)|start-service|clock-out|clock-in|extensions|service-room-transfers)$/.test(path);
+      || /^\/api\/v1\/mobile\/technician\/(dispatch-notification\/(confirm|reject)|start-service|clock-out|extensions|service-room-transfers)$/.test(path);
   };
   const operationLabel = operation => {
     const path = new URL(operation.url, location.href).pathname;
     if (path.endsWith('/start-service')) return '开始服务';
     if (path.endsWith('/clock-out')) return '结束服务';
-    if (path.endsWith('/clock-in')) return '手动上钟';
     if (path.endsWith('/extensions')) return '加钟';
     if (path.includes('room-transfers')) return '换房申请';
     if (path.includes('service-reservations')) return '预约派单';
@@ -104,7 +103,7 @@
       || /^\/api\/v1\/members\/[^/]+\/recharges$/.test(path)
       || path === '/api/v1/member-wallet/recharge'
       || /^\/api\/v1\/rooms\/[^/]+\/status$/.test(path)
-      || /^\/api\/v1\/mobile\/technician\/(clock-in|start-service|clock-out|extensions)$/.test(path);
+      || /^\/api\/v1\/mobile\/technician\/(start-service|clock-out|extensions)$/.test(path);
   };
   const notify = message => {
     const node = document.querySelector('#toast, #mobile-toast, #manager-toast');

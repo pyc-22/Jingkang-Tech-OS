@@ -257,32 +257,10 @@ public class TechnicianMobileController {
   }
 
   @PostMapping("/clock-in")
-  @Transactional
-  ServiceSession clockIn(@Valid @RequestBody ClockInInput input,
-                         @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
-    Technician technician = currentTechnician(authorization);
-    schedulePolicy.requireClockInEligibility(technician.storeId(), technician.id());
-    if (hasActiveSession(technician.storeId(), "technician_id", technician.id())) throw conflict("Technician already has an active service");
-    if (!isAvailableRoom(technician.storeId(), input.roomId())) throw conflict("Room is unavailable or needs cleaning");
-    OffsetDateTime startedAt = OffsetDateTime.now();
-    LocalDate businessDate = businessClock.businessDate(technician.storeId(), startedAt);
-    ResolvedServiceItem service = itemVersions.activeItem(technician.storeId(), input.serviceItemId(), businessDate)
-      .orElseThrow(() -> badRequest("Service item is unavailable"));
-
-    UUID sessionId = UUID.randomUUID();
-    short plannedDurationMinutes = service.defaultDurationMinutes();
-    OffsetDateTime expectedEndAt = startedAt.plusMinutes(plannedDurationMinutes);
-    UUID commissionVersionId = itemVersions.commissionRule(technician.storeId(), service.id(), businessDate).id();
-    jdbc.sql("insert into service_session(id,tenant_id,store_id,technician_id,room_id,service_item_id,service_name_snapshot,service_price_cents,planned_duration_minutes,started_at,expected_end_at,status,note,technician_confirmed_at,business_date,clock_type,price_version_id,commission_rule_version_id,counts_as_clock_snapshot) values(:id,:tenant,:store,:technician,:room,:service,:name,:price,:duration,:started,:expected,'IN_SERVICE',:note,now(),:businessDate,'QUEUE',:priceVersion,:commissionVersion,:countsAsClock)")
-      .param("id", sessionId).param("tenant", TENANT_ID).param("store", technician.storeId()).param("technician", technician.id())
-      .param("room", input.roomId()).param("service", service.id()).param("name", service.name()).param("price", service.priceCents())
-      .param("duration", plannedDurationMinutes).param("started", startedAt).param("expected", expectedEndAt).param("note", input.note()).param("businessDate", businessDate).param("priceVersion", service.priceVersionId()).param("commissionVersion", commissionVersionId).param("countsAsClock", service.countsAsClock()).update();
-    jdbc.sql("insert into service_session_participant(id,tenant_id,store_id,service_session_id,technician_id,slot_no,sequence_no,participation_type,allocation_bp,status,joined_at,accepted_at,service_started_at) values(:id,:tenant,:store,:session,:technician,1,1,'PRIMARY',10000,'IN_SERVICE',:started,:started,:started)")
-      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", technician.storeId()).param("session", sessionId).param("technician", technician.id()).param("started", startedAt).update();
-    recordRoomStatus(technician.storeId(), input.roomId(), "IN_SERVICE", "Technician mobile clock-in: " + service.name());
-    ServiceSession created = session(technician.storeId(), technician.id(), sessionId);
-    audits.record(authorization, technician.storeId(), "SERVICE", "MOBILE_SERVICE_CLOCKED_IN", "service_session", sessionId, "技师手机端上钟", null, created);
-    return created;
+  ServiceSession clockIn(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+    // Technician mobile sessions are passive recipients of front-desk/manager dispatches.
+    currentTechnician(authorization);
+    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "技师端不能自主上钟，请等待前台或店长安排");
   }
 
   @PostMapping("/clock-out")
@@ -497,20 +475,10 @@ public class TechnicianMobileController {
       .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未找到可用的技师账号绑定"));
   }
 
-  private boolean hasActiveSession(UUID storeId, String column, UUID id) {
-    return jdbc.sql("select exists(select 1 from service_session_participant where store_id=:store and technician_id=:id and status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE'))")
-      .param("store", storeId).param("id", id).query(Boolean.class).single();
-  }
-
   private ServiceSession activeSession(Technician technician) {
     return jdbc.sql(sessionSql("and ss.status='IN_SERVICE' and exists(select 1 from service_session_participant current_participant where current_participant.service_session_id=ss.id and current_participant.technician_id=:technician and current_participant.status='IN_SERVICE')", "limit 1"))
       .param("store", technician.storeId()).param("technician", technician.id()).query(ServiceSession.class).optional()
       .orElseThrow(() -> conflict("No active service"));
-  }
-
-  private boolean isAvailableRoom(UUID storeId, UUID roomId) {
-    return jdbc.sql("select exists(select 1 from room r where r.id=:room and r.store_id=:store and r.active=true and not exists(select 1 from service_session ss where ss.store_id=r.store_id and ss.room_id=r.id and ss.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','IN_SERVICE')) and coalesce((select event.status from room_status_event event where event.store_id=r.store_id and event.room_id=r.id order by event.occurred_at desc limit 1),'IDLE')='IDLE')")
-      .param("store", storeId).param("room", roomId).query(Boolean.class).single();
   }
 
   private ServiceSession session(UUID storeId, UUID technicianId, UUID sessionId) {
@@ -554,7 +522,6 @@ public class TechnicianMobileController {
   record ServiceItemOption(UUID id, String code, String name, Short defaultDurationMinutes, Integer priceCents, UUID priceVersionId, Boolean countsAsClock) {}
   record RoomOption(UUID id, String code, String name) {}
   record MobileClockOptions(List<ServiceItemOption> services, List<RoomOption> rooms, Boolean clockInEligible, String clockInReason) {}
-  record ClockInInput(@NotNull UUID roomId, @NotNull UUID serviceItemId, Short plannedDurationMinutes, String note) {}
   record ExtensionOptions(UUID sessionId, String roomCode, OffsetDateTime expectedEndAt, Short plannedDurationMinutes,
                           Integer extensionTotalMinutes, Integer remainingExtensionMinutes,
                           Short serviceDurationMaxMinutes, Short technicianExtensionMaxMinutes,

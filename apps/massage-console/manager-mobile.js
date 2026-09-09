@@ -28,10 +28,15 @@ let managerLiveTechnicianOverview={technicians:[]};
 let managerClockingTechIds=[];
 let managerClockingRoomId='';
 let managerCanArrange=false;
+let managerExtensionSessionId=null;
+let managerExtensionTechnicianId=null;
+let managerActiveSessions=[];
+let managerExtensionRequestToken=0;
 
 function clearManagerSession() {
   [managerTokenKey,managerStoreKey,managerRolesKey,managerPermissionsKey].forEach(key=>localStorage.removeItem(key));
   managerStores=[];
+  resetManagerExtensionState({close:true});
 }
 function managerCurrentStoreId() {
   const stored=localStorage.getItem(managerStoreKey);
@@ -122,12 +127,101 @@ function renderManagerLiveRooms(rooms=[]){
   const sorted=[...rooms].sort((left,right)=>(managerRoomStatusOrder[left.status]??9)-(managerRoomStatusOrder[right.status]??9)||String(left.roomCode||'').localeCompare(String(right.roomCode||''),'zh-CN',{numeric:true}));
   target.innerHTML=sorted.map(room=>{
     const services=room.services||[];
-    const serviceRows=services.map(service=>`<div class="manager-live-service"><div class="manager-live-service-title"><b>${managerEscape(service.serviceNameSnapshot||'未命名项目')}</b><span>${managerEscape(managerClockTypeLabel[service.clockType]||service.clockType||'排钟')}</span></div><p>${managerEscape(service.technicianDisplay||'待安排技师')}</p><small>${managerEscape(service.bedName||service.bedCode||'未指定床位')} · ${managerEscape(managerServiceStatusLabel[service.serviceStatus]||service.serviceStatus||'')}</small><small>${service.startedAt?`上钟 ${managerTime(service.startedAt)} · 预计 ${managerTime(service.expectedEndAt)}结束`:`尚未上钟${service.expectedEndAt?` · 预计 ${managerTime(service.expectedEndAt)}`:''}`}</small></div>`).join('');
+    const serviceRows=services.map(service=>{
+      const servingTechnicians=(managerLiveTechnicianOverview.technicians||[]).filter(item=>String(item.serviceSessionId||'')===String(service.serviceSessionId||'')&&item.status==='IN_SERVICE');
+      const extensionButtons=managerCanArrange&&service.serviceStatus==='IN_SERVICE'
+        ?servingTechnicians.map(technician=>`<button class="manager-live-service-action" type="button" data-manager-extension-session="${managerEscape(service.serviceSessionId)}" data-manager-extension-tech="${managerEscape(technician.technicianId)}" aria-label="为${managerEscape(technician.technicianName||'技师')}安排加钟">${servingTechnicians.length>1?`加钟 · ${managerEscape(technician.technicianName||'技师')}`:'加钟'}</button>`).join(''):'';
+      const extensionActions=extensionButtons?`<div class="manager-live-service-actions">${extensionButtons}</div>`:'';
+      return `<div class="manager-live-service"><div class="manager-live-service-title"><b>${managerEscape(service.serviceNameSnapshot||'未命名项目')}</b><span>${managerEscape(managerClockTypeLabel[service.clockType]||service.clockType||'排钟')}</span></div><p>${managerEscape(service.technicianDisplay||'待安排技师')}</p><small>${managerEscape(service.bedName||service.bedCode||'未指定床位')} · ${managerEscape(managerServiceStatusLabel[service.serviceStatus]||service.serviceStatus||'')}</small><small>${service.startedAt?`上钟 ${managerTime(service.startedAt)} · 预计 ${managerTime(service.expectedEndAt)}结束`:`尚未上钟${service.expectedEndAt?` · 预计 ${managerTime(service.expectedEndAt)}`:''}`}</small>${extensionActions}</div>`;
+    }).join('');
     const emptyText=room.status==='IDLE'?'当前可立即安排':room.status==='CLEANING'?'等待完成清洁':room.status==='PENDING_PAYMENT'?'服务已完成，等待结算':room.status==='MAINTENANCE'?'当前暂停使用':'暂无进行中的服务记录';
     const canArrangeRoom=managerCanArrange&&managerClockAvailableRooms().some(item=>String(item.id)===String(room.roomId));
     const arrangeButton=canArrangeRoom?`<button class="manager-live-arrange-button" type="button" data-manager-clock-room="${managerEscape(room.roomId)}">安排上钟</button>`:'';
     return `<article class="manager-live-room ${managerEscape(room.status||'IDLE')}"><div class="manager-live-room-top"><div><strong>${managerEscape(room.roomCode)} 房</strong><small>${managerEscape(room.roomName||'')}</small></div><div class="manager-live-room-actions"><span class="manager-room-status ${managerEscape(room.status||'IDLE')}">${managerEscape(managerRoomStatusLabel[room.status]||room.status||'空闲')}</span>${arrangeButton}</div></div><div class="manager-live-room-capacity"><span>床位 ${Number(room.occupiedBedCount||0)}/${Number(room.bedCount||1)} 已用</span><span>剩余 ${Number(room.availableBedCount||0)}</span></div><div class="manager-live-services">${serviceRows||`<p class="manager-live-room-empty">${emptyText}</p>`}</div></article>`;
   }).join('')||'<p class="comparison-empty">当前门店暂无启用房间</p>';
+}
+function ensureManagerExtensionDialog(){
+  if(document.querySelector('#manager-extension-dialog'))return;
+  document.body.insertAdjacentHTML('beforeend','<dialog id="manager-extension-dialog"><form id="manager-extension-form" class="manager-extension-dialog-card"><div class="expense-editor-title"><div><p>服务中加钟</p><h3>安排加钟</h3></div><button class="manager-quiet-button" id="manager-extension-close" type="button">关闭</button></div><p id="manager-extension-summary" class="manager-extension-summary"></p><label>加钟项目<select id="manager-extension-service" name="serviceItemId" required></select></label><div id="manager-extension-preview" class="manager-extension-preview"></div><div class="expense-editor-actions"><button class="manager-secondary-button" id="manager-extension-cancel" type="button">取消</button><button class="manager-primary-button" type="submit">确认加钟</button></div></form></dialog>');
+  const close=()=>resetManagerExtensionState({close:true});
+  document.querySelector('#manager-extension-close').addEventListener('click',close);
+  document.querySelector('#manager-extension-cancel').addEventListener('click',close);
+  document.querySelector('#manager-extension-dialog').addEventListener('cancel',()=>resetManagerExtensionState());
+  document.querySelector('#manager-extension-service').addEventListener('change',renderManagerExtensionPreview);
+  document.querySelector('#manager-extension-form').addEventListener('submit',event=>submitManagerExtension(event).catch(handleManagerExtensionFailure));
+}
+function resetManagerExtensionState({close=false}={}){
+  managerExtensionRequestToken+=1;
+  managerExtensionSessionId=null;
+  managerExtensionTechnicianId=null;
+  const dialog=document.querySelector('#manager-extension-dialog');
+  if(close&&dialog?.open)dialog.close();
+}
+function handleManagerExtensionFailure(error){
+  resetManagerExtensionState({close:true});
+  if(error?.message==='UNAUTHORIZED'){clearManagerSession();showManagerLogin('登录已失效，请重新登录');return;}
+  if(error?.message==='FORBIDDEN'){clearManagerSession();showManagerLogin('当前账号权限已变更，请重新登录');return;}
+  managerToast('加钟失败，请刷新后重试');
+}
+function renderManagerExtensionPreview(){
+  const service=managerFoundationServices.find(item=>String(item.id)===String(document.querySelector('#manager-extension-service')?.value));
+  const target=document.querySelector('#manager-extension-preview');
+  if(target)target.innerHTML=service?`<span>${managerEscape(service.name)} · 增加 ${Number(service.defaultDurationMinutes||0)} 分钟</span><b>${managerMoney(service.priceCents)}</b>`:'';
+}
+async function openManagerExtension(sessionId,technicianId){
+  if(!managerCanArrange)return managerToast('当前账号没有安排加钟权限');
+  ensureManagerExtensionDialog();
+  resetManagerExtensionState({close:true});
+  const requestToken=managerExtensionRequestToken;
+  try{
+    const [sessions,policy]=await Promise.all([managerJson('/service-sessions?status=IN_SERVICE'),managerJson('/service-duration-policy')]);
+    if(requestToken!==managerExtensionRequestToken)return;
+    managerActiveSessions=sessions||[];
+    const session=managerActiveSessions.find(item=>String(item.id)===String(sessionId));
+    if(!session)return managerToast('未找到进行中的服务，请刷新后重试');
+    if(session.status!=='IN_SERVICE')return managerToast('该服务已结束或状态已变化，请刷新后重试');
+    const currentMinutes=Number(session.extensionTotalMinutes||0);
+    const remaining=Math.max(0,Math.min(Number(policy.technicianExtensionMaxMinutes||0)-currentMinutes,Number(policy.serviceDurationMaxMinutes||0)-Number(session.plannedDurationMinutes||0)));
+    const services=managerFoundationServices.filter(item=>item.allowsExtension===true&&Number(item.defaultDurationMinutes||0)<=remaining);
+    if(remaining<=0)return managerToast('本次服务已达到加钟上限');
+    if(!services.length)return managerToast('门店当前没有符合剩余额度的加钟项目');
+    const servingTechnician=(managerLiveTechnicianOverview.technicians||[]).find(item=>String(item.technicianId||'')===String(technicianId)&&String(item.serviceSessionId||'')===String(sessionId)&&item.status==='IN_SERVICE');
+    if(!servingTechnician)return managerToast('该技师已不在服务中，请刷新后重试');
+    if(requestToken!==managerExtensionRequestToken)return;
+    managerExtensionSessionId=sessionId;
+    managerExtensionTechnicianId=technicianId;
+    document.querySelector('#manager-extension-summary').textContent=`${servingTechnician.technicianName||session.activeTechnicianName||session.technicianName||'技师'} · ${session.roomCode||'—'} 房 · 已加 ${currentMinutes} 分钟 · 最多可再加 ${remaining} 分钟`;
+    document.querySelector('#manager-extension-service').innerHTML=services.map(item=>`<option value="${item.id}">${managerEscape(item.name)} · ${Number(item.defaultDurationMinutes||0)} 分钟 · ${managerMoney(item.priceCents)}</option>`).join('');
+    renderManagerExtensionPreview();
+    document.querySelector('#manager-extension-dialog').showModal();
+  }catch(error){
+    if(requestToken!==managerExtensionRequestToken)return;
+    throw error;
+  }
+}
+async function submitManagerExtension(event){
+  event.preventDefault();
+  const requestToken=managerExtensionRequestToken;
+  const sessionId=managerExtensionSessionId;
+  const technicianId=managerExtensionTechnicianId;
+  if(!sessionId||!technicianId)return;
+  const submit=event.currentTarget.querySelector('button[type="submit"]');
+  submit.disabled=true;
+  try{
+    const response=await fetch(`${managerApi}/service-sessions/${sessionId}/extensions`,{method:'POST',headers:{...managerStoreHeaders(),'Content-Type':'application/json'},body:JSON.stringify({technicianId,serviceItemId:new FormData(event.currentTarget).get('serviceItemId')})});
+    if(requestToken!==managerExtensionRequestToken)return;
+    if(!response.ok){const detail=(await response.text()).replace(/^"|"$/g,'');resetManagerExtensionState({close:true});if(response.status===401){return handleManagerExtensionFailure(new Error('UNAUTHORIZED'));}if(response.status===403){return handleManagerExtensionFailure(new Error('FORBIDDEN'));}return managerToast(`加钟失败：${detail||'服务状态已变化，请刷新后重试'}`);}
+    const result=await response.json();
+    if(requestToken!==managerExtensionRequestToken)return;
+    resetManagerExtensionState({close:true});
+    const postResetToken=managerExtensionRequestToken;
+    const refreshed=await loadManagerDashboard({manual:false});
+    if(postResetToken!==managerExtensionRequestToken)return;
+    managerToast(refreshed===true?`${result.serviceName} 已加钟，新的结束时间已同步`:`${result.serviceName} 已加钟，但看板刷新失败，请手动刷新`);
+  }catch(error){
+    if(requestToken!==managerExtensionRequestToken)return;
+    throw error;
+  }finally{if(requestToken===managerExtensionRequestToken)submit.disabled=false;}
 }
 const managerTechnicianStatusLabel={IN_SERVICE:'服务中',PENDING_ACCEPTANCE:'待接单',ACCEPTED:'已接单待开始',IDLE:'空闲'};
 const managerTechnicianStatusOrder={PENDING_ACCEPTANCE:0,ACCEPTED:1,IN_SERVICE:2,IDLE:3};
@@ -171,6 +265,11 @@ function renderManagerClockDialog(){
   room.value=rooms.some(item=>String(item.id)===String(managerClockingRoomId||currentRoom))?(managerClockingRoomId||currentRoom):rooms[0]?.id||'';
   service.innerHTML=managerFoundationServices.map(item=>`<option value="${item.id}">${managerEscape(item.name)} · ${Number(item.defaultDurationMinutes||0)} 分钟 · ${managerMoney(item.priceCents)}</option>`).join('');
   service.value=managerFoundationServices.some(item=>String(item.id)===String(currentService))?currentService:managerFoundationServices[0]?.id||'';
+  const durationInput=document.querySelector('#manager-clock-duration');
+  if(durationInput&&!durationInput.value){
+    const selectedService=managerFoundationServices.find(item=>String(item.id)===String(service.value));
+    durationInput.value=Number(selectedService?.defaultDurationMinutes||0)||'';
+  }
   document.querySelector('#manager-clock-tech-count').textContent=`${techs.length} 位可安排${reservation?'，预定钟可选择忙碌技师':''}`;
   document.querySelector('#manager-clock-tech-list').innerHTML=techs.map(item=>`<button class="manager-clock-tech-choice ${managerClockingTechIds.some(id=>String(id)===String(item.id))?'selected':''}" data-manager-clock-tech="${item.id}" type="button"><span class="manager-clock-tech-avatar">${managerEscape(String(item.name||'').slice(0,1))}</span><span><b>${managerEscape(item.name)}</b><small>轮钟 ${String(managerQueuePositions.get(String(item.id))||item.queueOrder||'—').padStart(2,'0')}</small></span><em>${managerTechnicianLiveStatus(item.id)==='IDLE'?'可派':'可预定'}</em></button>`).join('')||'<p class="comparison-empty">当前没有符合条件的技师</p>';
   renderManagerClockAllocation();
@@ -195,9 +294,10 @@ async function submitManagerClock(event){
   const reservation=['BOOKED_QUEUE','BOOKED_CALL'].includes(clockType);
   const service=managerFoundationServices.find(item=>String(item.id)===String(form.get('serviceItemId')));
   const selected=managerClockingTechIds.map(id=>managerFoundationTechnicians.find(item=>String(item.id)===String(id))).filter(Boolean);
-  const duration=Number(service?.defaultDurationMinutes||0);
+  const duration=Number(form.get('duration'));
   if(!selected.length)return managerToast('请至少选择一位技师');
-  if(!service||!form.get('roomId')||!duration)return managerToast('请选择房间和服务项目');
+  if(!service||!form.get('roomId'))return managerToast('请选择房间和服务项目');
+  if(!Number.isInteger(duration)||duration<15||duration>360)return managerToast('服务时长必须是 15-360 分钟的整数');
   if(reservation&&selected.length!==1)return managerToast('预定排钟和预定点钟每单只能选择一位技师');
   const participants=selected.map((tech,index)=>{const input=document.querySelector(`[data-manager-tech-allocation="${tech.id}"]`);return {technicianId:tech.id,allocationBp:reservation?10000:selected.length===1?10000:Math.round(Number(input?.value||0)*100)};});
   if(!reservation&&(participants.some(item=>!Number.isInteger(item.allocationBp)||item.allocationBp<=0)||participants.reduce((sum,item)=>sum+item.allocationBp,0)!==10000))return managerToast('技师业绩分配比例必须大于 0%，且合计正好为 100%');
@@ -368,7 +468,7 @@ const managerCrossStoreLabel={ORDER:'订单',REFUND:'退款',CONSUMPTION:'会员
 function renderManagerCrossStoreTransactions(rows){document.querySelector('#manager-cross-store-records').innerHTML=rows.map(row=>{const amount=Number(row.amountCents||0);const signed=row.transactionType==='CONSUMPTION'?`-${managerMoney(Math.abs(amount))}`:managerMoney(amount);return `<article><span class="manager-cross-store-type ${row.transactionType}">${managerCrossStoreLabel[row.transactionType]||row.transactionType}</span><div><b>${row.memberName} · ${signed}</b><small>${row.storeName} · ${row.referenceNo} · ${row.paymentMethod||row.status||'—'}</small><small>${row.serviceTrace||'无关联服务'}</small></div><button type="button" data-manager-cross-store="${row.storeId}">切换</button></article>`;}).join('')||'<p class="comparison-empty">没有符合条件的记录</p>';}
 async function loadManagerCrossStoreTransactions(){const query=document.querySelector('#manager-cross-store-search').value.trim();const type=document.querySelector('#manager-cross-store-type').value;renderManagerCrossStoreTransactions(await managerJson(`/operations/cross-store-transactions?query=${encodeURIComponent(query)}&type=${type}`,managerHeaders()));}
 async function loadManagerDashboard({manual=false}={}) {
-  if(managerLoading) return;
+  if(managerLoading) return null;
   managerLoading=true;
   try {
     if(!managerCurrentStoreId()) throw new Error('NO_STORE');
@@ -403,6 +503,7 @@ async function loadManagerDashboard({manual=false}={}) {
     managerFoundationRooms=rooms||[];
     managerFoundationTechnicians=technicians||[];
     managerFoundationServices=services||[];
+    managerActiveSessions=sessions||[];
     managerFoundationRoomStatuses=new Map((statuses||[]).map(item=>[String(item.roomId),item.status]));
     managerLiveRoomsSnapshot=liveRooms||[];
     managerLiveTechnicianOverview=liveTechnicians||{technicians:[]};
@@ -418,10 +519,12 @@ async function loadManagerDashboard({manual=false}={}) {
     await managerOptionalTask(loadManagerCrossStoreTransactions);
     if(canViewExpenses) await managerOptionalTask(loadManagerExpenses);
     if(manual) managerToast('经营数据已刷新');
+    return true;
   } catch(error) {
     if(error.message==='UNAUTHORIZED') { clearManagerSession(); showManagerLogin('登录已失效，请重新登录'); }
     else if(error.message==='FORBIDDEN') { clearManagerSession(); showManagerLogin('当前账号权限已变更，请重新登录'); }
     else if(manual) managerToast('经营数据暂时无法加载');
+    return false;
   } finally { managerLoading=false; }
 }
 async function loadManagerStores() {
@@ -455,17 +558,18 @@ document.querySelector('#manager-login-form').addEventListener('submit',async ev
   formElement.reset();
   await loadManagerStores();
 });
-document.querySelector('#manager-store-select').addEventListener('change',async event=>{if(!managerStores.some(store=>store.id===event.target.value)){renderManagerStores();return managerToast('该门店未分配给当前账号');}localStorage.setItem(managerStoreKey,event.target.value);await loadManagerDashboard();});
+document.querySelector('#manager-store-select').addEventListener('change',async event=>{if(!managerStores.some(store=>store.id===event.target.value)){renderManagerStores();return managerToast('该门店未分配给当前账号');}resetManagerExtensionState({close:true});localStorage.setItem(managerStoreKey,event.target.value);await loadManagerDashboard();});
 document.querySelector('#manager-report-date').addEventListener('change',()=>loadManagerDashboard({manual:true}).catch(()=>managerToast('所选营业日数据暂时无法加载')));
 document.querySelector('#manager-tabbar').addEventListener('click',event=>{const button=event.target.closest('[data-manager-nav]');if(!button||button.classList.contains('hidden'))return;switchManagerPage(button.dataset.managerNav);});
 document.querySelector('.manager-home-shortcuts').addEventListener('click',event=>{const button=event.target.closest('[data-manager-shortcut]');if(!button)return;const nav=document.querySelector(`[data-manager-nav="${button.dataset.managerShortcut}"]`);if(!nav||nav.classList.contains('hidden'))return managerToast('当前账号没有该模块权限');switchManagerPage(button.dataset.managerShortcut);});
 document.querySelector('#manager-open-dispatch').addEventListener('click',()=>openManagerClockDialog());
-document.querySelector('#manager-live-room-list').addEventListener('click',event=>{const button=event.target.closest('[data-manager-clock-room]');if(button)openManagerClockDialog({roomId:button.dataset.managerClockRoom});});
+document.querySelector('#manager-live-room-list').addEventListener('click',event=>{const extension=event.target.closest('[data-manager-extension-session]');if(extension)return openManagerExtension(extension.dataset.managerExtensionSession,extension.dataset.managerExtensionTech).catch(handleManagerExtensionFailure);const button=event.target.closest('[data-manager-clock-room]');if(button)openManagerClockDialog({roomId:button.dataset.managerClockRoom});});
 document.querySelector('#manager-live-technician-groups').addEventListener('click',event=>{const button=event.target.closest('[data-manager-clock-tech]');if(button)openManagerClockDialog({technicianId:button.dataset.managerClockTech});});
 document.querySelector('#manager-clock-close').addEventListener('click',()=>document.querySelector('#manager-clock-dialog').close());
 document.querySelector('#manager-clock-cancel').addEventListener('click',()=>document.querySelector('#manager-clock-dialog').close());
 document.querySelector('#manager-clock-form').addEventListener('submit',event=>submitManagerClock(event).catch(()=>managerToast('安排上钟失败，请刷新后重试')));
 document.querySelector('#manager-clock-type').addEventListener('change',event=>{const reservation=['BOOKED_QUEUE','BOOKED_CALL'].includes(event.target.value);if(reservation&&managerClockingTechIds.length>1){managerClockingTechIds=[managerClockingTechIds[0]];managerToast('预约服务保持单技师，已保留第一位技师');}renderManagerClockDialog();});
+document.querySelector('#manager-clock-service').addEventListener('change',event=>{const service=managerFoundationServices.find(item=>String(item.id)===String(event.target.value));const duration=document.querySelector('#manager-clock-duration');if(duration)duration.value=Number(service?.defaultDurationMinutes||0)||'';});
 document.querySelector('#manager-clock-room').addEventListener('change',event=>{managerClockingRoomId=event.target.value;});
 document.querySelector('#manager-clock-tech-list').addEventListener('click',event=>{const button=event.target.closest('[data-manager-clock-tech]');if(!button)return;const id=button.dataset.managerClockTech;const selectedIndex=managerClockingTechIds.findIndex(item=>String(item)===String(id));const reservation=['BOOKED_QUEUE','BOOKED_CALL'].includes(document.querySelector('#manager-clock-type').value);if(selectedIndex>=0)managerClockingTechIds.splice(selectedIndex,1);else if(reservation&&managerClockingTechIds.length)managerClockingTechIds=[id];else if(managerClockingTechIds.length>=4)return managerToast('一单最多安排 4 位技师');else managerClockingTechIds.push(id);renderManagerClockDialog();});
 document.querySelector('#manager-business-period-tabs').addEventListener('click',event=>{const button=event.target.closest('[data-business-period]');if(!button)return;const period=button.dataset.businessPeriod;document.querySelectorAll('[data-business-period]').forEach(item=>item.classList.toggle('selected',item===button));document.querySelectorAll('[data-business-period-panel]').forEach(panel=>{panel.hidden=panel.dataset.businessPeriodPanel!==period;});});
