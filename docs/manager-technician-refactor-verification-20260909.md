@@ -8,8 +8,8 @@
 
 | 检查 | 命令/证据 | 结果 |
 | --- | --- | --- |
-| 前端回归 | `npm run test:console` | 129/129 通过 |
-| 店长定向回归 | `node --test apps/massage-console/tests/manager-dispatch-clock-regression.test.js apps/massage-console/tests/manager-live-room-regression.test.js` | 8/8 通过 |
+| 前端回归 | `npm run test:console` | 130/130 通过 |
+| 店长/技师定向回归 | `node --test apps/massage-console/tests/manager-dispatch-clock-regression.test.js apps/massage-console/tests/manager-live-room-regression.test.js apps/massage-console/tests/technician-clock-duration-regression.test.js` | 19/19 通过 |
 | API 回归 | `$env:JAVA_HOME='C:\Program Files\Microsoft\jdk-21.0.12.101-hotspot'; npm.cmd run test:api` | 89/89 通过 |
 | API 构建 | `$env:JAVA_HOME='C:\Program Files\Microsoft\jdk-21.0.12.101-hotspot'; npm.cmd run build:api` | BUILD SUCCESS |
 | JavaScript 语法 | `node --check apps/massage-console/manager-mobile.js`、`node --check apps/massage-console/mobile.js` | 通过 |
@@ -30,6 +30,7 @@
 
 - 店长首页显示实时房间、床位、项目、技师、钟类、计时和轮钟位置。
 - 房间卡片和空闲技师卡片均提供安排上钟入口。
+- 当所有技师都在服务中但仍具备预约资格时，安排上钟弹窗仍可打开；切换预定排钟或预定点钟后可选择忙碌技师，实时派钟仍只展示空闲技师。
 - 正在服务的房间服务明细为每位 `IN_SERVICE` 技师提供加钟入口，按前台相同的剩余时长规则过滤项目并提交；打开弹窗前重新读取进行中会话。
 - 即时流程使用 `/api/v1/service-sessions/clock-in`，请求包含 `technicianId`、`participants`、`roomId`、`serviceItemId`、`plannedDurationMinutes`、`clockType`。
 - 预约流程使用 `/api/v1/service-reservations`，请求包含 `technicianId`、`roomId`、`serviceItemId`、`plannedDurationMinutes`、`reservationType`，并限制单技师。
@@ -39,7 +40,7 @@
 
 ## 环境说明
 
-本轮使用 Node.js 22 和 JDK 21.0.12.101 执行前端测试、店长定向测试、当前工作树 API 测试及 API 构建；前端 129 项、店长定向 8 项、API 89 项通过，工作树构建输出 `BUILD SUCCESS`。发布 JAR 另从 `HEAD` 干净基线仅叠加控制器补丁，在隔离目录执行 `clean package -DskipTests`，编译和重打包成功；该隔离基线的测试夹具缺少工作树历史日报改动，故未把其测试阶段作为发布依据。默认 JDK 17 仅作为本机未切换环境时的运行时差异，不作为本轮验证命令。
+本轮使用 Node.js 22 和 JDK 21.0.12.101 执行前端测试、店长/技师定向测试、当前工作树 API 测试及 API 构建；前端 130 项、定向 19 项、API 89 项通过，工作树构建输出 `BUILD SUCCESS`。发布 JAR 另从 `HEAD` 干净基线仅叠加控制器补丁，在隔离目录执行 `clean package -DskipTests`，编译和重打包成功；该隔离基线的测试夹具缺少工作树历史日报改动，故未把其测试阶段作为发布依据。默认 JDK 17 仅作为本机未切换环境时的运行时差异，不作为本轮验证命令。
 
 ## 未覆盖项
 

@@ -283,7 +283,9 @@ function openManagerClockDialog({technicianId=null,roomId=null}={}){
   document.querySelector('#manager-clock-type').value='QUEUE';
   renderManagerClockDialog();
   if(!managerClockAvailableRooms().length)return managerToast('当前没有可安排的空闲房间');
-  if(!managerClockEligibleTechnicians(false).length)return managerToast('当前没有可安排的在岗技师');
+  const immediateEligibleTechnicians=managerClockEligibleTechnicians(false).length;
+  const reservationEligibleTechnicians=managerClockEligibleTechnicians(true).length;
+  if(!immediateEligibleTechnicians&&!reservationEligibleTechnicians)return managerToast('当前没有可安排的在岗技师');
   if(!managerFoundationServices.length)return managerToast('当前没有可安排的服务项目');
   dialog.showModal();
 }

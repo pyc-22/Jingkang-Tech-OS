@@ -45,6 +45,12 @@ test('manager submits the same immediate and reservation payload routes as front
   assert.match(manager, /participants\.reduce\(\(sum,item\)=>sum\+item\.allocationBp,0\)!==10000/);
 });
 
+test('manager opens reservation registration when all eligible technicians are busy', () => {
+  assert.match(manager, /const immediateEligibleTechnicians=managerClockEligibleTechnicians\(false\)\.length;\s*const reservationEligibleTechnicians=managerClockEligibleTechnicians\(true\)\.length;\s*if\(!immediateEligibleTechnicians&&!reservationEligibleTechnicians\)return managerToast/);
+  assert.match(manager, /managerClockEligibleTechnicians\(true\)/);
+  assert.match(manager, /document\.querySelector\('#manager-clock-type'\)\.addEventListener\('change'/);
+});
+
 test('manager dispatch styling keeps the compact prototype card and picker treatment', () => {
   assert.match(css, /\.manager-clock-dialog-card/);
   assert.match(css, /\.manager-clock-tech-choice\.selected/);
