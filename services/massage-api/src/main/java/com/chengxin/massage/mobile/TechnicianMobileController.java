@@ -8,6 +8,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import com.chengxin.massage.catalog.TechnicianSchedulePolicy;
+import com.chengxin.massage.audit.AuditOutcomeFilter;
 import com.chengxin.massage.audit.AuditService;
 import com.chengxin.massage.operations.BusinessClockService;
 import com.chengxin.massage.catalog.ServiceItemVersionService;
@@ -257,9 +259,11 @@ public class TechnicianMobileController {
   }
 
   @PostMapping("/clock-in")
-  ServiceSession clockIn(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+  ServiceSession clockIn(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+      HttpServletRequest request) {
     // Technician mobile sessions are passive recipients of front-desk/manager dispatches.
     currentTechnician(authorization);
+    request.setAttribute(AuditOutcomeFilter.SUPPRESS_OUTCOME_AUDIT_ATTRIBUTE, Boolean.TRUE);
     throw new ResponseStatusException(HttpStatus.FORBIDDEN, "技师端不能自主上钟，请等待前台或店长安排");
   }
 

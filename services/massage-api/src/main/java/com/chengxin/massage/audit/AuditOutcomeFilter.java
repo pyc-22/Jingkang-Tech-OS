@@ -29,6 +29,7 @@ import org.springframework.web.util.ContentCachingRequestWrapper;
 public class AuditOutcomeFilter extends OncePerRequestFilter {
   public static final String REQUIRED_PERMISSIONS_ATTRIBUTE = AuditOutcomeFilter.class.getName() + ".requiredPermissions";
   public static final String FAILURE_REASON_ATTRIBUTE = AuditOutcomeFilter.class.getName() + ".failureReason";
+  public static final String SUPPRESS_OUTCOME_AUDIT_ATTRIBUTE = AuditOutcomeFilter.class.getName() + ".suppressOutcomeAudit";
   private static final Pattern UUID_PATTERN = Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
   private static final Logger LOGGER = LoggerFactory.getLogger(AuditOutcomeFilter.class);
   private final AuditService audits;
@@ -55,7 +56,10 @@ public class AuditOutcomeFilter extends OncePerRequestFilter {
       throw exception;
     } finally {
       int status = requestFailure == null ? response.getStatus() : HttpServletResponse.SC_INTERNAL_SERVER_ERROR;
-      if (shouldAudit(status, request.getMethod())) record(wrapped, status, requestFailure);
+      if (shouldAudit(status, request.getMethod())
+          && !Boolean.TRUE.equals(wrapped.getAttribute(SUPPRESS_OUTCOME_AUDIT_ATTRIBUTE))) {
+        record(wrapped, status, requestFailure);
+      }
     }
   }
 

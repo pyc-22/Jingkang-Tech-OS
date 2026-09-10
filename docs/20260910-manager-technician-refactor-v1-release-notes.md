@@ -24,6 +24,7 @@
 | --- | --- |
 | `apps/massage-console/mobile.html`、`mobile.js` | 技师端移除自主上钟按钮、弹窗及请求，保留派单接收、接单、拒绝、休息、下钟、日报、服务记录、请假和提成；空闲状态显示等待前台或店长安排。 |
 | `services/massage-api/src/main/java/com/chengxin/massage/mobile/TechnicianMobileController.java` | `POST /api/v1/mobile/technician/clock-in` 先校验当前技师移动会话与有效绑定，再固定返回 `403 Forbidden`；该方法没有服务、房间或审计写入。 |
+| `services/massage-api/src/main/java/com/chengxin/massage/audit/AuditOutcomeFilter.java` | 仅对已完成技师身份校验的自主上钟固定拒绝跳过通用失败审计，确保该端点零业务写入；缺失或失效会话的 `401` 仍按原规则审计。 |
 | `apps/massage-console/manager-mobile.html`、`manager-mobile.js`、`manager-mobile.css` | 店长端新增房间和技师两种安排入口，复用前台即时上钟、预约和加钟接口；支持排钟、点钟、选钟、预定排钟、预定点钟、项目、房间、轮钟推荐、手选技师及多技师业绩分配。 |
 | `apps/massage-console/offline-sync.js` | 技师自主上钟不进入离线或幂等写入队列。 |
 | `services/massage-api/src/main/java/com/chengxin/massage/HomeController.java` | 健康检查发布号更新为 `20260910-manager-technician-refactor-v1`。 |

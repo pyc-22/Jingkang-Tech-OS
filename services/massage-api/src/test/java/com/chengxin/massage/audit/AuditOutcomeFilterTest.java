@@ -63,4 +63,17 @@ class AuditOutcomeFilterTest {
 
     verifyNoInteractions(audits);
   }
+
+  @Test
+  void ignoresExplicitlySuppressedOutcomeAudit() throws Exception {
+    MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/mobile/technician/clock-in");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    filter.doFilter(request, response, (wrapped, target) -> {
+      wrapped.setAttribute(AuditOutcomeFilter.SUPPRESS_OUTCOME_AUDIT_ATTRIBUTE, Boolean.TRUE);
+      ((HttpServletResponse) target).sendError(403, "Technician self clock-in disabled");
+    });
+
+    verifyNoInteractions(audits);
+  }
 }
