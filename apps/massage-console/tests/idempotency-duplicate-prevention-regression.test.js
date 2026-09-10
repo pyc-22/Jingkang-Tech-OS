@@ -97,6 +97,6 @@ test('a 204 idempotency replay is exposed to callers as success', async () => {
   assert.equal(button.disabled, false);
 });
 
-test('release health endpoint reports the daily report release', () => {
-  assert.match(home, /20260907-daily-report-unification-v1/);
+test('release health endpoint reports the complete mobile and daily report release', () => {
+  assert.match(home, /20260910-manager-technician-refactor-v1/);
 });

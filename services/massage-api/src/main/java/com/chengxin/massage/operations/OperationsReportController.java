@@ -387,7 +387,7 @@ public class OperationsReportController {
   }
 
   static DailyReport dailyReport(String businessDate, DailyReportService.DailyMetrics metrics, ServiceSummary services) {
-    return new DailyReport(businessDate, metrics.settledOrderCount(), metrics.customerCount(), metrics.netSalesAmountCents(),
+    return new DailyReport(businessDate, metrics.settledOrderCount(), metrics.customerCount(), metrics.salesAmountCents(),
       metrics.rechargeAmountCents(), metrics.bonusAmountCents(), metrics.consumptionAmountCents(), metrics.refundAmountCents(),
       metrics.netSalesAmountCents(), services.completedServiceCount(), services.serviceAmountCents(), metrics.cardOpenCents(),
       metrics.cardOpenCount(), metrics);

@@ -83,15 +83,15 @@ public class RefundController {
     boolean hasExternalPayment = input.payments().stream().anyMatch(payment -> !"MEMBER_BALANCE".equals(payment.paymentMethod()));
     String status = hasExternalPayment ? "PENDING" : "COMPLETED";
     OffsetDateTime createdAt = OffsetDateTime.now();
-    LocalDate createdBusinessDate = businessClock.businessDate(storeId, createdAt);
+    LocalDate refundBusinessDate = order.businessDate();  // 使用原订单的 business_date
     jdbc.sql("insert into sales_refund(id,tenant_id,store_id,order_id,refund_no,request_key,status,total_cents,reason,completed_at,business_date,refund_kind,requested_by_user_id,requested_by_name_snapshot,completed_by_user_id,completed_by_name_snapshot) values(:id,:tenant,:store,:order,:no,:key,:status,:total,:reason,case when :status='COMPLETED' then :completedAt else null end,case when :status='COMPLETED' then :businessDate else null end,:kind,:actor,:actorName,case when :status='COMPLETED' then :actor else null end,case when :status='COMPLETED' then :actorName else null end)")
       .param("id", refundId).param("tenant", TENANT_ID).param("store", storeId).param("order", orderId).param("no", refundNo)
-      .param("key", input.requestKey()).param("status", status).param("total", lineTotal).param("reason", input.reason().trim()).param("completedAt", createdAt).param("businessDate", createdBusinessDate)
+      .param("key", input.requestKey()).param("status", status).param("total", lineTotal).param("reason", input.reason().trim()).param("completedAt", createdAt).param("businessDate", refundBusinessDate)
       .param("kind", refundKind).param("actor", actor.userId()).param("actorName", actor.displayName()).update();
     for (RefundLineInput line : input.lines()) jdbc.sql("insert into sales_refund_line(id,refund_id,order_line_id,quantity,refund_cents) values(:id,:refund,:line,:quantity,:amount)")
       .param("id", UUID.randomUUID()).param("refund", refundId).param("line", line.orderLineId()).param("quantity", line.quantity()).param("amount", line.refundCents()).update();
-    for (RefundPaymentInput payment : input.payments()) createPayment(storeId, refundId, order, refundNo, payment, createdBusinessDate, !hasExternalPayment);
-    if ("COMPLETED".equals(status)) createCommissionAdjustments(storeId, refundId, refundNo, createdAt, createdBusinessDate);
+    for (RefundPaymentInput payment : input.payments()) createPayment(storeId, refundId, order, refundNo, payment, refundBusinessDate, !hasExternalPayment);
+    if ("COMPLETED".equals(status)) createCommissionAdjustments(storeId, refundId, refundNo, createdAt, refundBusinessDate);
     updateOrderRefundStatus(orderId);
     RefundResult created = find(storeId, refundId);
     audits.record(authorization, storeId, "REFUND", "REFUND_CREATED", "sales_refund", refundId,
@@ -225,12 +225,12 @@ public class RefundController {
   }
 
   private void completeRefundWhenReady(UUID storeId, UUID refundId, AuthenticatedIdentity actor) {
-    RefundCompletion refund = jdbc.sql("select r.id,r.order_id,r.refund_no,r.status,r.refund_kind,o.member_id from sales_refund r join sales_order o on o.id=r.order_id where r.id=:id and r.store_id=:store for update of r")
+    RefundCompletion refund = jdbc.sql("select r.id,r.order_id,r.refund_no,r.status,r.refund_kind,o.member_id,o.business_date from sales_refund r join sales_order o on o.id=r.order_id where r.id=:id and r.store_id=:store for update of r")
       .param("id", refundId).param("store", storeId).query(RefundCompletion.class).single();
     int pendingExternal = jdbc.sql("select count(*) from refund_payment_record where refund_id=:refund and status='PENDING' and payment_method<>'MEMBER_BALANCE'").param("refund", refundId).query(Integer.class).single();
     if (pendingExternal == 0 && "PENDING".equals(refund.status())) {
       OffsetDateTime completedAt = OffsetDateTime.now();
-      LocalDate businessDate = businessClock.businessDate(storeId, completedAt);
+      LocalDate businessDate = refund.businessDate();  // 使用原订单的 business_date
       List<MemberRefundPayment> memberPayments = jdbc.sql("select id,amount_cents from refund_payment_record where refund_id=:refund and payment_method='MEMBER_BALANCE' and status='PENDING' for update")
         .param("refund", refundId).query(MemberRefundPayment.class).list();
       for (MemberRefundPayment payment : memberPayments) {
@@ -353,7 +353,7 @@ public class RefundController {
   record Wallet(UUID id, Long balanceCents) {}
   record RefundPayment(UUID id, UUID refundId, String paymentMethod, String status) {}
   record RefundForUpdate(UUID id, UUID orderId, String status) {}
-  record RefundCompletion(UUID id, UUID orderId, String refundNo, String status, String refundKind, UUID memberId) {}
+  record RefundCompletion(UUID id, UUID orderId, String refundNo, String status, String refundKind, UUID memberId, LocalDate businessDate) {}
   record MemberRefundPayment(UUID id, Long amountCents) {}
   record RefundResult(UUID id, String refundNo, String refundKind, String status, Long totalCents, Long signedTotalCents, String requestedByNameSnapshot, String completedByNameSnapshot, OffsetDateTime createdAt, OffsetDateTime completedAt) {}
   record RefundDetail(UUID id, String refundNo, String refundKind, String status, Long totalCents, Long signedTotalCents, String reason, LocalDate businessDate, String requestedByNameSnapshot, String completedByNameSnapshot, OffsetDateTime createdAt, OffsetDateTime completedAt) {}

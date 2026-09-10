@@ -11,8 +11,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 
 /**
- * Single source for operational daily metrics. All dates are the store business_date;
- * completed refunds therefore belong to the business day on which they were completed.
+ * Single source for operational daily metrics. Orders use their settlement business date;
+ * completed refunds remain on the original order business date.
  */
 @Service
 public class DailyReportService {
@@ -31,9 +31,6 @@ public class DailyReportService {
       from sales_order o
       left join payment_record p on p.order_id=o.id
       where o.store_id=:store and o.status='SETTLED' and o.paid_cents>0 and o.business_date=:date
-        and (not exists(select 1 from sales_order_service_session link where link.order_id=o.id)
-          or exists(select 1 from sales_order_service_session link join service_session ss on ss.id=link.service_session_id
-                    where link.order_id=o.id and ss.status<>'VOIDED'))
       """).param("store", storeId).param("date", businessDate).query(OrderTotals.class).single();
 
     RefundTotals refunds = jdbc.sql("""
@@ -58,10 +55,7 @@ public class DailyReportService {
           where wt.store_id=:store and wt.business_date=:date and wt.transaction_type='CONSUMPTION' and wt.source='ORDER'
             and wt.note ~* '^[0-9a-f-]{36}$'
             and exists(select 1 from sales_order o where o.id=wt.note::uuid and o.store_id=wt.store_id
-              and o.status='SETTLED' and o.paid_cents>0
-              and (not exists(select 1 from sales_order_service_session link where link.order_id=o.id)
-                or exists(select 1 from sales_order_service_session link join service_session ss on ss.id=link.service_session_id
-                          where link.order_id=o.id and ss.status<>'VOIDED')))),0)::bigint consumption_debit_cents,
+              and o.status='SETTLED' and o.paid_cents>0)),0)::bigint consumption_debit_cents,
         coalesce((select sum(wt.amount_cents) from wallet_transaction wt
           where wt.store_id=:store and wt.business_date=:date and wt.transaction_type='REFUND'
             and ((wt.source='ORDER_REFUND' and exists(select 1 from sales_refund r
@@ -96,7 +90,7 @@ public class DailyReportService {
       order by r.completed_at,r.id
       """).param("store", storeId).param("date", businessDate).query(RefundOccurrence.class).list();
     long cashFlow = Math.addExact(externalCash, rechargeNet);
-    return new DailyMetrics(businessDate, orders.settledOrderCount(), customerCount, orders.customerCount(), netSales,
+    return new DailyMetrics(businessDate, orders.settledOrderCount(), customerCount, orders.customerCount(), orders.salesAmountCents(),
       wallet.rechargeAmountCents(), wallet.bonusAmountCents(), consumption, refunds.refundAmountCents(), netSales,
       wallet.cardOpenCents(), wallet.cardOpenCount(), wallet.cardRenewCents(), rechargeNet, externalCash, cashFlow,
       channels, refundOccurrences);
@@ -112,9 +106,6 @@ public class DailyReportService {
       select p.payment_method code,max(p.payment_method_name_snapshot) name,coalesce(sum(p.amount_cents),0)::bigint amount_cents
       from payment_record p join sales_order o on o.id=p.order_id
       where p.store_id=:store and o.status='SETTLED' and o.paid_cents>0 and o.business_date=:date
-        and (not exists(select 1 from sales_order_service_session link where link.order_id=o.id)
-          or exists(select 1 from sales_order_service_session link join service_session ss on ss.id=link.service_session_id
-                    where link.order_id=o.id and ss.status<>'VOIDED'))
       group by p.payment_method
       """).param("store", storeId).param("date", date).query(NamedAmount.class).list().forEach(row -> {
         ChannelMetrics old = result.get(row.code());

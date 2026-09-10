@@ -74,8 +74,17 @@ class OperationsReportControllerTest {
   }
 
   @Test
-  void dailyReportExposesNetSalesAsThePrimarySalesAmount() throws Exception {
-    String source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/java/com/chengxin/massage/operations/OperationsReportController.java"));
-    assertThat(source).contains("metrics.netSalesAmountCents(),\n      metrics.rechargeAmountCents()");
+  void dailyReportExposesGrossAndNetSalesSeparately() {
+    DailyReportService.DailyMetrics metrics = new DailyReportService.DailyMetrics(
+      java.time.LocalDate.of(2026, 9, 10), 2, 2, 2, 10_000,
+      0, 0, 0, 1_000, 9_000, 0, 0, 0, 0, 0, 0,
+      java.util.List.of(), java.util.List.of());
+
+    OperationsReportController.DailyReport report = OperationsReportController.dailyReport(
+      "2026-09-10", metrics, new OperationsReportController.ServiceSummary(2L, 10_000L));
+
+    assertThat(report.salesAmountCents()).isEqualTo(10_000);
+    assertThat(report.refundAmountCents()).isEqualTo(1_000);
+    assertThat(report.netSalesAmountCents()).isEqualTo(9_000);
   }
 }

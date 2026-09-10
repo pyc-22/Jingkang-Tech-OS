@@ -78,8 +78,8 @@ public class SalesOrderController {
     int safeSize = Math.min(size, 200);
     int safePage = Math.max(page, 0);
     StringBuilder sql = new StringBuilder("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id where o.store_id=:store and (o.order_no ilike :q or o.settlement_no ilike :q or coalesce(m.name,'') ilike :q or coalesce(m.phone,'') ilike :q)");
-    if (from != null) sql.append(" and cast(o.settled_at as date) >= :fromDate");
-    if (to != null) sql.append(" and cast(o.settled_at as date) <= :toDate");
+    if (from != null) sql.append(" and o.business_date >= :fromDate");
+    if (to != null) sql.append(" and o.business_date <= :toDate");
     if (!paymentMethod.isBlank()) sql.append(" and exists (select 1 from payment_record filter_payment where filter_payment.order_id=o.id and filter_payment.payment_method=:paymentMethod)");
     if (!status.isBlank()) sql.append(" and o.status=:status");
     sql.append(" order by coalesce(o.settled_at,o.created_at) desc limit :limit offset :offset");
@@ -226,7 +226,7 @@ public class SalesOrderController {
 
     UUID orderId = UUID.randomUUID();
     OffsetDateTime settledAt = OffsetDateTime.now();
-    LocalDate businessDate = serviceBusinessDates.isEmpty() ? businessClock.businessDate(storeId, settledAt) : serviceBusinessDates.iterator().next();
+    LocalDate businessDate = businessClock.businessDate(storeId, settledAt);
     String orderNo = nextOrderNo(settledAt);
     String settlementNo = "JS" + java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Shanghai")).format(java.time.format.DateTimeFormatter.ofPattern("yyMMdd")) + String.format("%07d", jdbc.sql("select nextval('settlement_number_seq')").query(Long.class).single());
     String cashierName = adminSessions.authenticatedIdentity(authorization).displayName();

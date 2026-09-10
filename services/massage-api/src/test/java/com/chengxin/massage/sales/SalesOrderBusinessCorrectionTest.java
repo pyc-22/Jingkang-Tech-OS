@@ -29,4 +29,14 @@ class SalesOrderBusinessCorrectionTest {
     assertThat(source).contains("ORDER_BUSINESS_CORRECTED");
     assertThat(source).contains("多人服务或中途换技师");
   }
+
+  @Test
+  void settlementAndOrderSearchUseTheSettlementBusinessDate() throws Exception {
+    String source = Files.readString(Path.of("src/main/java/com/chengxin/massage/sales/SalesOrderController.java"))
+      .replaceAll("\\s+", "");
+    assertThat(source).contains("LocalDatebusinessDate=businessClock.businessDate(storeId,settledAt)");
+    assertThat(source).contains("ando.business_date>=:fromDate");
+    assertThat(source).contains("ando.business_date<=:toDate");
+    assertThat(source).doesNotContain("cast(o.settled_atasdate)");
+  }
 }

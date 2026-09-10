@@ -88,7 +88,7 @@ test('daily cash flow label and browser cache version use the current report wor
   assert.match(controller, /"dailyCashFlowCents"\.equals\(base\.fieldCode\(\)\)[\s\S]*"当日净实收"\.equals\(configured\.fieldLabel\(\)\)/);
   assert.match(daily, /<label>当日现金流（元）<input name="dailyCashFlowCents"/);
   assert.doesNotMatch(daily, /当日净实收/);
-  assert.match(index, /daily-report\.js\?v=20260907-daily-report-unification-v1/);
+  assert.match(index, /daily-report\.js\?v=20260910-manager-technician-refactor-v1/);
 });
 
 test('daily report exposes card-opening counts and refund occurrence dates', () => {
@@ -97,13 +97,15 @@ test('daily report exposes card-opening counts and refund occurrence dates', () 
   assert.match(daily, /reportData\.unifiedMetrics\?\.refundOccurrences/);
   assert.match(daily, /退款完成时间/);
   assert.match(daily, /原订单营业日：/);
-  assert.match(index, /daily-report\.js\?v=20260907-daily-report-unification-v1/);
+  assert.match(index, /daily-report\.js\?v=20260910-manager-technician-refactor-v1/);
 });
 
-test('daily payment totals use settlement business day while refunds use completion business day', () => {
+test('daily payment totals use settlement business day while refunds keep the original order business day', () => {
   assert.match(controller, /coalesce\(sales\.settled_at,sales\.created_at\) at time zone reporting_store\.timezone/);
   assert.match(controller, /reporting_store\.business_day_cutoff/);
   assert.match(controller, /refund\.business_date between :from and :to/);
+  assert.match(daily, /按原订单营业日归集/);
+  assert.doesNotMatch(daily, /按实际完成营业日归集|按完成营业日归集/);
   assert.doesNotMatch(controller, /sum\(greatest\(0,sales\.paid_cents-coalesce\(order_refund\.refunded_cents,0\)\)\)/);
   assert.match(operations, /coalesce\(sales\.settled_at,sales\.created_at\) at time zone reporting_store\.timezone/);
   assert.match(operations, /Math\.subtractExact\(orders\.salesAmountCents\(\), refunds\.refundAmountCents\(\)\)/);

@@ -33,6 +33,16 @@ class RefundControllerRegressionTest {
     assertThat(source).contains("requestedPaymentAmounts.merge");
   }
 
+  @Test
+  void completedRefundsKeepTheOriginalOrderBusinessDate() {
+    String normalized = source.replaceAll("\\s+", "");
+    assertThat(normalized).contains("LocalDaterefundBusinessDate=order.businessDate()");
+    assertThat(normalized).contains("o.member_id,o.business_datefromsales_refundrjoinsales_ordero");
+    assertThat(normalized).contains("LocalDatebusinessDate=refund.businessDate()");
+    assertThat(normalized).doesNotContain("businessClock.businessDate(storeId,createdAt)");
+    assertThat(normalized).doesNotContain("businessClock.businessDate(storeId,completedAt)");
+  }
+
   private static String readSource() {
     try {
       return Files.readString(Path.of("src/main/java/com/chengxin/massage/sales/RefundController.java"));
