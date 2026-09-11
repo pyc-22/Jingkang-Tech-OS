@@ -654,7 +654,7 @@ selectMobilePage('current-service');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./technician-service-worker.js?v=20260825-technician-clock-duration-v1').catch(() => {
+    navigator.serviceWorker.register('./technician-service-worker.js?v=20260911-p0-conflict-fix-v1').catch(() => {
       // The technician page remains fully available when offline caching is unavailable.
     });
   });

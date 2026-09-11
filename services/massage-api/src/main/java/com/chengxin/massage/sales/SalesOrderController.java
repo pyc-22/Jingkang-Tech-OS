@@ -593,17 +593,26 @@ public class SalesOrderController {
         .param("session", line.serviceSessionId()).param("store", storeId).query(UUID.class).single();
       roomIds.add(roomId);
     }
-    for (UUID roomId : roomIds) {
+    List<UUID> orderedRoomIds = roomIds.stream().sorted().toList();
+    lockRoomsForSettlement(storeId, orderedRoomIds);
+    for (UUID roomId : orderedRoomIds) {
       boolean hasUnsettledServices = jdbc.sql("select exists(select 1 from service_session session where session.store_id=:store and session.room_id=:room and session.status='COMPLETED' and not exists(select 1 from sales_order_service_session link join sales_order linked_order on linked_order.id=link.order_id where link.service_session_id=session.id and linked_order.status <> 'CANCELLED' and linked_order.refund_status <> 'FULL'))")
         .param("store", storeId).param("room", roomId).query(Boolean.class).single();
       String nextStatus = roomStatusAfterSettlement(hasUnsettledServices);
       String reason = hasUnsettledServices
         ? "Partial payment settled: " + orderNo + "; services remain pending"
         : "Payment settled: " + orderNo + "; awaiting cleaning";
-      jdbc.sql("insert into room_status_event(id,tenant_id,store_id,room_id,status,reason,source) values(:id,:tenant,:store,:room,:status,:reason,'ORDER_SETTLEMENT')")
+      jdbc.sql("insert into room_status_event(id,tenant_id,store_id,room_id,status,reason,source,occurred_at) values(:id,:tenant,:store,:room,:status,:reason,'ORDER_SETTLEMENT',clock_timestamp())")
         .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("room", roomId)
         .param("status", nextStatus).param("reason", reason).update();
     }
+  }
+
+  private void lockRoomsForSettlement(UUID storeId, List<UUID> roomIds) {
+    if (roomIds.isEmpty()) return;
+    List<UUID> locked = jdbc.sql("select id from room where store_id=:store and id in (:rooms) order by id for update")
+      .param("store", storeId).param("rooms", roomIds).query(UUID.class).list();
+    if (locked.size() != roomIds.size()) throw bad("Room is unavailable");
   }
 
   String roomStatusAfterSettlement(boolean hasUnsettledServices) {

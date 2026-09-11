@@ -20,8 +20,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
+import org.springframework.web.ErrorResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.util.ContentCachingRequestWrapper;
 
 @Component
@@ -55,12 +57,29 @@ public class AuditOutcomeFilter extends OncePerRequestFilter {
       requestFailure = exception;
       throw exception;
     } finally {
-      int status = requestFailure == null ? response.getStatus() : HttpServletResponse.SC_INTERNAL_SERVER_ERROR;
+      int status = requestFailure == null ? response.getStatus() : statusFromFailure(requestFailure, response.getStatus());
+      if (status == HttpServletResponse.SC_BAD_REQUEST || status == HttpServletResponse.SC_CONFLICT) {
+        LOGGER.warn("HTTP write rejected: method={}, path={}, query={}, storeId={}, operationId={}, status={}, reason={}",
+          request.getMethod(), request.getRequestURI(), request.getQueryString(),
+          request.getHeader("X-Store-Id"), request.getHeader("X-Offline-Operation-Id"), status,
+          failureReason(request, status, requestFailure));
+      }
       if (shouldAudit(status, request.getMethod())
           && !Boolean.TRUE.equals(wrapped.getAttribute(SUPPRESS_OUTCOME_AUDIT_ATTRIBUTE))) {
         record(wrapped, status, requestFailure);
       }
     }
+  }
+
+  private int statusFromFailure(Exception failure, int responseStatus) {
+    if (failure instanceof ResponseStatusException responseStatusException) {
+      return responseStatusException.getStatusCode().value();
+    }
+    if (failure instanceof ErrorResponse errorResponse) {
+      return errorResponse.getStatusCode().value();
+    }
+    return responseStatus >= HttpServletResponse.SC_BAD_REQUEST
+      ? responseStatus : HttpServletResponse.SC_INTERNAL_SERVER_ERROR;
   }
 
   private boolean shouldAudit(int status, String method) {
@@ -109,6 +128,11 @@ public class AuditOutcomeFilter extends OncePerRequestFilter {
     if (explicit != null && !explicit.toString().isBlank()) return explicit.toString();
     Object servletMessage = request.getAttribute(RequestDispatcher.ERROR_MESSAGE);
     if (servletMessage != null && !servletMessage.toString().isBlank()) return servletMessage.toString();
+    if (failure instanceof ResponseStatusException responseStatusException
+        && responseStatusException.getReason() != null
+        && !responseStatusException.getReason().isBlank()) {
+      return responseStatusException.getReason();
+    }
     if (failure != null && failure.getMessage() != null && !failure.getMessage().isBlank()) return failure.getMessage();
     return "HTTP " + status;
   }

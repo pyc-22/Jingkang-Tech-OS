@@ -16,8 +16,10 @@ import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.web.server.ResponseStatusException;
 
 class AuditOutcomeFilterTest {
   private final AuditService audits = mock(AuditService.class);
@@ -75,5 +77,18 @@ class AuditOutcomeFilterTest {
     });
 
     verifyNoInteractions(audits);
+  }
+
+  @Test
+  void preservesResponseStatusExceptionCodeForFailureAudit() {
+    MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/service-sessions/clock-in");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> filter.doFilter(request, response, (wrapped, target) -> {
+      throw new ResponseStatusException(HttpStatus.CONFLICT, "room is busy");
+    })).isInstanceOf(ResponseStatusException.class);
+
+    verify(audits).recordOutcome(any(), eq("SERVICE"), eq("REQUEST_FAILED"), eq("request"), any(UUID.class),
+      contains("409"), eq("FAILED"), eq("room is busy"), isNull(), anyMap());
   }
 }

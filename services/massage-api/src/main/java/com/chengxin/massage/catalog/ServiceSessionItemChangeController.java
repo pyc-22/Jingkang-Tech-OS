@@ -12,6 +12,8 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -31,6 +33,7 @@ import org.springframework.web.server.ResponseStatusException;
 @CrossOrigin(origins = "*")
 public class ServiceSessionItemChangeController {
   private static final UUID TENANT_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
+  private static final Logger LOGGER = LoggerFactory.getLogger(ServiceSessionItemChangeController.class);
   private final JdbcClient jdbc;
   private final StoreContextService storeContext;
   private final AdminSessionService adminSessions;
@@ -58,6 +61,7 @@ public class ServiceSessionItemChangeController {
       @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     AdminSessionService.AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
+    try {
     LockedSession current = jdbc.sql("select id,service_item_id,service_name_snapshot,service_price_cents,planned_duration_minutes,started_at,expected_end_at,price_version_id,commission_rule_version_id,counts_as_clock_snapshot,business_date,status,version from service_session where id=:id and store_id=:store for update")
       .param("id", sessionId).param("store", storeId).query(LockedSession.class).optional()
       .orElseThrow(() -> error(HttpStatus.NOT_FOUND, "Service session not found"));
@@ -76,7 +80,6 @@ public class ServiceSessionItemChangeController {
     int newTotalDuration = next.defaultDurationMinutes() + extensionMinutes;
     policies.requireTotalWithinLimit(policies.policy(storeId), newTotalDuration);
     OffsetDateTime newExpectedEnd = current.startedAt().plusMinutes(newTotalDuration);
-    if (!newExpectedEnd.isAfter(OffsetDateTime.now())) throw error(HttpStatus.BAD_REQUEST, "New project would already be expired");
 
     int updated = jdbc.sql("update service_session set service_item_id=:item,service_name_snapshot=:name,service_price_cents=:price,planned_duration_minutes=:duration,expected_end_at=:expected,price_version_id=:priceVersion,commission_rule_version_id=:commissionVersion,counts_as_clock_snapshot=:countsAsClock,updated_at=now(),version=version+1 where id=:id and store_id=:store and status='IN_SERVICE' and version=:version")
       .param("item", next.id()).param("name", next.name()).param("price", next.priceCents()).param("duration", newTotalDuration)
@@ -96,6 +99,13 @@ public class ServiceSessionItemChangeController {
       extensionMinutes, input.reason().trim(), actor.displayName(), OffsetDateTime.now());
     audits.record(authorization, storeId, "SERVICE", "SERVICE_ITEM_CHANGED", "service_session", sessionId, input.reason().trim(), current, result);
     return result;
+    } catch (ResponseStatusException exception) {
+      if (exception.getStatusCode().value() == 400 || exception.getStatusCode().value() == 409) {
+        LOGGER.warn("Main item change rejected: storeId={}, sessionId={}, serviceItemId={}, reasonCode={}, httpStatus={}, cause={}",
+          storeId, sessionId, input.serviceItemId(), input.reason(), exception.getStatusCode().value(), exception.getReason());
+      }
+      throw exception;
+    }
   }
 
   private ResponseStatusException error(HttpStatus status, String message) { return new ResponseStatusException(status, message); }

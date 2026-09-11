@@ -868,13 +868,20 @@ function renderServiceItemChangeOptions() {
   const target = document.querySelector('#frontdesk-service-item-change-target');
   if (!target) return;
   const hasExtensions = serviceItemChangeExtensions.length > 0;
-  const selectedKind = hasExtensions && kind?.value === 'EXTENSION' ? 'EXTENSION' : 'MAIN';
+  const selectedKind = hasExtensions
+    ? (['MAIN', 'EXTENSION'].includes(kind?.value) ? kind.value : '')
+    : 'MAIN';
   if (kind && kind.value !== selectedKind) kind.value = selectedKind;
   if (kindWrap) {
     kindWrap.hidden = !hasExtensions;
     kindWrap.style.display = hasExtensions ? '' : 'none';
   }
-  if (selectedKind === 'EXTENSION') {
+  if (!selectedKind) {
+    extensionWrap.hidden = true;
+    extensionWrap.style.display = 'none';
+    target.innerHTML = '<option value="">请先选择更换对象</option>';
+    target.disabled = true;
+  } else if (selectedKind === 'EXTENSION') {
     extensionWrap.hidden = false;
     extensionWrap.style.display = '';
     const selectedExtension = serviceItemChangeExtensions.find(item => String(item.id) === String(extensionSelect.value)) || serviceItemChangeExtensions[0];
@@ -916,12 +923,12 @@ async function openServiceItemChange(sessionId) {
   kindWrap.hidden = !hasExtensions;
   kindWrap.style.display = hasExtensions ? '' : 'none';
   kind.innerHTML = hasExtensions
-    ? '<option value="MAIN">首钟项目</option><option value="EXTENSION">加钟项目</option>'
+    ? '<option value="">请选择更换对象</option><option value="MAIN">首钟项目</option><option value="EXTENSION">加钟项目</option>'
     : '<option value="MAIN">首钟项目</option>';
   extensionSelect.innerHTML = serviceItemChangeExtensions.map(item => `<option value="${item.id}">${roomTransferEscape(item.serviceNameSnapshot)} · ${item.plannedDurationMinutes} 分钟 · ¥${(Number(item.servicePriceCents || 0) / 100).toFixed(2)}</option>`).join('');
   extensionSelect.disabled = serviceItemChangeExtensions.length === 0;
   document.querySelector('#frontdesk-service-item-change-extension-wrap').style.display = 'none';
-  kind.value = 'MAIN';
+  kind.value = hasExtensions ? '' : 'MAIN';
   renderServiceItemChangeOptions();
   document.querySelector('#frontdesk-service-item-change-dialog').showModal();
 }
@@ -932,7 +939,8 @@ async function submitServiceItemChange(event) {
   const form = new FormData(event.currentTarget);
   const reason = String(form.get('reason') || '').trim();
   if (!reason) return toast('请填写项目变更原因');
-  const changeKind = String(form.get('changeKind') || 'MAIN');
+  const changeKind = String(form.get('changeKind') || '');
+  if (!['MAIN','EXTENSION'].includes(changeKind)) return toast('请选择要更换的项目类型');
   const extensionId = String(form.get('extensionId') || '');
   if (changeKind === 'EXTENSION' && !extensionId) return toast('请选择要更换的加钟记录');
   const submit = event.currentTarget.querySelector('button[type="submit"]');

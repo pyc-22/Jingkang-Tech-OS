@@ -6,9 +6,18 @@
   const mobileTokenKey = 'chengxin-mobile-access-token';
   const nativeFetch = window.fetch.bind(window);
   let flushing = false;
-  let isSubmitting = false;
+  const pendingWrites = new Map();
 
-  const id = () => window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const id = () => {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+    const bytes = new Uint8Array(16);
+    if (window.crypto?.getRandomValues) window.crypto.getRandomValues(bytes);
+    else for (let index = 0; index < bytes.length; index++) bytes[index] = Math.floor(Math.random() * 256);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  };
   const database = () => new Promise((resolve, reject) => {
     const request = indexedDB.open(databaseName, 1);
     request.onupgradeneeded = () => { const db = request.result; if (!db.objectStoreNames.contains(storeName)) db.createObjectStore(storeName, { keyPath:'operationId' }); };
@@ -102,7 +111,7 @@
       || path === '/api/v1/service-sessions/clock-in'
       || /^\/api\/v1\/members\/[^/]+\/recharges$/.test(path)
       || path === '/api/v1/member-wallet/recharge'
-      || /^\/api\/v1\/rooms\/[^/]+\/status$/.test(path)
+      || /^\/api\/v1\/rooms\/[^/]+\/(status|complete-cleaning|confirm-payment)$/.test(path)
       || /^\/api\/v1\/mobile\/technician\/(start-service|clock-out|extensions)$/.test(path);
   };
   const notify = message => {
@@ -115,9 +124,14 @@
   window.idempotentFetch = async (input, init = {}) => {
     const request = operationRequest(input, init);
     if (!writePath(request.url, request.method)) return nativeFetch(input, init);
-    if (isSubmitting) {
+    const requestUrl = new URL(request.url, location.href);
+    const requestKey = `${request.method} ${requestUrl.pathname}${requestUrl.search}\n${request.headers.get('X-Store-Id') || ''}\n${request.headers.get('Authorization') || ''}\n${request.headers.get('Content-Type') || ''}\n${request.body || ''}`;
+    const pending = pendingWrites.get(requestKey);
+    if (pending) {
       notify('操作正在处理，请稍候');
-      return new Response(JSON.stringify({ message:'操作正在处理，请稍候' }), { status:409, headers:{ 'Content-Type':'application/json' } });
+      request.headers.set(operationHeader, pending.operationId);
+      if (init.headers instanceof Headers) init.headers.set(operationHeader, pending.operationId);
+      return (await pending.response).clone();
     }
     const operationId = request.headers.get(operationHeader) || id();
     request.headers.set(operationHeader, operationId);
@@ -127,16 +141,15 @@
       : null;
     const wasDisabled = button?.disabled;
     if (button) button.disabled = true;
-    isSubmitting = true;
     const options = { ...init, headers:request.headers };
+    const operation = nativeFetch(input, options).then(response => response.status === 204
+      ? new Response('{}', { status:200, headers:{ 'Content-Type':'application/json', 'X-Offline-Operation-Replayed':'true' } })
+      : response);
+    pendingWrites.set(requestKey, { operationId, response:operation });
     try {
-      const response = await nativeFetch(input, options);
-      if (response.status === 204) {
-        return new Response('{}', { status:200, headers:{ 'Content-Type':'application/json', 'X-Offline-Operation-Replayed':'true' } });
-      }
-      return response;
+      return (await operation).clone();
     } finally {
-      isSubmitting = false;
+      pendingWrites.delete(requestKey);
       if (button && !wasDisabled) button.disabled = false;
     }
   };
@@ -147,17 +160,16 @@
       request.headers.set(operationHeader, operationId);
       const options = { ...init, headers:request.headers };
       try {
-        const response = await window.idempotentFetch(input, options);
-        if (response.status === 409) notify('操作正在处理，请稍候');
-        return response;
+        return await window.idempotentFetch(input, options);
       } catch (error) {
         if (!queueable(request.url, request.method, init.body)) throw error;
         if (!(error instanceof TypeError) && navigator.onLine) throw error;
-        await put({ operationId, url:request.url, method:request.method, body:request.body, headers:Object.fromEntries([...request.headers].filter(([key]) => !['authorization', operationHeader.toLowerCase()].includes(key.toLowerCase()))), state:'PENDING', createdAt:new Date().toISOString() });
+        const queuedOperationId = request.headers.get(operationHeader) || operationId;
+        await put({ operationId:queuedOperationId, url:request.url, method:request.method, body:request.body, headers:Object.fromEntries([...request.headers].filter(([key]) => !['authorization', operationHeader.toLowerCase()].includes(key.toLowerCase()))), state:'PENDING', createdAt:new Date().toISOString() });
         await render();
         announce(`${operationLabel({ url:request.url })}已离线暂存，将在网络恢复后同步`);
-        window.dispatchEvent(new CustomEvent('offline-operation-queued', { detail:{ operationId, url:request.url } }));
-        return new Response(JSON.stringify({ offlineQueued:true, operationId }), { status:202, headers:{ 'Content-Type':'application/json', 'X-Offline-Queued':'true' } });
+        window.dispatchEvent(new CustomEvent('offline-operation-queued', { detail:{ operationId:queuedOperationId, url:request.url } }));
+        return new Response(JSON.stringify({ offlineQueued:true, operationId:queuedOperationId }), { status:202, headers:{ 'Content-Type':'application/json', 'X-Offline-Queued':'true' } });
       }
     }
     if (!queueable(request.url, request.method, init.body)) return nativeFetch(input, init);

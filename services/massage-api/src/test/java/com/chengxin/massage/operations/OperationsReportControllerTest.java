@@ -15,7 +15,7 @@ class OperationsReportControllerTest {
   }
 
   @Test
-  void liveRoomsPreferActualActiveServicesAndExcludeInactiveParticipants() {
+  void liveRoomsPreferActualActiveServicesAndExcludeInactiveParticipants() throws Exception {
     String roomSql = OperationsReportController.liveRoomStatusSql();
     String serviceSql = OperationsReportController.liveRoomServiceSql();
 
@@ -28,6 +28,10 @@ class OperationsReportControllerTest {
     assertThat(serviceSql).contains("bed.code bed_code");
     assertThat(serviceSql).contains("ss.clock_type");
     assertThat(serviceSql).contains("ss.started_at,ss.expected_end_at");
+    assertThat(OperationsReportController.occupiesRoomBed("REASSIGNMENT_REQUIRED")).isTrue();
+    assertThat(OperationsReportController.occupiesRoomBed("DISPATCH_CANCELLED")).isTrue();
+    String source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/java/com/chengxin/massage/operations/OperationsReportController.java"));
+    assertThat(source).contains("status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE')");
   }
 
   @Test
@@ -38,7 +42,7 @@ class OperationsReportControllerTest {
     assertThat(technicianSql).contains("technician.active=true");
     assertThat(technicianSql).contains("participant.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')");
     assertThat(technicianSql).contains("session.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')");
-    assertThat(technicianSql).contains("participant.acceptance_deadline_at>now()");
+    assertThat(technicianSql).doesNotContain("participant.acceptance_deadline_at>now()");
     assertThat(technicianSql).contains("queue_day.business_date=:businessDate");
     assertThat(technicianSql).contains("queue_position.queue_position");
     assertThat(technicianSql).contains("room.code room_code");

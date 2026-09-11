@@ -43,6 +43,8 @@ test('manager submits the same immediate and reservation payload routes as front
   assert.match(manager, /reservationType:clockType/);
   assert.match(manager, /selected\.length!==1/);
   assert.match(manager, /participants\.reduce\(\(sum,item\)=>sum\+item\.allocationBp,0\)!==10000/);
+  assert.match(manager, /const submit=event\.currentTarget\.querySelector\('button\[type="submit"\]'\);\s*submit\.disabled=true/);
+  assert.match(manager, /finally\{submit\.disabled=false;\}/);
 });
 
 test('manager opens reservation registration when all eligible technicians are busy', () => {

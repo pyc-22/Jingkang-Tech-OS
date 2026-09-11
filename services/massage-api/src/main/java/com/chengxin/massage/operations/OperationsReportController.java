@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.List;
+import java.util.Set;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -169,7 +170,7 @@ public class OperationsReportController {
     services.forEach(service -> servicesByRoom.computeIfAbsent(service.roomId(), ignored -> new ArrayList<>()).add(service));
     return rooms.stream().map(room -> {
       List<LiveRoomService> roomServices = servicesByRoom.getOrDefault(room.roomId(), List.of());
-      long occupied = roomServices.stream().filter(service -> List.of("PENDING_ACCEPTANCE", "ACCEPTED", "IN_SERVICE").contains(service.serviceStatus()))
+      long occupied = roomServices.stream().filter(service -> occupiesRoomBed(service.serviceStatus()))
         .map(service -> service.bedId() == null ? service.serviceSessionId() : service.bedId()).distinct().count();
       int bedCount = Math.max(1, room.bedCount());
       return new LiveRoomStatus(room.roomId(), room.roomCode(), room.roomName(), room.status(), bedCount,
@@ -194,7 +195,7 @@ public class OperationsReportController {
     return "select r.id room_id,r.code room_code,r.name room_name,r.bed_count," +
       "case when exists(select 1 from service_session active where active.store_id=:store and active.room_id=r.id and active.status='IN_SERVICE') then 'IN_SERVICE' " +
       "when exists(select 1 from service_session active where active.store_id=:store and active.room_id=r.id and active.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED')) then 'RESERVED' " +
-      "else coalesce((select event.status from room_status_event event where event.store_id=:store and event.room_id=r.id order by event.occurred_at desc limit 1),'IDLE') end status " +
+      "else coalesce((select event.status from room_status_event event where event.store_id=:store and event.room_id=r.id order by event.occurred_at desc,event.id desc limit 1),'IDLE') end status " +
       "from room r where r.store_id=:store and r.active=true order by r.code";
   }
 
@@ -223,12 +224,15 @@ public class OperationsReportController {
       "where participant.store_id=:store and participant.technician_id=technician.id " +
       "and participant.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE') " +
       "and session.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE') " +
-      "and (participant.status<>'PENDING_ACCEPTANCE' or participant.acceptance_deadline_at is null or participant.acceptance_deadline_at>now()) " +
       "order by case participant.status when 'IN_SERVICE' then 0 when 'PENDING_ACCEPTANCE' then 1 else 2 end,participant.created_at desc limit 1) current_service on true " +
       "left join room on room.id=current_service.room_id " +
       "where technician.store_id=:store and technician.active=true " +
       "order by case coalesce(current_service.participant_status,'IDLE') when 'IN_SERVICE' then 0 when 'PENDING_ACCEPTANCE' then 1 when 'ACCEPTED' then 2 else 3 end," +
       "coalesce(queue_position.queue_position,nullif(technician.queue_order,0),2147483647),technician.code";
+  }
+
+  static boolean occupiesRoomBed(String status) {
+    return Set.of("PENDING_ACCEPTANCE", "ACCEPTED", "REASSIGNMENT_REQUIRED", "DISPATCH_CANCELLED", "IN_SERVICE").contains(status);
   }
 
   static String liveDispatchAttentionSql() {
@@ -240,7 +244,7 @@ public class OperationsReportController {
   private RoomUtilization managementRoomUtilization(UUID storeId) {
     RoomBedSummary beds = jdbc.sql("select coalesce(sum(bed_count),0) total_bed_count from room where store_id=:store and active=true")
       .param("store", storeId).query(RoomBedSummary.class).single();
-    Long occupied = jdbc.sql("select count(*) from service_session where store_id=:store and room_id is not null and status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')")
+    Long occupied = jdbc.sql("select count(*) from service_session where store_id=:store and room_id is not null and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE')")
       .param("store", storeId).query(Long.class).single();
     long total = beds.totalBedCount() == null ? 0L : beds.totalBedCount();
     long used = occupied == null ? 0L : Math.min(occupied, total);
@@ -406,8 +410,8 @@ public class OperationsReportController {
   private StoreOperationSummary storeOperationSummary(UUID storeId) {
     return jdbc.sql("select "
       + "(select count(*) from room where store_id=:store and active=true) active_room_count,"
-      + "(select count(*) from room r where r.store_id=:store and r.active=true and coalesce((select event.status from room_status_event event where event.store_id=:store and event.room_id=r.id order by event.occurred_at desc limit 1),'IDLE')='IN_SERVICE') room_serving_count,"
-      + "(select count(*) from room r where r.store_id=:store and r.active=true and coalesce((select event.status from room_status_event event where event.store_id=:store and event.room_id=r.id order by event.occurred_at desc limit 1),'IDLE')='CLEANING') room_cleaning_count,"
+      + "(select count(*) from room r where r.store_id=:store and r.active=true and coalesce((select event.status from room_status_event event where event.store_id=:store and event.room_id=r.id order by event.occurred_at desc,event.id desc limit 1),'IDLE')='IN_SERVICE') room_serving_count,"
+      + "(select count(*) from room r where r.store_id=:store and r.active=true and coalesce((select event.status from room_status_event event where event.store_id=:store and event.room_id=r.id order by event.occurred_at desc,event.id desc limit 1),'IDLE')='CLEANING') room_cleaning_count,"
       + "(select count(*) from service_session where store_id=:store and status='IN_SERVICE') active_technician_count,"
       + "(select count(*) from service_session session where session.store_id=:store and session.status='COMPLETED' and not exists(select 1 from sales_order_service_session link where link.service_session_id=session.id)) pending_settlement_count,"
       + "(select count(*) from sales_refund where store_id=:store and status='PENDING') pending_refund_count")

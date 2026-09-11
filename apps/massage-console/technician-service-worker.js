@@ -1,4 +1,4 @@
-const CACHE_NAME = 'jingkang-technician-20260825-technician-clock-duration-v1';
+const CACHE_NAME = 'jingkang-technician-20260911-p0-conflict-fix-v1';
 const APP_SHELL = [
   './mobile.html',
   './mobile.js',

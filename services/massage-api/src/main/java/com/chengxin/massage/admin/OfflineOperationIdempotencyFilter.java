@@ -6,7 +6,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpServletResponseWrapper;
 import java.io.IOException;
+import java.time.OffsetDateTime;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpMethod;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
@@ -16,6 +19,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Component
 public class OfflineOperationIdempotencyFilter extends OncePerRequestFilter {
   static final String OPERATION_HEADER = "X-Offline-Operation-Id";
+  private static final int PROCESSING_WAIT_ATTEMPTS = 100;
+  private static final long PROCESSING_WAIT_MILLIS = 50L;
+  private static final Logger LOGGER = LoggerFactory.getLogger(OfflineOperationIdempotencyFilter.class);
   private final JdbcClient jdbc;
 
   OfflineOperationIdempotencyFilter(JdbcClient jdbc) { this.jdbc = jdbc; }
@@ -30,19 +36,13 @@ public class OfflineOperationIdempotencyFilter extends OncePerRequestFilter {
       throws ServletException, IOException {
     UUID operationId;
     try { operationId = UUID.fromString(request.getHeader(OPERATION_HEADER)); }
-    catch (IllegalArgumentException exception) { response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Invalid offline operation id"); return; }
-    Receipt existing = jdbc.sql("select operation_id,status from offline_operation_receipt where operation_id=:id")
-      .param("id", operationId).query(Receipt.class).optional().orElse(null);
-    if (existing != null) {
-      if ("APPLIED".equals(existing.status())) {
-        response.setStatus(HttpServletResponse.SC_NO_CONTENT);
-        response.setHeader("X-Offline-Operation-Replayed", "true");
-      } else response.sendError(HttpServletResponse.SC_CONFLICT, "Offline operation is already processing");
+    catch (IllegalArgumentException exception) {
+      LOGGER.warn("Offline operation rejected: method={}, path={}, operationId={}, httpStatus=400, cause=invalid UUID",
+        request.getMethod(), request.getRequestURI(), request.getHeader(OPERATION_HEADER));
+      response.sendError(HttpServletResponse.SC_BAD_REQUEST, "Invalid offline operation id");
       return;
     }
-    int inserted = jdbc.sql("insert into offline_operation_receipt(operation_id,request_method,request_path,status) values(:id,:method,:path,'PROCESSING') on conflict do nothing")
-      .param("id", operationId).param("method", request.getMethod()).param("path", request.getRequestURI()).update();
-    if (inserted == 0) { response.sendError(HttpServletResponse.SC_CONFLICT, "Offline operation is already processing"); return; }
+    if (!claim(operationId, request, response)) return;
     StatusResponse wrapped = new StatusResponse(response);
     try {
       chain.doFilter(request, wrapped);
@@ -56,6 +56,56 @@ public class OfflineOperationIdempotencyFilter extends OncePerRequestFilter {
     }
   }
 
+  private Receipt receipt(UUID operationId) {
+    return jdbc.sql("select operation_id,request_method,request_path,status,created_at from offline_operation_receipt where operation_id=:id")
+      .param("id", operationId).query(Receipt.class).optional().orElse(null);
+  }
+
+  private boolean claim(UUID operationId, HttpServletRequest request, HttpServletResponse response) throws IOException {
+    while (true) {
+      Receipt existing = receipt(operationId);
+      if (existing != null && handleExisting(existing, request, response)) return false;
+      int inserted = jdbc.sql("insert into offline_operation_receipt(operation_id,request_method,request_path,status) values(:id,:method,:path,'PROCESSING') on conflict do nothing")
+        .param("id", operationId).param("method", request.getMethod()).param("path", request.getRequestURI()).update();
+      if (inserted == 1) return true;
+    }
+  }
+
+  private boolean handleExisting(Receipt existing, HttpServletRequest request, HttpServletResponse response) throws IOException {
+    if (!existing.requestMethod().equals(request.getMethod()) || !existing.requestPath().equals(request.getRequestURI())) {
+      LOGGER.warn("Offline operation id reused for another request: operationId={}, originalMethod={}, originalPath={}, method={}, path={}, httpStatus=409",
+        existing.operationId(), existing.requestMethod(), existing.requestPath(), request.getMethod(), request.getRequestURI());
+      response.sendError(HttpServletResponse.SC_CONFLICT, "Offline operation id belongs to another request");
+      return true;
+    }
+    Receipt current = existing;
+    for (int attempt = 0; attempt < PROCESSING_WAIT_ATTEMPTS; attempt++) {
+      if ("APPLIED".equals(current.status())) {
+        response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+        response.setHeader("X-Offline-Operation-Replayed", "true");
+        return true;
+      }
+      try {
+        Thread.sleep(PROCESSING_WAIT_MILLIS);
+      } catch (InterruptedException exception) {
+        Thread.currentThread().interrupt();
+        break;
+      }
+      current = receipt(existing.operationId());
+      if (current == null) return false;
+    }
+    if ("APPLIED".equals(current.status())) {
+      response.setStatus(HttpServletResponse.SC_NO_CONTENT);
+      response.setHeader("X-Offline-Operation-Replayed", "true");
+      return true;
+    }
+    LOGGER.warn("Offline operation is still processing: method={}, path={}, operationId={}, createdAt={}, httpStatus=503",
+      request.getMethod(), request.getRequestURI(), existing.operationId(), existing.createdAt());
+    response.setHeader("Retry-After", "1");
+    response.sendError(HttpServletResponse.SC_SERVICE_UNAVAILABLE, "Offline operation is still processing");
+    return true;
+  }
+
   private void discard(UUID operationId) { jdbc.sql("delete from offline_operation_receipt where operation_id=:id and status='PROCESSING'").param("id", operationId).update(); }
   private boolean supportedPath(String path) {
     return path.startsWith("/api/v1/service-sessions") || path.startsWith("/api/v1/service-reservations")
@@ -66,7 +116,7 @@ public class OfflineOperationIdempotencyFilter extends OncePerRequestFilter {
       || path.matches("^/api/v1/members/[^/]+/recharges$")
       || path.equals("/api/v1/member-wallet/recharge");
   }
-  record Receipt(UUID operationId, String status) {}
+  record Receipt(UUID operationId, String requestMethod, String requestPath, String status, OffsetDateTime createdAt) {}
   private static final class StatusResponse extends HttpServletResponseWrapper {
     private int status = HttpServletResponse.SC_OK;
     StatusResponse(HttpServletResponse response) { super(response); }

@@ -62,7 +62,8 @@ test('front desk assignment provisions legacy room beds and locks the selected b
   assert.match(controller, /from room where id=:room and store_id=:store for update/);
   assert.match(controller, /generate_series\(1,r\.bed_count\)/);
   assert.match(controller, /on conflict \(room_id,code\) do nothing/i);
-  assert.match(controller, /order by b\.sort_order limit 1 for update skip locked/);
+  assert.match(controller, /order by b\.sort_order limit 1 for update/);
+  assert.doesNotMatch(controller, /for update skip locked/);
 });
 
 test('front desk start surfaces the server error detail', () => {
@@ -94,7 +95,7 @@ test('pending technician card exposes a direct start-service action', () => {
 });
 
 test('front desk loads the updated application script without stale browser cache', () => {
-  assert.match(index, /app\.js\?v=20260907-clock-type-change-v1/);
+  assert.match(index, /app\.js\?v=20260911-p0-conflict-fix-v1/);
 });
 
 test('technician-card and settlement room-transfer dialogs have unique ids', () => {

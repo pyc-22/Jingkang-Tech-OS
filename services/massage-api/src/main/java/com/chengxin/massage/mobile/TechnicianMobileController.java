@@ -253,7 +253,7 @@ public class TechnicianMobileController {
     if (!eligibility.eligible()) return new MobileClockOptions(List.of(), List.of(), false, eligibility.reason());
     LocalDate businessDate = businessClock.currentBusinessDate(technician.storeId());
     List<ServiceItemOption> services = itemVersions.activeItems(technician.storeId(), businessDate, false).stream().map(this::option).toList();
-    List<RoomOption> rooms = jdbc.sql("select r.id,r.code,r.name from room r where r.store_id=:store and r.active=true and not exists(select 1 from service_session ss where ss.store_id=r.store_id and ss.room_id=r.id and ss.status='IN_SERVICE') and coalesce((select event.status from room_status_event event where event.store_id=r.store_id and event.room_id=r.id order by event.occurred_at desc limit 1),'IDLE')='IDLE' order by r.code")
+    List<RoomOption> rooms = jdbc.sql("select r.id,r.code,r.name from room r where r.store_id=:store and r.active=true and not exists(select 1 from service_session ss where ss.store_id=r.store_id and ss.room_id=r.id and ss.status='IN_SERVICE') and coalesce((select event.status from room_status_event event where event.store_id=r.store_id and event.room_id=r.id order by event.occurred_at desc,event.id desc limit 1),'IDLE')='IDLE' order by r.code")
       .param("store", technician.storeId()).query(RoomOption.class).list();
     return new MobileClockOptions(services, rooms, true, eligibility.reason());
   }
@@ -281,8 +281,8 @@ public class TechnicianMobileController {
       .param("ended", endedAt).param("session", active.id()).param("store", technician.storeId()).update();
     UUID roomId = jdbc.sql("select room_id from service_session where id=:id and store_id=:store")
       .param("id", active.id()).param("store", technician.storeId()).query(UUID.class).single();
-    recordRoomStatus(technician.storeId(), roomId, "PENDING_PAYMENT", "Technician mobile clock-out; awaiting payment");
     promoteNextReservation(technician, authorization);
+    recordRoomStatus(technician.storeId(), roomId, "PENDING_PAYMENT", "Technician mobile clock-out; awaiting payment");
     ServiceSession completed = session(technician.storeId(), technician.id(), active.id());
     audits.record(authorization, technician.storeId(), "SERVICE", "MOBILE_SERVICE_CLOCKED_OUT", "service_session", active.id(), "技师手机端下钟", active, completed);
     return completed;
@@ -500,9 +500,16 @@ public class TechnicianMobileController {
   }
 
   private void recordRoomStatus(UUID storeId, UUID roomId, String status, String reason) {
-    jdbc.sql("insert into room_status_event(id,tenant_id,store_id,room_id,status,reason,source) values(:id,:tenant,:store,:room,:status,:reason,'SERVICE_SESSION')")
+    lockRoom(storeId, roomId);
+    jdbc.sql("insert into room_status_event(id,tenant_id,store_id,room_id,status,reason,source,occurred_at) values(:id,:tenant,:store,:room,:status,:reason,'SERVICE_SESSION',clock_timestamp())")
       .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("room", roomId)
       .param("status", status).param("reason", reason).update();
+  }
+
+  private void lockRoom(UUID storeId, UUID roomId) {
+    jdbc.sql("select id from room where id=:room and store_id=:store for update")
+      .param("room", roomId).param("store", storeId).query(UUID.class).optional()
+      .orElseThrow(() -> badRequest("Room is unavailable"));
   }
 
   private String sessionSql(String statusClause, String limitClause) {

@@ -291,6 +291,9 @@ function openManagerClockDialog({technicianId=null,roomId=null}={}){
 }
 async function submitManagerClock(event){
   event.preventDefault();
+  const submit=event.currentTarget.querySelector('button[type="submit"]');
+  submit.disabled=true;
+  try{
   const form=new FormData(event.currentTarget);
   const clockType=String(form.get('clockType')||'QUEUE');
   const reservation=['BOOKED_QUEUE','BOOKED_CALL'].includes(clockType);
@@ -311,6 +314,7 @@ async function submitManagerClock(event){
   managerClockingTechIds=[]; managerClockingRoomId='';
   await loadManagerDashboard({manual:false});
   managerToast(reservation?`${selected[0].name} 已登记${managerClockTypeLabel[clockType]}`:`${selected.map(item=>item.name).join('、')} 已安排上钟`);
+  }finally{submit.disabled=false;}
 }
 let managerLiveRoomsSnapshot=[];
 function managerLiveTechnicianCard(technician){

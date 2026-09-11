@@ -228,9 +228,16 @@ public class ServiceRoomTransferController {
   }
 
   private void recordRoomStatus(UUID storeId, UUID roomId, String status, String reason, String source) {
-    jdbc.sql("insert into room_status_event(id,tenant_id,store_id,room_id,status,reason,source) values(:id,:tenant,:store,:room,:status,:reason,:source)")
+    lockRoom(storeId, roomId);
+    jdbc.sql("insert into room_status_event(id,tenant_id,store_id,room_id,status,reason,source,occurred_at) values(:id,:tenant,:store,:room,:status,:reason,:source,clock_timestamp())")
       .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("room", roomId)
       .param("status", status).param("reason", reason).param("source", source).update();
+  }
+
+  private void lockRoom(UUID storeId, UUID roomId) {
+    jdbc.sql("select id from room where id=:room and store_id=:store for update")
+      .param("room", roomId).param("store", storeId).query(UUID.class).optional()
+      .orElseThrow(() -> badRequest("Room is unavailable"));
   }
 
   private TransferRequest transfer(UUID storeId, UUID id) {

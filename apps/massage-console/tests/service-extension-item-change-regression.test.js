@@ -26,6 +26,8 @@ test('extension changes retain active-session, settlement and duration safeguard
   assert.match(controller, /requireExtensionWithinLimit/);
   assert.match(controller, /expected_end_at=:expected/);
   assert.match(controller, /SERVICE_EXTENSION_ITEM_CHANGED/);
+  assert.match(controller, /if \(deltaMinutes != 0\) \{\s*durationPolicies\.recordChange/);
+  assert.doesNotMatch(controller, /newExpectedEnd\.isAfter\(OffsetDateTime\.now\(\)\)/);
 });
 
 test('extension change history preserves old and new financial snapshots', () => {
@@ -50,7 +52,13 @@ test('main item changes remain available when a session has no extensions', () =
   assert.match(app, /extensionSelect\.disabled = serviceItemChangeExtensions\.length === 0/);
   assert.match(app, /kindWrap\.hidden = !hasExtensions/);
   assert.match(app, /extensionWrap\.style\.display = 'none'/);
-  assert.match(index, /app\.js\?v=20260907-clock-type-change-v1/);
+  assert.match(index, /app\.js\?v=20260911-p0-conflict-fix-v1/);
   assert.match(index, /styles\.css\?v=20260905-daily-customer-count-override-v1/);
   assert.match(fs.readFileSync(path.join(root, 'styles.css'), 'utf8'), /\.form-grid label\[hidden\] \{ display:none !important; \}/);
+});
+
+test('sessions with extensions require an explicit main or extension target', () => {
+  assert.match(app, /<option value="">请选择更换对象<\/option>/);
+  assert.match(app, /if \(!\['MAIN','EXTENSION'\]\.includes\(changeKind\)\) return toast\('请选择要更换的项目类型'\)/);
+  assert.match(app, /kind\.value = hasExtensions \? '' : 'MAIN'/);
 });

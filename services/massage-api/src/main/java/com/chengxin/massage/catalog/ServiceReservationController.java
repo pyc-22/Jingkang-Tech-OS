@@ -77,6 +77,7 @@ public class ServiceReservationController {
     ResolvedServiceItem service = service(storeId, input.serviceItemId());
     ensureActive(storeId, "technician", input.technicianId(), "Technician is unavailable");
     schedulePolicy.requireClockInEligibility(storeId, input.technicianId());
+    lockRoom(storeId, input.roomId());
     ensureActive(storeId, "room", input.roomId(), "Room is unavailable");
     UUID id = UUID.randomUUID();
     jdbc.sql("insert into service_reservation(id,tenant_id,store_id,room_id,technician_id,service_item_id,reservation_type,service_name_snapshot,service_price_cents,planned_duration_minutes,note,created_by_user_id,created_by_name_snapshot,price_version_id,counts_as_clock_snapshot) values(:id,:tenant,:store,:room,:technician,:service,:type,:name,:price,:duration,:note,:user,:userName,:priceVersion,:countsAsClock)")
@@ -98,6 +99,7 @@ public class ServiceReservationController {
     AdminSessionService.AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
     ReservationLock reservation = reservationForUpdate(storeId, id);
     if (!"WAITING".equals(reservation.status())) throw conflict("Reservation is no longer waiting");
+    lockRoom(storeId, reservation.roomId());
     ResolvedServiceItem service = service(storeId, input.serviceItemId());
     ensureActive(storeId, "technician", input.technicianId(), "Technician is unavailable");
     schedulePolicy.requireClockInEligibility(storeId, input.technicianId());
@@ -129,6 +131,11 @@ public class ServiceReservationController {
 
   private Reservation reservation(UUID storeId, UUID id) { return jdbc.sql(sql("where sr.store_id=:store and sr.id=:id")).param("store", storeId).param("id", id).query(Reservation.class).single(); }
   private ReservationLock reservationForUpdate(UUID storeId, UUID id) { return jdbc.sql("select id,room_id,technician_id,service_item_id,reservation_type,status,note from service_reservation where id=:id and store_id=:store for update").param("id", id).param("store", storeId).query(ReservationLock.class).single(); }
+  private void lockRoom(UUID storeId, UUID roomId) {
+    jdbc.sql("select id from room where id=:room and store_id=:store for update")
+      .param("room", roomId).param("store", storeId).query(UUID.class).optional()
+      .orElseThrow(() -> badRequest("Room is unavailable"));
+  }
   private ResolvedServiceItem service(UUID storeId, UUID id) { return itemVersions.activeItem(storeId, id, businessClock.currentBusinessDate(storeId)).orElseThrow(() -> badRequest("Service item is unavailable")); }
   private void ensureActive(UUID storeId, String table, UUID id, String message) { if (!jdbc.sql("select exists(select 1 from " + table + " where id=:id and store_id=:store and active=true)").param("id", id).param("store", storeId).query(Boolean.class).single()) throw badRequest(message); }
   private boolean hasActiveSession(UUID storeId, UUID id) { return jdbc.sql("select exists(select 1 from service_session session where session.store_id=:store and ((session.room_id=:id and session.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','IN_SERVICE')) or (session.technician_id=:id and session.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE'))))").param("store", storeId).param("id", id).query(Boolean.class).single(); }
@@ -138,10 +145,11 @@ public class ServiceReservationController {
   }
   private String latestRoomStatus(UUID storeId, UUID id) { return jdbc.sql("select status from room_status_event where store_id=:store and room_id=:room order by occurred_at desc,id desc limit 1").param("store", storeId).param("room", id).query(String.class).optional().orElse("IDLE"); }
   private void recordRoomStatus(UUID storeId, UUID roomId, String status, String reason) {
+    lockRoom(storeId, roomId);
     boolean active = jdbc.sql("select exists(select 1 from service_session where store_id=:store and room_id=:room and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'))")
       .param("store", storeId).param("room", roomId).query(Boolean.class).single();
     String effective = active && "RESERVED".equals(status) ? "IN_SERVICE" : status;
-    jdbc.sql("insert into room_status_event(id,tenant_id,store_id,room_id,status,reason,source) values(:id,:tenant,:store,:room,:status,:reason,'SERVICE_RESERVATION')")
+    jdbc.sql("insert into room_status_event(id,tenant_id,store_id,room_id,status,reason,source,occurred_at) values(:id,:tenant,:store,:room,:status,:reason,'SERVICE_RESERVATION',clock_timestamp())")
       .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("room", roomId).param("status", effective).param("reason", reason).update();
   }
   private void validateType(String type) { if (!"BOOKED_CALL".equals(type) && !"BOOKED_QUEUE".equals(type)) throw badRequest("Unsupported reservation type"); }
