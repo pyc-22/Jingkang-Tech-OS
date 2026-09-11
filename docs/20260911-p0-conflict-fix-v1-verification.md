@@ -2,7 +2,7 @@
 
 ## 结论
 
-当前完整工作树已通过前端全量、后端全量、定向测试、真实 PostgreSQL/HTTP 并发回归、最终 JAR 字节码核验和本地健康检查。真实 API 回归使用从本机 `massage_v89` 克隆的临时数据库；未连接生产数据库。回归运行与最终 JAR 重建分别记录，避免把不同归档时间产生的字节哈希混为同一构建。
+当前完整工作树已通过前端全量、后端全量、定向测试、真实 PostgreSQL/HTTP 并发回归、最终 JAR 字节码核验和本地健康检查。真实 API 回归直接使用最终发布 JAR，并从本机 `massage_v89` 克隆临时数据库；未连接生产数据库。
 
 ## 构建证据
 
@@ -21,19 +21,19 @@
 ```text
 services/massage-api/target/massage-api-0.1.0.jar
 Size: 44,354,471 bytes
-Build: 2026-09-11 19:54:32 +08:00
-SHA-256: 0BF8937960B2B76E15C77B77AEDD217565DA5297A9131EC918B565BB0B67AB4C
+Build: 2026-09-11 21:45:01 +08:00
+SHA-256: A71C6F470AF05FFF348C33C200051B1E3B82631DD66EBE77DB30EE59C40BDF59
 ```
 
 ## 真实 API/PostgreSQL 回归
 
-实际命令（2026-09-11 19:34；该次回归使用的 JAR SHA-256 为 `270EA31C247FC9C1042E20BA3C349D8F617F1DDB081BE6E24FC20E0C1D7113B5`）：
+实际命令（2026-09-11 21:46；JAR SHA-256 为 `A71C6F470AF05FFF348C33C200051B1E3B82631DD66EBE77DB30EE59C40BDF59`）：
 
 ```powershell
-& .\tools\regression\p0-conflict-api-regression.ps1 -Database massage_p0_regression_final5 -ApiPort 58084
+& .\tools\regression\p0-conflict-api-regression.ps1 -Database massage_p0_regression_final7 -ApiPort 58087
 ```
 
-脚本从本机 `massage_v89` 克隆临时数据库 `massage_p0_regression_final5`，在 `127.0.0.1:58084` 启动该回归 JAR，测试完成后停止进程并删除临时数据库。运行退出码为 `0`，关键结果如下。该 JAR 与最终发布 JAR 来自同一完整源码树；最终发布 JAR 随后以 JDK 21 重新 `clean package`，其独立哈希和字节码内容见下一节。对最终 JAR 的第二次回归尝试因本机 PostgreSQL 连接阶段卡住后终止，不计为通过结果，也不覆盖下面的已通过证据：
+脚本从本机 `massage_v89` 克隆临时数据库 `massage_p0_regression_final7`，在 `127.0.0.1:58087` 启动最终发布 JAR，测试完成后停止进程并删除临时数据库。运行退出码为 `0`，关键结果如下：
 
 - 精确生产路由 `PUT /api/v1/service-sessions/{id}/service-item`，`reason: "2"`：HTTP 200。
 - 已超过预计结束时间的 `IN_SERVICE` 首钟换项：HTTP 200，服务总时长和审计正确。
