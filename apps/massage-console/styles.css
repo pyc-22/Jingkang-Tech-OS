@@ -692,3 +692,18 @@ dialog > .dialog-card {
   min-height:44px;
   font-size:14px;
 }
+
+.room-pending-summary { display:grid; gap:2px; margin-top:8px; padding-top:7px; border-top:1px solid rgba(125,153,143,.24); text-align:left; }
+.room-pending-summary b,.room-pending-summary small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.room-pending-summary b { color:#744919; font-size:11px; }
+.dispatch-participant { min-width:0; margin:0; padding:9px; border:1px solid var(--line); border-radius:5px; }
+.dispatch-participant.focused { border-color:var(--teal); background:#f2faf7; }
+.dispatch-participant legend { padding:0 5px; color:#254943; font-size:11px; font-weight:700; }
+.dispatch-participant-grid { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(86px,.8fr) minmax(78px,.7fr); gap:7px; }
+.dispatch-participant-grid label { display:grid; grid-template-columns:1fr; gap:4px; }
+.dispatch-participant-grid select,.dispatch-participant-grid input { width:100%; min-width:0; height:32px; padding:0 7px; border:1px solid var(--line); border-radius:4px; background:#fff; font:inherit; font-size:11px; }
+.clock-out-confirm-message { line-height:1.6; color:#253e39; font-size:14px; font-weight:700; }
+.clock-out-confirm-details { display:grid; gap:8px; margin-top:14px; padding:12px; border:1px solid var(--line); border-radius:5px; background:#f7faf8; }
+.clock-out-confirm-details span { display:flex; justify-content:space-between; gap:16px; color:var(--muted); font-size:12px; }
+.clock-out-confirm-details b { color:var(--ink); text-align:right; }
+@media (max-width:640px) { .dispatch-participant-grid { grid-template-columns:1fr; } }

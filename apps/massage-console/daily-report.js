@@ -339,7 +339,7 @@
   function printReport() {
     const printWindow = window.open('', '_blank');
     if (!printWindow) { toast('请允许浏览器打开打印窗口'); return; }
-    printWindow.document.write(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${selectedStoreName()} 每日营业日报</title><link rel="stylesheet" href="${location.origin}/styles.css?v=20260912-full-optimization-v1"><link rel="stylesheet" href="${location.origin}/daily-report.css?v=20260912-full-optimization-v1"></head><body class="daily-report-print"><main class="workspace">${printableReport()}</main></body></html>`);
+    printWindow.document.write(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${selectedStoreName()} 每日营业日报</title><link rel="stylesheet" href="${location.origin}/styles.css?v=20260913-next-optimization-v1"><link rel="stylesheet" href="${location.origin}/daily-report.css?v=20260913-next-optimization-v1"></head><body class="daily-report-print"><main class="workspace">${printableReport()}</main></body></html>`);
     printWindow.document.close();
     printWindow.addEventListener('load', () => { printWindow.focus(); printWindow.print(); });
   }

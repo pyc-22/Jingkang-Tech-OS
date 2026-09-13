@@ -29,8 +29,6 @@ let managerClockingTechIds=[];
 let managerClockingRoomId='';
 let managerCanArrange=false;
 let managerCurrentBusinessDate='';
-let managerHistoricalOperationId=null;
-let managerHistoricalOperationFingerprint='';
 let managerExtensionSessionId=null;
 let managerExtensionTechnicianId=null;
 let managerActiveSessions=[];
@@ -50,21 +48,6 @@ function managerCurrentStoreId() {
 }
 function managerToday() { return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()); }
 function managerBackfillMaxDate(){ return managerCurrentBusinessDate || managerToday(); }
-function managerOperationId(){
-  if(window.crypto?.randomUUID)return window.crypto.randomUUID();
-  const bytes=new Uint8Array(16);
-  if(window.crypto?.getRandomValues)window.crypto.getRandomValues(bytes);else for(let index=0;index<bytes.length;index++)bytes[index]=Math.floor(Math.random()*256);
-  bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
-  const hex=[...bytes].map(value=>value.toString(16).padStart(2,'0')).join('');
-  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
-}
-function managerHistoricalOperationIdForSubmit(fingerprint){
-  if(!managerHistoricalOperationId||managerHistoricalOperationFingerprint!==fingerprint){
-    managerHistoricalOperationId=managerOperationId();
-    managerHistoricalOperationFingerprint=fingerprint;
-  }
-  return managerHistoricalOperationId;
-}
 function ensureManagerReportDate() { const input=document.querySelector('#manager-report-date'); if(input&&!input.value) input.value=managerToday(); return input?.value||''; }
 const managerStoreHeaders = () => ({ ...managerHeaders(), 'X-Store-Id':managerCurrentStoreId() });
 function applyManagerPermissions() {
@@ -538,7 +521,7 @@ async function loadManagerDashboard({manual=false}={}) {
     managerQueuePositions=new Map((queueSnapshot?.technicians||[]).map(item=>[String(item.technicianId),item.queuePosition]));
     renderManagerDashboard(report,dailyReport,rooms,statuses,technicians,sessions,pending,refunds,liveRooms,liveTechnicians);
     managerPaymentMethods=paymentMethods;
-    if(canBackfill) renderManagerHistoricalBackfillControls();
+    renderManagerHistoricalBackfillControls();
     if(canBackfill) await managerOptionalTask(loadManagerHistoricalBackfills);
     renderManagerServiceStructure(dailyReport,clockSummary);
     renderManagerChannels(channels,managerPaymentMethods);
@@ -590,7 +573,7 @@ document.querySelector('#manager-login-form').addEventListener('submit',async ev
 document.querySelector('#manager-store-select').addEventListener('change',async event=>{if(!managerStores.some(store=>store.id===event.target.value)){renderManagerStores();return managerToast('该门店未分配给当前账号');}resetManagerExtensionState({close:true});localStorage.setItem(managerStoreKey,event.target.value);await loadManagerDashboard();});
 document.querySelector('#manager-report-date').addEventListener('change',()=>loadManagerDashboard({manual:true}).catch(()=>managerToast('所选营业日数据暂时无法加载')));
 document.querySelector('#manager-tabbar').addEventListener('click',event=>{const button=event.target.closest('[data-manager-nav]');if(!button||button.classList.contains('hidden'))return;switchManagerPage(button.dataset.managerNav);});
-document.querySelector('.manager-home-shortcuts').addEventListener('click',event=>{const button=event.target.closest('[data-manager-shortcut]');if(!button)return;if(button.dataset.managerShortcut==='historical-backfill')return openManagerHistoricalBackfill();const nav=document.querySelector(`[data-manager-nav="${button.dataset.managerShortcut}"]`);if(!nav||nav.classList.contains('hidden'))return managerToast('当前账号没有该模块权限');switchManagerPage(button.dataset.managerShortcut);});
+document.querySelector('.manager-home-shortcuts').addEventListener('click',event=>{const button=event.target.closest('[data-manager-shortcut]');if(!button)return;const nav=document.querySelector(`[data-manager-nav="${button.dataset.managerShortcut}"]`);if(!nav||nav.classList.contains('hidden'))return managerToast('当前账号没有该模块权限');switchManagerPage(button.dataset.managerShortcut);});
 document.querySelector('#manager-open-dispatch').addEventListener('click',()=>openManagerClockDialog());
 document.querySelector('#manager-live-room-list').addEventListener('click',event=>{const extension=event.target.closest('[data-manager-extension-session]');if(extension)return openManagerExtension(extension.dataset.managerExtensionSession,extension.dataset.managerExtensionTech).catch(handleManagerExtensionFailure);const button=event.target.closest('[data-manager-clock-room]');if(button)openManagerClockDialog({roomId:button.dataset.managerClockRoom});});
 document.querySelector('#manager-live-technician-groups').addEventListener('click',event=>{const button=event.target.closest('[data-manager-clock-tech]');if(button)openManagerClockDialog({technicianId:button.dataset.managerClockTech});});
@@ -685,151 +668,38 @@ if(localStorage.getItem(managerTokenKey))loadManagerStores(); else showManagerLo
   };
 })();
 
-// Historical order backfill is deliberately isolated from the live clock-in
-// workflow.  The backend remains the source of truth for permissions,
-// historical price versions, payment validation and audit records.
-let managerHistoricalTechIds=[];
-function managerHistoricalEligibleTechnicians(){
-  return (managerFoundationTechnicians||[]).filter(item=>item.active!==false);
-}
-function managerHistoricalAllocationValue(index,count){
-  const base=Math.floor(10000/count);
-  return ((base+(index===0?10000-base*count:0))/100).toFixed(2);
-}
-function managerHistoricalPaymentOptions(selected=''){
-  const configured=(managerPaymentMethods||[]).filter(item=>item.active!==false);
-  const methods=configured.length?configured:[{code:'CASH',name:'现金'}];
-  return methods.map(item=>`<option value="${managerEscape(item.code||item.methodKind)}"${String(item.code||item.methodKind)===String(selected)?' selected':''}>${managerEscape(item.name||item.code||item.methodKind)}</option>`).join('');
-}
-function resetManagerHistoricalPayments(){
-  const container=document.querySelector('#manager-backfill-payments');
-  if(!container)return;
-  container.querySelectorAll('.manager-backfill-payment-row:not(:first-child)').forEach(row=>row.remove());
-  const first=container.querySelector('.manager-backfill-payment-row');
-  if(first){first.querySelector('select')?.setAttribute('name','paymentMethod');first.querySelector('input')?.setAttribute('name','paymentAmount');}
-}
-function addManagerHistoricalPaymentRow(){
-  const container=document.querySelector('#manager-backfill-payments');
-  if(!container)return;
-  const row=document.createElement('div');row.className='manager-backfill-payment-row';
-  row.innerHTML=`<label>收款方式<select name="paymentMethod">${managerHistoricalPaymentOptions()}</select></label><label>收款金额（元）<input name="paymentAmount" type="number" min="0.01" step="0.01" required></label><button type="button" class="manager-quiet-button" data-manager-backfill-remove-payment>移除</button>`;
-  const add=container.querySelector('#manager-backfill-add-payment');
-  container.insertBefore(row,add||null);
-}
+// The manager mobile surface is read-only for historical backfills. Creation
+// is intentionally available only in the front-desk workflow.
+let managerHistoricalBackfillRows=[];
+const managerHistoricalStatusLabel={SETTLED:'已结算',CANCELLED:'已作废',DRAFT:'草稿'};
 function renderManagerHistoricalBackfillControls(){
   const section=document.querySelector('#manager-backfill-section');
   if(!section)return;
-  section.classList.toggle('hidden',!managerHasPermission('HISTORICAL_ORDER_CREATE'));
-  const date=document.querySelector('#manager-backfill-date');
-  if(date){date.max=managerBackfillMaxDate();if(!date.value)date.value=managerBackfillMaxDate();}
-  const rooms=document.querySelector('#manager-backfill-room');
-  if(rooms){const previous=rooms.value;rooms.innerHTML='<option value="">不指定房间</option>'+(managerFoundationRooms||[]).filter(item=>item.active!==false).map(item=>`<option value="${item.id}">${managerEscape(item.code||item.name||'房间')}</option>`).join('');if([...rooms.options].some(item=>item.value===previous))rooms.value=previous;}
-  const services=document.querySelector('#manager-backfill-service');
-  if(services){const previous=services.value;services.innerHTML=(managerFoundationServices||[]).filter(item=>item.active!==false).map(item=>`<option value="${item.id}">${managerEscape(item.name)} · ${Number(item.defaultDurationMinutes||0)} 分钟 · ${managerMoney(item.priceCents)}</option>`).join('');if([...services.options].some(item=>item.value===previous))services.value=previous;}
-  const methods=document.querySelector('#manager-backfill-payment-method');
-  if(methods){const previous=methods.value;const configured=(managerPaymentMethods||[]).filter(item=>item.active!==false);methods.innerHTML=(configured.length?configured:[{code:'CASH',name:'现金'}]).map(item=>`<option value="${managerEscape(item.code||item.methodKind)}">${managerEscape(item.name||item.code||item.methodKind)}</option>`).join('');if([...methods.options].some(item=>item.value===previous))methods.value=previous;}
-  const selectedService=(managerFoundationServices||[]).find(item=>String(item.id)===String(services?.value));
-  const duration=document.querySelector('#manager-backfill-duration');
-  if(duration&&!duration.value)duration.value=Number(selectedService?.defaultDurationMinutes||0)||'';
-  const amount=document.querySelector('#manager-backfill-amount');
-  const paymentAmount=document.querySelector('#manager-backfill-payment-amount');
-  if(paymentAmount&&amount&&!paymentAmount.value&&amount.value)paymentAmount.value=amount.value;
-  const techTarget=document.querySelector('#manager-backfill-tech-list');
-  if(techTarget){const techs=managerHistoricalEligibleTechnicians();const selected=new Set(managerHistoricalTechIds.map(String));techTarget.innerHTML=techs.map(item=>`<button class="manager-clock-tech-choice ${selected.has(String(item.id))?'selected':''}" data-manager-backfill-tech="${item.id}" type="button"><span class="manager-clock-tech-avatar">${managerEscape(String(item.name||'').slice(0,1))}</span><span><b>${managerEscape(item.name)}</b><small>${managerEscape(item.code||'在岗技师')}</small></span><em>${selected.has(String(item.id))?'已选择':'选择'}</em></button>`).join('')||'<p class="comparison-empty">当前门店没有可用技师</p>';}
-  const allocation=document.querySelector('#manager-backfill-allocation');
-  if(allocation){const selected=managerHistoricalTechIds.map(id=>(managerFoundationTechnicians||[]).find(item=>String(item.id)===String(id))).filter(Boolean);allocation.innerHTML=selected.length?`<div class="manager-clock-allocation-heading"><b>业绩分配</b><small>合计必须为 100%</small></div>${selected.map((tech,index)=>`<label><span>${managerEscape(tech.name)}</span><input data-manager-backfill-allocation="${tech.id}" type="number" min="0.01" max="100" step="0.01" value="${managerHistoricalAllocationValue(index,selected.length)}"><em>%</em></label>`).join('')}`:'';}
+  const allowed=managerHasPermission('HISTORICAL_ORDER_CREATE');
+  section.classList.toggle('hidden',!allowed);
+  if(!allowed)return;
+  const date=document.querySelector('#manager-historical-filter-date');
+  if(date&&!date.max)date.max=managerBackfillMaxDate();
+  renderManagerHistoricalBackfills(managerHistoricalBackfillRows);
 }
-const managerHistoricalStatusLabel={SETTLED:'已结算',CANCELLED:'已作废',DRAFT:'草稿'};
-function renderManagerHistoricalBackfills(rows=[]){
+function renderManagerHistoricalBackfills(rows=managerHistoricalBackfillRows){
   const target=document.querySelector('#manager-historical-backfill-list');
   if(!target)return;
-  target.innerHTML=(rows||[]).map(row=>`<article class="${managerEscape(row.status||'')} historical-backfill-row"><div class="expense-row-head"><span class="expense-category-mark" aria-hidden="true">↺</span><div><b>${managerEscape(row.orderNo||'历史补单')}</b><small>${managerEscape(row.backfillDate||'—')} · ${managerEscape(row.paymentMethods||'未记录收款方式')}</small></div><strong>${managerMoney(row.paidCents||row.receivableCents)}</strong></div><div class="expense-row-meta"><small>${managerEscape(managerHistoricalStatusLabel[row.status]||row.status||'—')} · ${managerEscape(row.refundStatus||'NONE')}</small><small>${managerEscape(row.backfillAt||'')}</small></div></article>`).join('')||'<p class="comparison-empty">当前门店暂无本人历史补单记录</p>';
+  managerHistoricalBackfillRows=Array.isArray(rows)?rows:[];
+  const selectedDate=String(document.querySelector('#manager-historical-filter-date')?.value||'');
+  const visible=managerHistoricalBackfillRows.filter(row=>!selectedDate||String(row.backfillDate||'')===selectedDate);
+  target.innerHTML=visible.map(row=>`<article class="${managerEscape(row.status||'')} historical-backfill-row" data-manager-historical-order="${managerEscape(row.orderId||'')}"><div class="expense-row-head"><span class="expense-category-mark" aria-hidden="true">↺</span><div><b>${managerEscape(row.orderNo||'历史补单')}</b><small>${managerEscape(row.backfillDate||'—')} · ${managerEscape(row.paymentMethods||'未记录收款方式')}</small></div><strong>${managerMoney(row.paidCents||row.receivableCents)}</strong></div><div class="expense-row-meta"><small>${managerEscape(managerHistoricalStatusLabel[row.status]||row.status||'—')} · ${managerEscape(row.refundStatus||'NONE')}</small><small>${managerEscape(row.backfillByName||'操作人未记录')} · ${managerEscape(row.backfillAt||'')}</small></div></article>`).join('')||'<p class="comparison-empty">当前门店暂无匹配的历史补单记录</p>';
 }
 async function loadManagerHistoricalBackfills(){
   if(!managerHasPermission('HISTORICAL_ORDER_CREATE'))return;
   const rows=await managerOptionalJson('/sales-orders/historical-backfills/mine',[]);
   renderManagerHistoricalBackfills(rows);
 }
-function openManagerHistoricalBackfill(){
-  if(!managerHasPermission('HISTORICAL_ORDER_CREATE'))return managerToast('当前账号没有历史补单权限');
-  managerHistoricalTechIds=[];
-  const form=document.querySelector('#manager-historical-backfill-form');
-  if(!form)return;
-  form.reset();
-  resetManagerHistoricalPayments();
-  document.querySelector('#manager-backfill-date').value=managerBackfillMaxDate();
-  document.querySelector('#manager-backfill-date').max=managerBackfillMaxDate();
-  document.querySelector('#manager-backfill-dialog-result')?.classList.add('hidden');
-  renderManagerHistoricalBackfillControls();
-  const dialog=document.querySelector('#manager-historical-backfill-dialog');
-  if(dialog?.showModal)dialog.showModal();
-}
-async function submitManagerHistoricalBackfill(event){
-  event.preventDefault();
-  if(!managerHasPermission('HISTORICAL_ORDER_CREATE'))return managerToast('当前账号没有历史补单权限');
-  const form=new FormData(event.currentTarget);
-  const date=String(form.get('backfillDate')||'');
-  const amount=Number(form.get('amount'));
-  const duration=Number(form.get('durationMinutes'));
-  const serviceId=form.get('serviceItemId');
-  const selected=managerHistoricalTechIds.map(id=>(managerFoundationTechnicians||[]).find(item=>String(item.id)===String(id))).filter(Boolean);
-  if(!date||date>managerBackfillMaxDate())return managerToast('补单日期不能晚于当前营业日');
-  if(!serviceId||!selected.length)return managerToast('请选择服务项目和至少一名技师');
-  if(!Number.isInteger(duration)||duration<15||duration>360)return managerToast('服务时长必须是 15-360 分钟的整数');
-  if(!Number.isFinite(amount)||amount<=0)return managerToast('请输入有效的结算金额');
-  const allocations=selected.map((tech,index)=>{const input=document.querySelector('[data-manager-backfill-allocation="'+tech.id+'"]');return {technicianId:tech.id,allocationBp:Math.round(Number(input?.value||0)*100)};});
-  if(allocations.some(item=>!Number.isInteger(item.allocationBp)||item.allocationBp<1)||allocations.reduce((sum,item)=>sum+item.allocationBp,0)!==10000)return managerToast('技师分配比例必须大于 0%，且合计正好为 100%');
-  const paymentRows=[...event.currentTarget.querySelectorAll('.manager-backfill-payment-row')];
-  const payments=paymentRows.map(row=>({method:row.querySelector('[name="paymentMethod"]')?.value,amountCents:Math.round(Number(row.querySelector('[name="paymentAmount"]')?.value||0)*100)})).filter(item=>item.method&&item.amountCents>0);
-  if(!payments.length||payments.reduce((sum,item)=>sum+item.amountCents,0)!==Math.round(amount*100))return managerToast('各收款方式合计必须等于结算金额');
-  const roomId=form.get('roomId')||null;
-  const memberId=String(form.get('memberId')||'').trim()||null;
-  const service=(managerFoundationServices||[]).find(item=>String(item.id)===String(serviceId));
-  const summary=`日期 ${date}，项目 ${service?.name||serviceId}，技师 ${selected.map(item=>item.name).join('、')}，金额 ¥${amount.toFixed(2)}`;
-  if(!window.confirm(`请确认历史补单信息：${summary}`))return;
-  if(!window.confirm('再次确认：提交后将写入历史订单、提成和日报，是否继续？'))return;
-  const submit=event.currentTarget.querySelector('button[type="submit"]');if(submit)submit.disabled=true;
-  try{
-    const body={backfillDate:date,memberId,lines:[{serviceItemId,technicians:allocations,durationMinutes:duration,clockType:'QUEUE',roomId}],payments,settlementAmountCents:Math.round(amount*100),confirmed:true};
-    const serializedBody=JSON.stringify(body);
-    const response=await fetch(`${managerApi}/sales-orders/historical-backfill`,{method:'POST',headers:{...managerStoreHeaders(),'Content-Type':'application/json','X-Offline-Operation-Id':managerHistoricalOperationIdForSubmit(serializedBody)},body:serializedBody});
-    if(!response.ok){
-      if(response.status!==503)managerHistoricalOperationId=null;
-      const detail=(await response.text()).replace(/^"|"$/g,'');
-      return managerToast(`历史补单失败：${detail||'请检查权限和填写内容'}`);
-    }
-    if(response.status===204||response.headers.get('X-Offline-Operation-Replayed')==='true'){
-      managerHistoricalOperationId=null;
-      document.querySelector('#manager-historical-backfill-dialog')?.close();
-      await loadManagerDashboard({manual:false});
-      return managerToast('历史补单已处理');
-    }
-    const result=await response.json();
-    managerHistoricalOperationId=null;
-    const resultText=`补单成功：${result.orderNo||result.orderId||'已生成'} · ${result.backfillDate||date}`;
-    const resultTarget=document.querySelector('#manager-historical-result');if(resultTarget){resultTarget.textContent=resultText;resultTarget.classList.remove('hidden');}
-    const dialogResult=document.querySelector('#manager-backfill-dialog-result');if(dialogResult){dialogResult.textContent=resultText;dialogResult.classList.remove('hidden');}
-    document.querySelector('#manager-historical-backfill-dialog')?.close();
-    await loadManagerDashboard({manual:false});
-    managerToast(resultText);
-  } finally {if(submit)submit.disabled=false;}
-}
-(function setupManagerHistoricalBackfill(){
-  const open=document.querySelector('#manager-open-historical-backfill');
-  const close=document.querySelector('#manager-historical-backfill-close');
-  const cancel=document.querySelector('#manager-historical-backfill-cancel');
-  const form=document.querySelector('#manager-historical-backfill-form');
-  if(!open||!form)return;
-  open.addEventListener('click',openManagerHistoricalBackfill);
-  close?.addEventListener('click',()=>document.querySelector('#manager-historical-backfill-dialog')?.close());
-  cancel?.addEventListener('click',()=>document.querySelector('#manager-historical-backfill-dialog')?.close());
-  form.addEventListener('submit',event=>submitManagerHistoricalBackfill(event).catch(()=>managerToast('历史补单服务连接失败')));
-  const paymentContainer=document.querySelector('#manager-backfill-payments');
-  const addPayment=document.querySelector('#manager-backfill-add-payment');
-  addPayment?.addEventListener('click',()=>addManagerHistoricalPaymentRow());
-  paymentContainer?.addEventListener('click',event=>{if(event.target.closest('[data-manager-backfill-remove-payment]'))event.target.closest('.manager-backfill-payment-row')?.remove();});
-  document.querySelector('#manager-backfill-tech-list')?.addEventListener('click',event=>{const button=event.target.closest('[data-manager-backfill-tech]');if(!button)return;const id=button.dataset.managerBackfillTech;const index=managerHistoricalTechIds.findIndex(value=>String(value)===String(id));if(index>=0)managerHistoricalTechIds.splice(index,1);else managerHistoricalTechIds.push(id);renderManagerHistoricalBackfillControls();});
-  document.querySelector('#manager-backfill-service')?.addEventListener('change',event=>{const item=(managerFoundationServices||[]).find(value=>String(value.id)===String(event.target.value));const duration=document.querySelector('#manager-backfill-duration');if(duration)duration.value=Number(item?.defaultDurationMinutes||0)||'';const amount=document.querySelector('#manager-backfill-amount');const payment=document.querySelector('#manager-backfill-payment-amount');if(amount&&!amount.value&&item)amount.value=(Number(item.priceCents||0)/100).toFixed(2);if(payment&&!payment.value&&amount)payment.value=amount.value;});
-  document.querySelector('#manager-backfill-amount')?.addEventListener('input',event=>{const payment=document.querySelector('#manager-backfill-payment-amount');if(payment)payment.value=event.target.value;});
+(function setupManagerHistoricalBackfillReadOnly(){
+  document.querySelector('#manager-historical-filter-date')?.addEventListener('change',()=>renderManagerHistoricalBackfills());
   document.querySelector('#manager-refresh-historical-backfills')?.addEventListener('click',()=>loadManagerHistoricalBackfills().catch(()=>managerToast('历史补单记录刷新失败')));
+  document.querySelector('#manager-historical-backfill-list')?.addEventListener('click',event=>{
+    const row=event.target.closest('[data-manager-historical-order]');
+    if(row?.dataset.managerHistoricalOrder)managerToast('订单详情请在前台订单管理中查看');
+  });
 })();

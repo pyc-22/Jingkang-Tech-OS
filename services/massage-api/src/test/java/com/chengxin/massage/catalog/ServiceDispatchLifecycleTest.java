@@ -2,6 +2,8 @@ package com.chengxin.massage.catalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import java.time.OffsetDateTime;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 class ServiceDispatchLifecycleTest {
@@ -68,5 +70,20 @@ class ServiceDispatchLifecycleTest {
     assertThat(ServiceSessionController.normalizeEditableClockType("CALL")).isEqualTo("CALL");
     org.assertj.core.api.Assertions.assertThatThrownBy(() -> ServiceSessionController.normalizeEditableClockType("BOOKED_QUEUE"))
       .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+  }
+
+  @Test
+  void batchClockInContractKeepsEachTechnicianItemClockTypeAndDurationIndependent() throws Exception {
+    String source = Files.readString(Path.of("src/main/java/com/chengxin/massage/catalog/ServiceSessionController.java"));
+
+    assertThat(source).contains("@PostMapping(\"/clock-in-batch\")");
+    assertThat(source).contains("record ClockInBatchInput");
+    assertThat(source).contains("record BatchParticipantInput(@NotNull UUID technicianId, @NotNull UUID serviceItemId");
+    assertThat(source).contains("participant.serviceItemId()");
+    assertThat(source).contains("item.input().plannedDurationMinutes()");
+    assertThat(source).contains("participant.clockType()");
+    assertThat(source).contains("resolveBeds(storeId, input.roomId(), participants.size())");
+    assertThat(source).contains("Each technician allocation must total 100 percent");
+    assertThat(source).contains("Batch clock-in database conflict");
   }
 }

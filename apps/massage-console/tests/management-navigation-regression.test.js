@@ -14,7 +14,7 @@ test('management tabs keep each operational area isolated', () => {
   assert.match(app, /commissions:'提成管理'/);
   assert.match(app, /records:'轮钟记录'/);
   assert.match(app, /managementTabDescriptions\s*=\s*\{/);
-  assert.match(app, /allManaged\.forEach\(element => \{ element\.hidden = !activeSelectors/);
+  assert.match(app, /allManaged\.forEach\(element => \{\s*const permission = element\.dataset\.adminPermission;\s*element\.hidden = !activeSelectors\.some\(selector => element\.matches\(selector\)\) \|\| Boolean\(permission && !hasAdminPermission\(permission\)\);/);
   assert.match(app, /view\.querySelectorAll\(':scope > section, :scope > \.management-grid'\)/);
   assert.match(app, /pageActions\.hidden = managementActiveTab !== 'overview'/);
   assert.match(css, /\.management-view \[hidden\] \{ display:none !important; \}/);
@@ -27,7 +27,7 @@ test('order history is explicitly placed before service records', () => {
   assert.match(app, /const orderHistoryPanel = document\.querySelector\('#order-history-panel'\);/);
   assert.match(app, /const servicePanel = document\.querySelector\('#management-view #service-session-record-panel'\);/);
   assert.match(app, /servicePanel\?\.before\(orderHistoryPanel\);/);
-  assert.match(app, /orders:\s*\['#order-history-panel', '#service-session-record-panel'/);
+  assert.match(app, /orders:\s*\['#historical-backfill-panel', '#order-history-panel', '#service-session-record-panel'/);
   assert.match(app, /document\.querySelector\('#management-view #service-session-record-panel'\)/);
 });
 

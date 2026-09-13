@@ -42,28 +42,21 @@ public class TechnicianSchedulePolicy {
     }
   }
 
-  /**
-   * Enforces attendance for technician-side service mutations.  A missing
-   * attendance row is intentionally accepted during the V90 rollout so
-   * existing technicians remain compatible with historical data.
-   */
+  /** Enforces the current-day attendance gate for technician-side mutations. */
   public void requireClockedIn(UUID storeId, UUID technicianId) {
     ClockInStatus attendance = clockInStatus(storeId, technicianId);
-    if (attendance.legacyCompatible() || attendance.clockedIn()) return;
+    if (attendance.clockedIn()) return;
     String reason = attendance.clockOutTime() == null ? "NOT_CLOCKED_IN" : "CLOCKED_OUT";
     throw new ResponseStatusException(HttpStatus.FORBIDDEN, clockInMessage(reason));
   }
 
-  /**
-   * Returns the current business-day attendance state.  A missing row is treated
-   * as a legacy technician so the V90 rollout does not interrupt existing stores.
-   */
+  /** Returns the current business-day attendance state. Missing means not clocked in. */
   public ClockInStatus clockInStatus(UUID storeId, UUID technicianId) {
     LocalDate date = businessClock.currentBusinessDate(storeId);
     ClockInRecord record = jdbc.sql("select clock_in_time,clock_out_time from technician_clock_in where store_id=:store and technician_id=:technician and business_date=:date")
       .param("store", storeId).param("technician", technicianId).param("date", date)
       .query(ClockInRecord.class).optional().orElse(null);
-    if (record == null) return new ClockInStatus(technicianId, storeId, date, false, true, null, null);
+    if (record == null) return new ClockInStatus(technicianId, storeId, date, false, false, null, null);
     return new ClockInStatus(technicianId, storeId, date, record.clockInTime() != null && record.clockOutTime() == null,
       false, record.clockInTime(), record.clockOutTime());
   }

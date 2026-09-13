@@ -48,6 +48,13 @@ const state = {
 };
 
 let clockingTechIds = [];
+// Each selected technician owns an independent dispatch choice.  Keep this
+// client-side map separate from the legacy single-service fields so existing
+// one-technician and reservation submissions remain backward compatible.
+let dispatchSelections = new Map();
+let dispatchFocusTechId = null;
+let dispatchDefaultSelection = null;
+let clockOutConfirmation = null;
 let frontdeskOperationalReady = false;
 let singleRoomSettlementRoomId = null;
 let singleRoomSettlementRoom = null;
@@ -75,6 +82,13 @@ let serviceItemCommissionRules = [];
 let editingCommissionServiceItemId = null;
 let managedPaymentMethods = [];
 let activePaymentMethods = [];
+let historicalBackfillLines = [];
+let historicalBackfillPayments = [];
+let historicalBackfillPaymentMethods = [];
+let historicalBackfillMember = null;
+let frontdeskHistoricalBackfillRows = [];
+let historicalBackfillSequence = 0;
+let historicalBackfillMemberSearchTimer = null;
 let editingPaymentMethodId = null;
 let includeInactivePaymentMethods = false;
 let storePrintSetting = null;
@@ -494,6 +508,17 @@ document.addEventListener('visibilitychange', syncFrontdeskWhenVisible);
 
 function renderRooms() {
   document.querySelector('#room-grid').innerHTML = state.rooms.map(room => {
+    const pendingSessions = room.status === 'pending-payment'
+      ? state.pendingServiceSessions.filter(session => String(session.roomId) === String(room.apiId))
+      : [];
+    const primaryPending = pendingSessions[0];
+    const pendingTechnician = primaryPending
+      ? state.technicians.find(technician => String(technician.id) === String(primaryPending.technicianId))
+        || state.technicians.find(technician => technician.name === primaryPending.technicianName)
+      : null;
+    const pendingSummary = primaryPending
+      ? `<span class="room-pending-summary"><b>${roomTransferEscape(primaryPending.technicianName)}${pendingTechnician?.code ? `（${roomTransferEscape(pendingTechnician.code)}）` : ''}${pendingSessions.length > 1 ? `等 ${pendingSessions.length} 人` : ''}</b><small>${roomTransferEscape(primaryPending.serviceNameSnapshot)}${pendingSessions.length > 1 ? ` 等 ${pendingSessions.length} 项` : ''}</small></span>`
+      : '';
     const serviceRows = (room.services || []).map(service => {
       const timer = service.status === 'IN_SERVICE' && service.expectedEndAt
         ? `<span class="room-service-timer" data-room-countdown="${service.expectedEndAt}">${formatRoomCountdown(service.expectedEndAt)}</span>`
@@ -501,7 +526,7 @@ function renderRooms() {
       const extension = service.extensionSummary ? ` · 加钟：${service.extensionSummary}` : '';
       return `<span class="room-service-row"><span class="room-service-main"><b>${roomTransferEscape(service.technicianName)}</b><small>${roomTransferEscape(service.serviceName)}${roomTransferEscape(extension)} · ${Number(service.plannedDurationMinutes || 0)} 分钟</small></span>${timer}</span>`;
     }).join('');
-    return `<article class="room ${room.status}"><button class="room-card" data-room="${room.id}" type="button"><span class="room-top"><span class="dot ${room.status}"></span><span>${room.label}</span></span><strong>${room.id}</strong><small>${room.detail || '可立即安排服务'}</small>${serviceRows ? `<span class="room-services">${serviceRows}</span>` : ''}</button><div class="room-actions">${room.status === 'serving' && room.apiId ? `<button class="room-transfer-tech-action" data-transfer-technician="${room.id}" type="button">换技师</button>` : ''}${room.status === 'pending-payment' && room.apiId ? `<button class="room-paid-action" data-confirm-payment="${room.id}" type="button">已付款</button>` : ''}${room.status === 'cleaning' && room.apiId ? `<button class="room-clean-action" data-complete-cleaning="${room.id}" type="button">完成清洁</button>` : ''}${room.apiId ? `<button class="room-status-action" data-room-status="${room.id}" type="button">状态</button>` : ''}</div></article>`;
+    return `<article class="room ${room.status}"><button class="room-card" data-room="${room.id}" type="button"><span class="room-top"><span class="dot ${room.status}"></span><span>${room.label}</span></span><strong>${room.id}</strong><small>${room.detail || '可立即安排服务'}</small>${pendingSummary}${serviceRows ? `<span class="room-services">${serviceRows}</span>` : ''}</button><div class="room-actions">${room.status === 'serving' && room.apiId ? `<button class="room-transfer-tech-action" data-transfer-technician="${room.id}" type="button">换技师</button>` : ''}${room.status === 'pending-payment' && room.apiId ? `<button class="room-paid-action" data-confirm-payment="${room.id}" type="button">已付款</button>` : ''}${room.status === 'cleaning' && room.apiId ? `<button class="room-clean-action" data-complete-cleaning="${room.id}" type="button">完成清洁</button>` : ''}${room.apiId ? `<button class="room-status-action" data-room-status="${room.id}" type="button">状态</button>` : ''}</div></article>`;
   }).join('');
   document.querySelector('#available-room-count').textContent = state.rooms.reduce((total, room) => total + Number(room.availableBedCount || 0), 0);
 }
@@ -997,6 +1022,41 @@ async function submitClockTypeChange(event) {
   } finally { submit.disabled = false; }
 }
 
+function clockOutElapsedText(startedAt) {
+  if (!startedAt) return '时间未记录';
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 60000));
+  const hours = Math.floor(minutes / 60);
+  return hours ? `${hours} 小时 ${minutes % 60} 分钟` : `${minutes} 分钟`;
+}
+
+function openClockOutConfirmation(session, technician) {
+  if (!session || !technician) return toast('未找到进行中的服务记录，请刷新后重试');
+  clockOutConfirmation = { session, technician };
+  document.querySelector('#clock-out-confirm-message').textContent = `确认给技师 ${technician.name}（工号 ${technician.code || '未设置'}）下钟吗？`;
+  document.querySelector('#clock-out-confirm-details').innerHTML = `<span>房间号<b>${roomTransferEscape(session.roomCode || '—')}</b></span><span>服务项目<b>${roomTransferEscape(session.serviceNameSnapshot || '—')}</b></span><span>已服务时长<b>${clockOutElapsedText(session.startedAt)}</b></span>`;
+  document.querySelector('#clock-out-confirm-dialog').showModal();
+}
+
+async function submitClockOutConfirmation(event) {
+  event.preventDefault();
+  if (!clockOutConfirmation) return;
+  const { session, technician } = clockOutConfirmation;
+  const submit = event.currentTarget.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    const response = await fetch(`http://localhost:8080/api/v1/service-sessions/${session.id}/clock-out`, { method:'POST', headers:storeContextHeaders() });
+    if (!response.ok) return toast('下钟失败，请刷新后重试');
+    document.querySelector('#clock-out-confirm-dialog').close();
+    clockOutConfirmation = null;
+    await loadFoundationData({ silent:true });
+    toast(`${technician.name} 已下钟，房间等待付款`);
+  } catch {
+    toast('下钟失败，请检查服务连接后重试');
+  } finally {
+    submit.disabled = false;
+  }
+}
+
 function ensureTechnicianContextTools() {
   ensureServiceItemChangeDialog();
   ensureClockTypeChangeDialog();
@@ -1015,15 +1075,12 @@ function ensureTechnicianContextTools() {
       const technicianId = event.currentTarget.dataset.technicianId;
       closeTechnicianContextMenu();
        if (!sessionId) return toast('该技师当前没有进行中的服务');
-       if (button.dataset.techContextAction === 'start-service') return startServiceFromFrontdesk(sessionId);
+      if (button.dataset.techContextAction === 'start-service') return startServiceFromFrontdesk(sessionId);
       if (button.dataset.techContextAction === 'change-clock-type') return openClockTypeChange(sessionId);
       if (button.dataset.techContextAction === 'clock-out') {
-        if (!window.confirm('确认技师已完成服务并下钟？')) return;
-        const response = await fetch(`http://localhost:8080/api/v1/service-sessions/${sessionId}/clock-out`, { method:'POST', headers:storeContextHeaders() });
-        if (!response.ok) return toast('下钟失败，请刷新后重试');
-        await loadFoundationData({ silent:true });
-        toast('技师已下钟，房间等待付款');
-        return;
+        const session = state.activeSessions.find(item => String(item.id) === String(sessionId));
+        const technician = state.technicians.find(item => String(item.id) === String(technicianId));
+        return openClockOutConfirmation(session, technician);
       }
       if (button.dataset.techContextAction === 'transfer-technician') return openParticipantTransfer(sessionId);
       if (button.dataset.techContextAction === 'change-service') return openServiceItemChange(sessionId);
@@ -1988,6 +2045,7 @@ async function loadPendingServiceSessions({ silent = false, roomId = null, updat
     state.pendingServiceSessions = sessions;
     renderPendingServiceSessions();
   }
+  if (updateState) renderRooms();
   return sessions;
 }
 
@@ -2036,6 +2094,235 @@ async function renderMemberResults() {
   } catch {
     target.innerHTML = '<p class="empty-state">会员查询失败，请稍后重试</p>';
   }
+}
+
+const historicalBackfillClockTypes = [
+  ['QUEUE', '排钟'], ['CALL', '点钟'], ['SELECTED', '选钟'],
+  ['EXTENSION', '加钟'], ['BOOKED_QUEUE', '预定排钟'], ['BOOKED_CALL', '预定点钟']
+];
+
+function historicalBackfillDateValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function createHistoricalBackfillLine() {
+  const service = state.services[0];
+  const technician = state.technicians[0];
+  return {
+    id: ++historicalBackfillSequence,
+    serviceItemId: service?.id || '',
+    durationMinutes: Number(service?.durationMinutes || 60),
+    clockType: 'QUEUE',
+    roomId: state.rooms[0]?.apiId || '',
+    technicians: technician ? [{ technicianId: technician.id, allocationBp: 10000 }] : []
+  };
+}
+
+function rebalanceHistoricalBackfillTechnicians(line) {
+  const count = line.technicians.length;
+  if (!count) return;
+  const base = Math.floor(10000 / count);
+  line.technicians.forEach((item, index) => {
+    item.allocationBp = base + (index === count - 1 ? 10000 - base * count : 0);
+  });
+}
+
+const historicalBackfillTechnicianStates = {
+  available: '空闲', serving: '服务中', pending: '待接单', accepted: '待服务', reassign: '待重派', off: '休息 / 下班'
+};
+
+function historicalBackfillRoomLabel(room) {
+  const labels = { idle: '空闲', serving: '服务中', pending: '待接单', 'pending-payment': '待付款', cleaning: '清洁中', reserved: '已预留' };
+  return `${room.id} · ${labels[room.status] || room.label || room.status}`;
+}
+
+function renderHistoricalBackfillLines() {
+  const target = document.querySelector('#historical-backfill-line-list');
+  if (!target) return;
+  target.innerHTML = historicalBackfillLines.map((line, index) => {
+    const services = state.services.map(service => `<option value="${memberBusinessEscape(service.id)}" ${String(service.id) === String(line.serviceItemId) ? 'selected' : ''}>${memberBusinessEscape(service.name)} · ${money(service.price)}</option>`).join('');
+    const rooms = state.rooms.map(room => `<option value="${memberBusinessEscape(room.apiId || '')}" ${String(room.apiId) === String(line.roomId) ? 'selected' : ''}>${memberBusinessEscape(historicalBackfillRoomLabel(room))}</option>`).join('');
+    const clockTypes = historicalBackfillClockTypes.map(([value, label]) => `<option value="${value}" ${value === line.clockType ? 'selected' : ''}>${label}</option>`).join('');
+    const allocations = new Map(line.technicians.map(item => [String(item.technicianId), item.allocationBp]));
+    const technicians = state.technicians.map(technician => {
+      const allocation = allocations.get(String(technician.id));
+      const checked = allocation != null;
+      return `<label class="historical-backfill-technician ${checked ? 'selected' : ''}"><input type="checkbox" data-historical-technician="${memberBusinessEscape(technician.id)}" ${checked ? 'checked' : ''}><span><b>${memberBusinessEscape(technician.name)}</b><small>工号 ${memberBusinessEscape(technician.code || '未设置')} · ${historicalBackfillTechnicianStates[technician.state] || '状态未知'}</small></span><span class="historical-backfill-allocation"><input type="number" min="0.01" max="100" step="0.01" value="${checked ? (allocation / 100).toFixed(2) : '0.00'}" data-historical-allocation="${memberBusinessEscape(technician.id)}" ${checked ? '' : 'disabled'}><em>%</em></span></label>`;
+    }).join('');
+    return `<article class="historical-backfill-line" data-historical-line="${line.id}"><div class="historical-backfill-line-heading"><b>项目 ${index + 1}</b><button class="icon-button" type="button" data-historical-remove-line="${line.id}" title="移除项目" aria-label="移除项目" ${historicalBackfillLines.length === 1 ? 'disabled' : ''}>×</button></div><div class="historical-backfill-line-fields"><label>服务项目<select data-historical-service required>${services}</select></label><label>钟类<select data-historical-clock-type>${clockTypes}</select></label><label>服务时长（分钟）<input data-historical-duration type="number" min="15" max="360" step="5" value="${line.durationMinutes}" required></label><label>房间状态<select data-historical-room><option value="">不关联房间</option>${rooms}</select></label></div><div class="historical-backfill-technicians"><div><b>技师业绩分配</b><small>合计必须为 100%</small></div>${technicians || '<p class="table-empty">当前门店没有可用技师</p>'}</div></article>`;
+  }).join('');
+  renderHistoricalBackfillSummary(true);
+}
+
+function historicalBackfillReceivableCents() {
+  return historicalBackfillLines.reduce((sum, line) => {
+    const service = state.services.find(item => String(item.id) === String(line.serviceItemId));
+    return sum + Math.round(Number(service?.price || 0) * 100);
+  }, 0);
+}
+
+function renderHistoricalBackfillPayments() {
+  const target = document.querySelector('#historical-backfill-payment-list');
+  if (!target) return;
+  target.innerHTML = historicalBackfillPayments.map(payment => {
+    const methods = historicalBackfillPaymentMethods.map(method => `<option value="${memberBusinessEscape(method.code)}" ${method.code === payment.method ? 'selected' : ''}>${memberBusinessEscape(method.name)}</option>`).join('');
+    return `<div class="historical-backfill-payment" data-historical-payment="${payment.id}"><select data-historical-payment-method aria-label="支付方式">${methods}</select><label><span>¥</span><input data-historical-payment-amount type="number" min="0" step="0.01" value="${(payment.amountCents / 100).toFixed(2)}" aria-label="支付金额"></label><button class="icon-button" type="button" data-historical-remove-payment="${payment.id}" title="移除支付方式" aria-label="移除支付方式" ${historicalBackfillPayments.length === 1 ? 'disabled' : ''}>×</button></div>`;
+  }).join('');
+  renderHistoricalBackfillSummary(false);
+}
+
+function renderHistoricalBackfillSummary(resetAmount) {
+  const receivable = historicalBackfillReceivableCents();
+  const amount = document.querySelector('#historical-backfill-amount');
+  document.querySelector('#historical-backfill-receivable').value = money(receivable / 100);
+  if (resetAmount) {
+    amount.value = (receivable / 100).toFixed(2);
+    if (historicalBackfillPayments.length === 1) historicalBackfillPayments[0].amountCents = receivable;
+  }
+  const settlement = Math.round(Number(amount.value || 0) * 100);
+  const paid = historicalBackfillPayments.reduce((sum, payment) => sum + Number(payment.amountCents || 0), 0);
+  document.querySelector('#historical-backfill-paid').textContent = money(paid / 100);
+  document.querySelector('#historical-backfill-remaining').textContent = money((settlement - paid) / 100);
+  const singleAmount = document.querySelector('[data-historical-payment-amount]');
+  if (resetAmount && historicalBackfillPayments.length === 1 && singleAmount) singleAmount.value = (receivable / 100).toFixed(2);
+}
+
+function renderHistoricalBackfillMember() {
+  document.querySelector('#historical-backfill-member-name').textContent = historicalBackfillMember?.name || '散客';
+  document.querySelector('#historical-backfill-member-meta').textContent = historicalBackfillMember
+    ? `${historicalBackfillMember.phone || '未留手机号'} · ${historicalBackfillMember.code || '未生成卡号'} · 余额 ${money(Number(historicalBackfillMember.balanceCents || 0) / 100)}`
+    : '未关联会员';
+}
+
+async function searchHistoricalBackfillMembers() {
+  const query = document.querySelector('#historical-backfill-member-search').value.trim();
+  const target = document.querySelector('#historical-backfill-member-results');
+  if (!query) { target.innerHTML = ''; return; }
+  target.innerHTML = '<p class="empty-state">正在查询会员</p>';
+  try {
+    const response = await fetch(`http://localhost:8080/api/v1/members?query=${encodeURIComponent(query)}`, { headers: storeContextHeaders() });
+    if (!response.ok) { target.innerHTML = '<p class="empty-state">会员查询失败</p>'; return; }
+    const members = await response.json();
+    target.innerHTML = members.map(member => `<button class="member-result" type="button" data-historical-member="${memberBusinessEscape(member.id)}"><span class="member-avatar">${memberBusinessEscape(member.name.slice(0, 1))}</span><span><b>${memberBusinessEscape(member.name)}</b><small>${memberBusinessEscape(member.phone || '')} · ${memberBusinessEscape(member.code || '未生成卡号')}</small></span><em>余额 ${money(Number(member.balanceCents || 0) / 100)}</em></button>`).join('') || '<p class="empty-state">没有匹配的会员</p>';
+    target.querySelectorAll('[data-historical-member]').forEach(button => button.addEventListener('click', () => {
+      historicalBackfillMember = members.find(member => String(member.id) === String(button.dataset.historicalMember)) || null;
+      target.innerHTML = '';
+      document.querySelector('#historical-backfill-member-search').value = '';
+      renderHistoricalBackfillMember();
+    }));
+  } catch {
+    target.innerHTML = '<p class="empty-state">会员查询失败，请检查服务连接</p>';
+  }
+}
+
+async function openHistoricalBackfill() {
+  if (!hasAdminPermission('HISTORICAL_ORDER_CREATE')) return toast('当前账号没有历史补单权限');
+  try {
+    if ((!state.services.length || !state.technicians.length) && !await loadFoundationData({ silent: true })) return toast('项目、房间或技师状态加载失败');
+    const response = await fetch('http://localhost:8080/api/v1/payment-methods', { headers: storeContextHeaders() });
+    if (!response.ok) return toast('收款方式加载失败');
+    historicalBackfillPaymentMethods = (await response.json()).filter(item => item.active !== false);
+    if (!historicalBackfillPaymentMethods.length) return toast('请先启用至少一种收款方式');
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const date = document.querySelector('#historical-backfill-date');
+    date.max = historicalBackfillDateValue(new Date());
+    date.value = historicalBackfillDateValue(yesterday);
+    historicalBackfillMember = null;
+    historicalBackfillLines = [createHistoricalBackfillLine()];
+    historicalBackfillPayments = [{ id: ++historicalBackfillSequence, method: historicalBackfillPaymentMethods[0].code, amountCents: 0 }];
+    document.querySelector('#historical-backfill-member-search').value = '';
+    document.querySelector('#historical-backfill-member-results').innerHTML = '';
+    renderHistoricalBackfillMember();
+    renderHistoricalBackfillLines();
+    renderHistoricalBackfillPayments();
+    document.querySelector('#historical-backfill-dialog').showModal();
+  } catch {
+    toast('历史补单资料加载失败，请检查服务连接');
+  }
+}
+
+function renderFrontdeskHistoricalBackfills() {
+  const target = document.querySelector('#frontdesk-historical-backfill-records');
+  if (!target) return;
+  const date = document.querySelector('#frontdesk-historical-backfill-filter-date').value;
+  const operator = document.querySelector('#frontdesk-historical-backfill-filter-operator').value.trim().toLowerCase();
+  const rows = frontdeskHistoricalBackfillRows.filter(row => (!date || row.backfillDate === date) && (!operator || String(row.backfillByName || '').toLowerCase().includes(operator)));
+  target.innerHTML = rows.map(row => `<tr><td>${memberBusinessEscape(row.backfillDate || '—')}</td><td><b>${memberBusinessEscape(row.orderNo || '—')}</b></td><td>${memberBusinessEscape(row.settlementNo || '—')}</td><td>${memberBusinessEscape(row.paymentMethods || '—')}</td><td>${memberBusinessEscape(row.backfillByName || '—')}<small class="muted-cell">${row.backfillAt ? new Date(row.backfillAt).toLocaleString('zh-CN') : ''}</small></td><td class="amount-cell">${money(Number(row.paidCents || 0) / 100)}</td><td><span class="record-type ${row.refundStatus === 'NONE' ? 'order' : 'refund-state'}">${row.status === 'CANCELLED' ? '已作废' : refundStatusLabel[row.refundStatus] || '已结算'}</span></td><td class="align-right"><button class="record-delete edit-technician" type="button" data-historical-order-detail="${memberBusinessEscape(row.orderId)}">查看/退款</button></td></tr>`).join('') || '<tr><td colspan="8" class="table-empty">暂无匹配的历史补单记录</td></tr>';
+}
+
+async function loadFrontdeskHistoricalBackfills() {
+  if (!hasAdminPermission('HISTORICAL_ORDER_CREATE')) return;
+  const target = document.querySelector('#frontdesk-historical-backfill-records');
+  try {
+    const response = await fetch('http://localhost:8080/api/v1/sales-orders?historicalBackfill=true&page=0&size=200', { headers: storeContextHeaders() });
+    if (!response.ok) { target.innerHTML = '<tr><td colspan="8" class="table-empty">历史补单记录加载失败</td></tr>'; return; }
+    frontdeskHistoricalBackfillRows = (await response.json()).map(row => ({ ...row, orderId:row.id, paymentMethods:'详情中查看' }));
+    renderFrontdeskHistoricalBackfills();
+  } catch {
+    target.innerHTML = '<tr><td colspan="8" class="table-empty">历史补单记录加载失败，请检查服务连接</td></tr>';
+  }
+}
+
+function historicalBackfillOperationId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (window.crypto?.getRandomValues) window.crypto.getRandomValues(bytes);
+  else bytes.forEach((_, index) => { bytes[index] = Math.floor(Math.random() * 256); });
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  const hex = [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+async function submitHistoricalBackfill(event) {
+  event.preventDefault();
+  const date = document.querySelector('#historical-backfill-date').value;
+  if (!date || date > historicalBackfillDateValue(new Date())) return toast('补单日期不能晚于今天');
+  const invalidLine = historicalBackfillLines.find(line => !line.serviceItemId || !Number.isFinite(Number(line.durationMinutes)) || Number(line.durationMinutes) < 15 || Number(line.durationMinutes) > 360 || !line.technicians.length || line.technicians.reduce((sum, item) => sum + Number(item.allocationBp || 0), 0) !== 10000);
+  if (invalidLine) return toast('请检查每个项目的服务时长及技师分配，比例合计必须为 100%');
+  const receivable = historicalBackfillReceivableCents();
+  const settlement = Math.round(Number(document.querySelector('#historical-backfill-amount').value || 0) * 100);
+  const payments = historicalBackfillPayments.filter(payment => Number(payment.amountCents) > 0).map(payment => ({ method: payment.method, amountCents: Number(payment.amountCents) }));
+  if (settlement < 1 || settlement > receivable) return toast('实收金额必须大于 0 且不能超过项目合计');
+  if (!payments.length || payments.reduce((sum, payment) => sum + payment.amountCents, 0) !== settlement) return toast('各支付方式金额合计必须等于实收金额');
+  const balanceTotal = payments.filter(payment => historicalBackfillPaymentMethods.find(method => method.code === payment.method)?.methodKind === 'MEMBER_BALANCE').reduce((sum, payment) => sum + payment.amountCents, 0);
+  if (balanceTotal && !historicalBackfillMember) return toast('使用会员余额支付前必须选择会员');
+  if (balanceTotal > Number(historicalBackfillMember?.balanceCents || 0)) return toast('会员余额不足，请调整会员余额金额或补充其他收款方式');
+  if (!window.confirm(`确认补录 ${date} 的历史订单，实收 ${money(settlement / 100)} 吗？`)) return;
+  const payload = {
+    backfillDate: date,
+    memberId: historicalBackfillMember?.id || null,
+    lines: historicalBackfillLines.map(line => ({
+      serviceItemId: line.serviceItemId,
+      technicians: line.technicians.map(item => ({ technicianId: item.technicianId, allocationBp: item.allocationBp })),
+      durationMinutes: Number(line.durationMinutes),
+      clockType: line.clockType,
+      roomId: line.roomId || null
+    })),
+    payments,
+    settlementAmountCents: settlement,
+    confirmed: true
+  };
+  const submit = event.currentTarget.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  let result;
+  try {
+    const response = await fetch('http://localhost:8080/api/v1/sales-orders/historical-backfill', { method: 'POST', headers: { ...storeContextHeaders(true), 'X-Offline-Operation-Id': historicalBackfillOperationId() }, body: JSON.stringify(payload) });
+    if (!response.ok) return toast(await responseMessage(response, '历史补单提交失败'));
+    result = await response.json();
+    document.querySelector('#historical-backfill-dialog').close();
+  } catch {
+    toast('历史补单提交失败，请检查服务连接后重试');
+    return;
+  } finally {
+    submit.disabled = false;
+  }
+  const refreshResults = await Promise.allSettled([loadFrontdeskHistoricalBackfills(), loadSalesOrders({ resetPage: true }), loadDailyReport(), loadOrderCommissionRecords()]);
+  toast(refreshResults.some(item => item.status === 'rejected') ? `历史补单 ${result.orderNo} 已完成，部分列表刷新失败，请手动刷新` : `历史补单 ${result.orderNo} 已完成`);
 }
 
 document.querySelector('#management-view').insertAdjacentHTML('beforeend','<section class="panel admin-table-panel service-record-panel" id="order-history-panel"><div class="admin-toolbar"><div><h2>订单查询</h2><p>前台已结算订单，可按订单、会员、日期和支付方式查询</p></div><div class="order-history-filters"><label class="search-field"><span>⌕</span><input id="order-search" placeholder="订单号、结算单号、会员或手机号" /></label><input id="order-history-from" type="date" aria-label="订单开始日期" title="开始日期"><span>至</span><input id="order-history-to" type="date" aria-label="订单结束日期" title="结束日期"><select id="order-history-payment" aria-label="支付方式"><option value="">全部支付方式</option></select><select id="order-history-status" aria-label="订单状态"><option value="">全部状态</option><option value="SETTLED">已结算</option><option value="REFUNDED">已退款</option><option value="CANCELLED">已作废</option></select><button class="icon-button" type="button" id="reset-order-history" title="清空筛选" aria-label="清空筛选">↺</button></div></div><div class="ledger-table-wrap"><table><thead><tr><th>订单号</th><th>结算单号</th><th>会员</th><th>应收</th><th>实收</th><th>结算时间</th><th>状态</th><th></th></tr></thead><tbody id="order-records"><tr><td colspan="8" class="table-empty">打开经营管理后加载</td></tr></tbody></table></div><div class="order-history-pagination"><span id="order-history-page">第 1 页</span><div><button class="button secondary" type="button" id="order-history-prev" disabled>上一页</button><button class="button secondary" type="button" id="order-history-next" disabled>下一页</button></div></div></section><dialog id="order-detail-dialog"><div class="dialog-card compact order-detail-card"><div class="dialog-heading"><h2>订单明细</h2><button class="icon-button" id="close-order-detail" title="关闭" aria-label="关闭">×</button></div><div id="order-detail-content"></div></div></dialog><dialog id="refund-dialog"><form id="refund-form" class="dialog-card refund-dialog-card"><div class="dialog-heading"><div><p class="eyebrow" id="refund-dialog-eyebrow">订单退款</p><h2 id="refund-dialog-title">创建部分退款</h2></div><button class="icon-button" type="button" id="close-refund-dialog" title="关闭" aria-label="关闭">×</button></div><p class="refund-dialog-note" id="refund-dialog-note">选择退款项目并填写本次退款金额，退款金额将按原支付记录自动分配。</p><div id="refund-draft-lines" class="refund-draft-lines"></div><div class="refund-preview"><div><span id="refund-total-label">本次退款</span><strong id="refund-total">-¥0.00</strong></div><div id="refund-payment-preview" class="refund-payment-preview"></div></div><label class="refund-reason">操作原因<textarea name="reason" maxlength="240" placeholder="请填写退款或红冲原因" required></textarea></label><div class="dialog-actions"><button class="button secondary" type="button" id="cancel-refund">取消</button><button class="button primary" type="submit" id="submit-refund">提交部分退款</button></div></form></dialog>');
@@ -2235,6 +2522,7 @@ function applyAdminPermissions(){
     group.hidden=!hasVisibleItem;
   });
   const sectionPermissions=[
+    ['.historical-backfill-panel','HISTORICAL_ORDER_CREATE'],
     ['.refund-management-panel','ORDER_REFUND'],
     ['.wallet-ledger-panel','MEMBER_MANAGE'],
     ['.technician-performance-panel','REPORT_VIEW'],
@@ -2939,31 +3227,56 @@ function renderDispatchServiceCatalog() {
   const search = dispatchServiceSearch.trim().toLowerCase();
   const rows = state.services.filter(service => serviceMatchesCategory(service, dispatchServiceCategoryId) && (!search || `${service.code || ''} ${service.name} ${service.category} ${serviceCategoryPath(service.categoryId)}`.toLowerCase().includes(search)));
   document.querySelector('#dispatch-service-categories').innerHTML = serviceCategoryNavigation(dispatchServiceCategoryId, 'dispatch-category');
-  document.querySelector('#dispatch-service-list').innerHTML = rows.map(service => `<button class="dispatch-service-choice" data-dispatch-service="${service.id}" type="button"><span><b>${roomTransferEscape(service.name)}</b><small>${roomTransferEscape(serviceCategoryPath(service.categoryId))} · ${service.duration}</small></span><strong>${money(service.price)}</strong></button>`).join('') || '<p class="table-empty">没有匹配的项目</p>';
+  const selectedServiceId = dispatchSelections.get(String(dispatchFocusTechId))?.serviceItemId;
+  document.querySelector('#dispatch-service-list').innerHTML = rows.map(service => `<button class="dispatch-service-choice ${String(service.id) === String(selectedServiceId) ? 'selected' : ''}" data-dispatch-service="${service.id}" type="button"><span><b>${roomTransferEscape(service.name)}</b><small>${roomTransferEscape(serviceCategoryPath(service.categoryId))} · ${service.duration}</small></span><strong>${money(service.price)}</strong></button>`).join('') || '<p class="table-empty">没有匹配的项目</p>';
 }
 
-function renderDispatchSelection(resetAllocations = false) {
-  const previousAllocations = resetAllocations ? new Map() : new Map([...document.querySelectorAll('[data-tech-allocation]')].map(input => [String(input.dataset.techAllocation), input.value]));
+function renderDispatchSelection() {
   const selectedTechs = clockingTechIds.map(id => state.technicians.find(item => String(item.id) === String(id))).filter(Boolean);
-  const service = state.services.find(item => String(item.id) === String(document.querySelector('#clock-service').value));
+  const fallbackServiceId = document.querySelector('#clock-service')?.value || state.services[0]?.id || '';
+  const fallbackClockType = document.querySelector('#clock-type')?.value || 'QUEUE';
+  const defaultSelection = dispatchDefaultSelection || { serviceItemId:fallbackServiceId, clockType:fallbackClockType, durationMinutes:Number(document.querySelector('#clock-duration')?.value || 60) };
+  selectedTechs.forEach((tech) => {
+    if (!dispatchSelections.has(String(tech.id))) dispatchSelections.set(String(tech.id), {
+      serviceItemId: defaultSelection.serviceItemId,
+      clockType: defaultSelection.clockType,
+      durationMinutes: defaultSelection.durationMinutes
+    });
+  });
+  [...dispatchSelections.keys()].forEach(id => { if (!clockingTechIds.some(value => String(value) === id)) dispatchSelections.delete(id); });
+  if (!dispatchFocusTechId || !clockingTechIds.some(id => String(id) === String(dispatchFocusTechId))) dispatchFocusTechId = clockingTechIds[0] || null;
+  const focusSelection = dispatchSelections.get(String(dispatchFocusTechId));
+  const service = state.services.find(item => String(item.id) === String(focusSelection?.serviceItemId || fallbackServiceId));
   document.querySelector('#clock-tech-name').textContent = selectedTechs.length ? selectedTechs.map(tech => tech.name).join('、') : '未选择';
-  document.querySelector('#clock-service-name').textContent = service ? `${service.name} · ${service.duration}` : '请选择项目';
-  document.querySelectorAll('[data-dispatch-tech]').forEach(button => button.classList.toggle('selected', clockingTechIds.some(id => String(id) === String(button.dataset.dispatchTech))));
-  document.querySelectorAll('[data-dispatch-service]').forEach(button => button.classList.toggle('selected', String(button.dataset.dispatchService) === String(service?.id)));
+  document.querySelector('#clock-service-name').textContent = selectedTechs.length && service ? `${service.name} · ${service.duration}` : '请选择项目';
+  document.querySelectorAll('[data-dispatch-tech]').forEach(button => {
+    button.classList.toggle('selected', clockingTechIds.some(id => String(id) === String(button.dataset.dispatchTech)));
+    button.classList.toggle('focused', String(button.dataset.dispatchTech) === String(dispatchFocusTechId));
+  });
   const allocationList = document.querySelector('#dispatch-allocation-list');
-  allocationList.innerHTML = selectedTechs.length > 1 ? `<div class="dispatch-allocation-heading"><b>业绩分配</b><small>合计必须为 100%</small></div>${selectedTechs.map((tech, index) => `<label><span>${tech.name}</span><input data-tech-allocation="${tech.id}" type="number" min="0.01" max="100" step="0.01" value="${previousAllocations.get(String(tech.id)) || equalDispatchAllocation(index, selectedTechs.length)}"><em>%</em></label>`).join('')}` : '';
-}
-
-function equalDispatchAllocation(index, count) {
-  const base = Math.floor(10000 / count);
-  const basisPoints = base + (index === 0 ? 10000 - base * count : 0);
-  return (basisPoints / 100).toFixed(2);
+  allocationList.innerHTML = selectedTechs.length ? `<div class="dispatch-allocation-heading"><b>技师独立服务配置</b><small>每位技师可单独选择项目、钟类和时长</small></div>${selectedTechs.map(tech => {
+    const choice = dispatchSelections.get(String(tech.id)) || { serviceItemId: fallbackServiceId, clockType: fallbackClockType, durationMinutes: 60 };
+    const options = state.services.map(item => `<option value="${dispatchEscape(item.id)}" ${String(item.id) === String(choice.serviceItemId) ? 'selected' : ''}>${dispatchEscape(item.name)} · ${dispatchEscape(item.duration)}</option>`).join('');
+    return `<fieldset class="dispatch-participant ${String(tech.id) === String(dispatchFocusTechId) ? 'focused' : ''}" data-dispatch-participant="${dispatchEscape(tech.id)}"><legend>${dispatchEscape(tech.name)}${tech.code ? ` · ${dispatchEscape(tech.code)}` : ''}</legend><div class="dispatch-participant-grid"><label>项目<select data-tech-service="${dispatchEscape(tech.id)}">${options}</select></label><label>钟类<select data-tech-clock-type="${dispatchEscape(tech.id)}"><option value="QUEUE" ${choice.clockType === 'QUEUE' ? 'selected' : ''}>排钟</option><option value="CALL" ${choice.clockType === 'CALL' ? 'selected' : ''}>点钟</option><option value="SELECTED" ${choice.clockType === 'SELECTED' ? 'selected' : ''}>选钟</option><option value="BOOKED_QUEUE" ${choice.clockType === 'BOOKED_QUEUE' ? 'selected' : ''}>预定排钟</option><option value="BOOKED_CALL" ${choice.clockType === 'BOOKED_CALL' ? 'selected' : ''}>预定点钟</option></select></label><label>时长<input data-tech-duration="${dispatchEscape(tech.id)}" type="number" min="15" max="360" step="5" value="${Number(choice.durationMinutes || 60)}"><small>分钟</small></label></div></fieldset>`;
+  }).join('')}` : '<p class="table-empty">请先选择技师</p>';
+  const legacyService = state.services.find(item => String(item.id) === String(focusSelection?.serviceItemId || fallbackServiceId));
+  if (legacyService) document.querySelector('#clock-service').value = legacyService.id;
+  if (focusSelection?.clockType) document.querySelector('#clock-type').value = focusSelection.clockType;
+  if (focusSelection?.durationMinutes) document.querySelector('#clock-duration').value = focusSelection.durationMinutes;
+  renderDispatchServiceCatalog();
 }
 
 function selectedDispatchParticipants() {
   return clockingTechIds.map(id => {
-    const input = document.querySelector(`[data-tech-allocation="${id}"]`);
-    return { technicianId:id, allocationBp:clockingTechIds.length === 1 ? 10000 : Math.round(Number(input?.value) * 100) };
+    const choice = dispatchSelections.get(String(id)) || {};
+    return {
+      technicianId:id,
+      serviceItemId: choice.serviceItemId || document.querySelector('#clock-service')?.value,
+      clockType: choice.clockType || document.querySelector('#clock-type')?.value || 'QUEUE',
+      plannedDurationMinutes: Number(choice.durationMinutes || document.querySelector('#clock-duration')?.value || 60),
+      allocationBp: 10000,
+      note: null
+    };
   });
 }
 
@@ -2973,6 +3286,8 @@ function openClockDialog(tech = null, selectedRoom = null) {
   if (!availableRooms.length) { toast('当前没有可用房间，请先完成清洁或调整房态'); return; }
   if (!availableTechs.length) { toast('当前没有可用技师，请先调整技师状态'); return; }
   clockingTechIds = tech?.id ? [tech.id] : [];
+  dispatchSelections = new Map();
+  dispatchFocusTechId = tech?.id || null;
   document.querySelector('#clock-room').innerHTML = availableRooms.map(room => `<option value="${room.apiId}">${room.id} 房 · ${room.availableBedCount}/${room.bedCount} 床可用</option>`).join('');
   document.querySelector('#clock-room').value = selectedRoom?.apiId && availableRooms.some(room => room.apiId === selectedRoom.apiId) ? selectedRoom.apiId : availableRooms[0].apiId;
   document.querySelector('#dispatch-tech-count').textContent = `${availableTechs.length} 位在岗，最多选择 4 位`;
@@ -2984,6 +3299,11 @@ function openClockDialog(tech = null, selectedRoom = null) {
   document.querySelector('#clock-service').value = state.services[0]?.id || '';
   document.querySelector('#clock-duration').value = state.services.length ? Number.parseInt(state.services[0].duration, 10) : 60;
   if (document.querySelector('#clock-type')) document.querySelector('#clock-type').value = 'QUEUE';
+  dispatchDefaultSelection = {
+    serviceItemId: document.querySelector('#clock-service').value,
+    clockType: document.querySelector('#clock-type').value,
+    durationMinutes: Number(document.querySelector('#clock-duration').value || 60)
+  };
   document.querySelector('#clock-start-time').value = new Date().toTimeString().slice(0, 5);
   renderDispatchSelection(true);
   document.querySelector('#clock-dialog').showModal();
@@ -3034,7 +3354,7 @@ window.setInterval(financeSyncTick,20000);
 
 const managementTabGroups = {
   overview: ['.metric-grid', '.ledger-summary-panel', '.daily-report-panel', '.management-grid', '#headquarters-overview'],
-  orders: ['#order-history-panel', '#service-session-record-panel', '.refund-management-panel', '.service-change-query-panel'],
+  orders: ['#historical-backfill-panel', '#order-history-panel', '#service-session-record-panel', '.refund-management-panel', '.service-change-query-panel'],
   commissions: ['.order-commission-panel', '.commission-adjustment-panel', '#technician-commission-summary-panel', '#administrative-commission-panel', '.administrative-commission-config', '.technician-performance-panel'],
   members: ['.wallet-ledger-panel', '.member-recharge-refund-panel'],
   store: ['.store-comparison-panel', '.store-alert-panel', '.cross-store-transaction-panel'],
@@ -3070,7 +3390,10 @@ function applyManagementTab() {
   const activeSelectors = managementTabGroups[managementActiveTab] || managementTabGroups.overview;
   const allManaged = new Set(Object.values(managementTabGroups).flatMap(selectors => selectors.flatMap(selector => [...view.querySelectorAll(selector)])));
   view.querySelectorAll(':scope > section, :scope > .management-grid').forEach(element => allManaged.add(element));
-  allManaged.forEach(element => { element.hidden = !activeSelectors.some(selector => element.matches(selector)); });
+  allManaged.forEach(element => {
+    const permission = element.dataset.adminPermission;
+    element.hidden = !activeSelectors.some(selector => element.matches(selector)) || Boolean(permission && !hasAdminPermission(permission));
+  });
   document.querySelectorAll('#management-tabs [data-management-tab]').forEach(button => button.classList.toggle('selected', button.dataset.managementTab === managementActiveTab));
   const title = document.querySelector('#management-tab-title');
   const description = document.querySelector('#management-tab-description');
@@ -3126,7 +3449,7 @@ document.querySelectorAll('.nav-item[data-view]').forEach(button => button.addEv
   document.querySelector('#print-settings-view').classList.toggle('hidden', button.dataset.view !== 'print-settings');
   document.querySelector('#access-view').classList.toggle('hidden', button.dataset.view !== 'access');
   if (button.dataset.view === 'frontdesk') syncOperationalState();
-  if (button.dataset.view === 'management') { setupServiceChangeHistoryCenter(); renderServiceChangeStoreOptions(); setupMemberRechargeRefundUi(); ensureManagementNavigation(); ensureTechnicianCommissionSummaryPanel(); loadServiceSessions(); loadOrderCommissionRecords(); loadServiceChangeHistoryCenter(); loadSalesOrders(); loadRefundManagement(); loadMemberWalletLedger(); loadMemberRechargeRefunds(); loadTechnicianPerformance(); loadDailyReport(); loadStoreComparison(); loadStoreAlerts(); loadCrossStoreTransactions(); loadHeadquartersOverview(); loadAdministrativeCommissionSummary().catch(()=>{}); window.setTimeout(applyManagementTab, 0); }
+  if (button.dataset.view === 'management') { setupServiceChangeHistoryCenter(); renderServiceChangeStoreOptions(); setupMemberRechargeRefundUi(); ensureManagementNavigation(); ensureTechnicianCommissionSummaryPanel(); loadServiceSessions(); loadOrderCommissionRecords(); loadServiceChangeHistoryCenter(); loadSalesOrders(); loadFrontdeskHistoricalBackfills(); loadRefundManagement(); loadMemberWalletLedger(); loadMemberRechargeRefunds(); loadTechnicianPerformance(); loadDailyReport(); loadStoreComparison(); loadStoreAlerts(); loadCrossStoreTransactions(); loadHeadquartersOverview(); loadAdministrativeCommissionSummary().catch(()=>{}); window.setTimeout(applyManagementTab, 0); }
   if (button.dataset.view === 'finance') { loadFinanceClaims().catch(() => toast('财务报销数据加载失败')); loadFinanceReport().catch(() => toast('财务统计加载失败')); }
   if (button.dataset.view === 'technicians') switchEmployeeManagementTab(employeeManagementTab);
   if (button.dataset.view === 'rooms') loadManagedRooms().catch(() => toast('房间资料服务不可用'));
@@ -3514,6 +3837,98 @@ document.querySelector('#historical-backfill-filter-store')?.addEventListener('c
 document.querySelector('#historical-backfill-refresh')?.addEventListener('click',()=>loadHistoricalBackfillRows().catch(()=>toast('历史补单记录加载失败')));
 document.querySelector('#historical-backfill-export')?.addEventListener('click',exportHistoricalBackfills);
 document.querySelector('#backfill-manager-records')?.addEventListener('click',async event=>{const button=event.target.closest('[data-backfill-manager-toggle]');if(!button)return;const storeId=historicalBackfillStoreId();const active=button.dataset.active==='true';if(!storeId)return; if(!window.confirm(`${active?'确认授予':'确认撤销'}该店长的历史补单权限？`))return;const response=await fetch(`http://localhost:8080/api/v1/admin/access/stores/${storeId}/backfill-managers/${button.dataset.backfillManagerToggle}`,{method:'PUT',headers:adminJsonHeaders(),body:JSON.stringify({active})});if(!response.ok)return toast('历史补单授权更新失败');await loadBackfillManagers();toast(active?'历史补单权限已授予':'历史补单权限已撤销');});
+document.querySelector('#open-historical-backfill')?.addEventListener('click',openHistoricalBackfill);
+document.querySelector('#close-historical-backfill')?.addEventListener('click',()=>document.querySelector('#historical-backfill-dialog').close());
+document.querySelector('#cancel-historical-backfill')?.addEventListener('click',()=>document.querySelector('#historical-backfill-dialog').close());
+document.querySelector('#historical-backfill-form')?.addEventListener('submit',submitHistoricalBackfill);
+document.querySelector('#historical-backfill-add-line')?.addEventListener('click',()=>{historicalBackfillLines.push(createHistoricalBackfillLine());renderHistoricalBackfillLines();});
+document.querySelector('#historical-backfill-line-list')?.addEventListener('click',event=>{
+  const remove=event.target.closest('[data-historical-remove-line]');
+  if(!remove||historicalBackfillLines.length===1)return;
+  historicalBackfillLines=historicalBackfillLines.filter(line=>String(line.id)!==String(remove.dataset.historicalRemoveLine));
+  renderHistoricalBackfillLines();
+});
+document.querySelector('#historical-backfill-line-list')?.addEventListener('change',event=>{
+  const container=event.target.closest('[data-historical-line]');
+  const line=historicalBackfillLines.find(item=>String(item.id)===String(container?.dataset.historicalLine));
+  if(!line)return;
+  if(event.target.matches('[data-historical-service]')){
+    line.serviceItemId=event.target.value;
+    const service=state.services.find(item=>String(item.id)===String(line.serviceItemId));
+    line.durationMinutes=Number(service?.durationMinutes||60);
+    renderHistoricalBackfillLines();
+    return;
+  }
+  if(event.target.matches('[data-historical-clock-type]'))line.clockType=event.target.value;
+  if(event.target.matches('[data-historical-room]'))line.roomId=event.target.value;
+  if(event.target.matches('[data-historical-technician]')){
+    const technicianId=event.target.dataset.historicalTechnician;
+    if(event.target.checked&&!line.technicians.some(item=>String(item.technicianId)===String(technicianId)))line.technicians.push({technicianId,allocationBp:0});
+    if(!event.target.checked)line.technicians=line.technicians.filter(item=>String(item.technicianId)!==String(technicianId));
+    rebalanceHistoricalBackfillTechnicians(line);
+    renderHistoricalBackfillLines();
+  }
+});
+document.querySelector('#historical-backfill-line-list')?.addEventListener('input',event=>{
+  const container=event.target.closest('[data-historical-line]');
+  const line=historicalBackfillLines.find(item=>String(item.id)===String(container?.dataset.historicalLine));
+  if(!line)return;
+  if(event.target.matches('[data-historical-duration]'))line.durationMinutes=Number(event.target.value);
+  if(event.target.matches('[data-historical-allocation]')){
+    const allocation=line.technicians.find(item=>String(item.technicianId)===String(event.target.dataset.historicalAllocation));
+    if(allocation)allocation.allocationBp=Math.round(Number(event.target.value||0)*100);
+  }
+});
+document.querySelector('#historical-backfill-add-payment')?.addEventListener('click',()=>{
+  const method=historicalBackfillPaymentMethods.find(item=>!historicalBackfillPayments.some(payment=>payment.method===item.code));
+  if(!method)return toast('所有可用支付方式均已添加');
+  historicalBackfillPayments.push({id:++historicalBackfillSequence,method:method.code,amountCents:0});
+  renderHistoricalBackfillPayments();
+});
+document.querySelector('#historical-backfill-payment-list')?.addEventListener('click',event=>{
+  const remove=event.target.closest('[data-historical-remove-payment]');
+  if(!remove||historicalBackfillPayments.length===1)return;
+  historicalBackfillPayments=historicalBackfillPayments.filter(payment=>String(payment.id)!==String(remove.dataset.historicalRemovePayment));
+  if(historicalBackfillPayments.length===1)historicalBackfillPayments[0].amountCents=Math.round(Number(document.querySelector('#historical-backfill-amount').value||0)*100);
+  renderHistoricalBackfillPayments();
+});
+document.querySelector('#historical-backfill-payment-list')?.addEventListener('change',event=>{
+  const container=event.target.closest('[data-historical-payment]');
+  const payment=historicalBackfillPayments.find(item=>String(item.id)===String(container?.dataset.historicalPayment));
+  if(payment&&event.target.matches('[data-historical-payment-method]'))payment.method=event.target.value;
+});
+document.querySelector('#historical-backfill-payment-list')?.addEventListener('input',event=>{
+  const container=event.target.closest('[data-historical-payment]');
+  const payment=historicalBackfillPayments.find(item=>String(item.id)===String(container?.dataset.historicalPayment));
+  if(!payment||!event.target.matches('[data-historical-payment-amount]'))return;
+  payment.amountCents=Math.round(Number(event.target.value||0)*100);
+  renderHistoricalBackfillSummary(false);
+});
+document.querySelector('#historical-backfill-amount')?.addEventListener('input',event=>{
+  if(historicalBackfillPayments.length===1){
+    historicalBackfillPayments[0].amountCents=Math.round(Number(event.target.value||0)*100);
+    const paymentAmount=document.querySelector('[data-historical-payment-amount]');
+    if(paymentAmount)paymentAmount.value=(historicalBackfillPayments[0].amountCents/100).toFixed(2);
+  }
+  renderHistoricalBackfillSummary(false);
+});
+document.querySelector('#historical-backfill-member-search')?.addEventListener('input',()=>{
+  window.clearTimeout(historicalBackfillMemberSearchTimer);
+  historicalBackfillMemberSearchTimer=window.setTimeout(searchHistoricalBackfillMembers,260);
+});
+document.querySelector('#historical-backfill-member-clear')?.addEventListener('click',()=>{
+  historicalBackfillMember=null;
+  document.querySelector('#historical-backfill-member-search').value='';
+  document.querySelector('#historical-backfill-member-results').innerHTML='';
+  renderHistoricalBackfillMember();
+});
+document.querySelector('#frontdesk-historical-backfill-filter-date')?.addEventListener('change',renderFrontdeskHistoricalBackfills);
+document.querySelector('#frontdesk-historical-backfill-filter-operator')?.addEventListener('input',renderFrontdeskHistoricalBackfills);
+document.querySelector('#refresh-historical-backfills')?.addEventListener('click',loadFrontdeskHistoricalBackfills);
+document.querySelector('#frontdesk-historical-backfill-records')?.addEventListener('click',event=>{
+  const button=event.target.closest('[data-historical-order-detail]');
+  if(button)openOrderDetail(button.dataset.historicalOrderDetail).catch(()=>toast('订单详情加载失败'));
+});
 document.querySelector('#refund-management-filters').addEventListener('click',event=>{const button=event.target.closest('[data-refund-status]');if(!button)return;refundManagementStatus=button.dataset.refundStatus;document.querySelectorAll('#refund-management-filters button').forEach(item=>item.classList.toggle('selected',item===button));loadRefundManagement();});
 document.querySelector('#refund-management-records').addEventListener('click',async event=>{const detail=event.target.closest('[data-order-detail]');if(detail)return openOrderDetail(detail.dataset.orderDetail);const confirm=event.target.closest('[data-dashboard-confirm]');if(confirm){const response=await fetch(`http://localhost:8080/api/v1/refunds/${confirm.dataset.dashboardConfirm}/payments/${confirm.dataset.dashboardPayment}/complete`,{method:'POST',headers:storeContextHeaders(true)});if(!response.ok)return toast('退款确认失败，请稍后重试');await loadRefundManagement();await loadSalesOrders();toast('退款已确认完成');return;}const cancel=event.target.closest('[data-dashboard-cancel]');if(cancel){if(!window.confirm('确认取消这笔待确认退款？'))return;const response=await fetch(`http://localhost:8080/api/v1/refunds/${cancel.dataset.dashboardCancel}/cancel`,{method:'POST',headers:storeContextHeaders(true)});if(!response.ok)return toast('该退款已有完成付款，无法取消');await loadRefundManagement();await loadSalesOrders();toast('退款已取消');}});
 document.querySelector('#order-records').addEventListener('click',async event=>{const voidButton=event.target.closest('[data-order-void]');if(voidButton){openOrderVoid(voidButton.dataset.orderVoid);return;}const button=event.target.closest('[data-order-detail]');if(!button)return;await openOrderDetail(button.dataset.orderDetail);});
@@ -3535,6 +3950,9 @@ document.querySelector('#service-session-records').addEventListener('click', eve
 document.querySelector('#member-results').addEventListener('click', event => { const button = event.target.closest('[data-member]'); if (!button) return; if(settlementMemberTarget==='merge'){mergeSettlementMemberId=button.dataset.member;renderMergeMember();}else{state.selectedMemberId=button.dataset.member;renderMemberCard();renderSettlementPaymentMethods();}document.querySelector('#member-dialog').close();toast('订单会员已更新'); });
 document.querySelector('#refresh-state').addEventListener('click', () => syncOperationalState({ manual: true }));
 document.querySelector('#sort-techs').addEventListener('click', () => loadFoundationData({ silent:true }).then(() => toast('已按当日轮钟队列刷新')).catch(() => toast('轮钟队列刷新失败')));
+document.querySelector('#close-clock-out-confirm').addEventListener('click', () => { clockOutConfirmation = null; document.querySelector('#clock-out-confirm-dialog').close(); });
+document.querySelector('#cancel-clock-out-confirm').addEventListener('click', () => { clockOutConfirmation = null; document.querySelector('#clock-out-confirm-dialog').close(); });
+document.querySelector('#clock-out-confirm-form').addEventListener('submit', submitClockOutConfirmation);
 document.querySelector('#technician-list').addEventListener('click', async event => {
   const button = event.target.closest('[data-tech]'); if (!button) return;
   const tech = state.technicians.find(item => String(item.id) === String(button.dataset.tech));
@@ -3548,10 +3966,8 @@ document.querySelector('#technician-list').addEventListener('click', async event
   if (tech.state === 'off') { toast(`${tech.name} ${tech.detail || '当前不可上钟'}`); return; }
   else if (tech.state === 'serving') {
     const session = state.activeSessions.find(item => sessionParticipantIds(item).some(id => String(id) === String(tech.id)));
-    if (!session) { toast('未找到进行中的服务记录，请刷新后重试'); return; }
-    const response = await fetch(`http://localhost:8080/api/v1/service-sessions/${session.id}/clock-out`, { method: 'POST', headers: storeContextHeaders() });
-    if (!response.ok) { toast('下钟失败，请刷新后重试'); return; }
-    await loadFoundationData(); toast(`${tech.name} 已下钟，房间等待付款`); return;
+    openClockOutConfirmation(session, tech);
+    return;
   }
   else { tech.state = 'available'; tech.detail = '刚刚上班'; toast(`${tech.name} 已上班`); }
   renderTechnicians();
@@ -3569,20 +3985,59 @@ document.querySelector('#dispatch-tech-list').addEventListener('click', event =>
   const reservation = ['BOOKED_QUEUE','BOOKED_CALL'].includes(document.querySelector('#clock-type').value);
   if (!reservation && tech?.state !== 'available') { toast('进行中派单只能选择空闲技师；忙碌技师可用于预定排钟或预定点钟'); return; }
   const selectedIndex = clockingTechIds.findIndex(item => String(item) === String(id));
-  if (selectedIndex >= 0) clockingTechIds.splice(selectedIndex, 1);
+  if (selectedIndex >= 0) {
+    clockingTechIds.splice(selectedIndex, 1);
+    dispatchSelections.delete(String(id));
+  }
   else {
     if (reservation && clockingTechIds.length) clockingTechIds = [id];
     else if (clockingTechIds.length >= 4) { toast('一单最多安排 4 位技师'); return; }
     else clockingTechIds.push(id);
+    dispatchFocusTechId = id;
   }
-  renderDispatchSelection(true);
+  renderDispatchSelection();
 });
 document.querySelector('#dispatch-service-list').addEventListener('click', event => {
   const button = event.target.closest('[data-dispatch-service]'); if (!button) return;
+  if (!dispatchFocusTechId) { toast('请先选择要配置的技师'); return; }
   const service = state.services.find(item => String(item.id) === String(button.dataset.dispatchService));
   if (!service) return;
+  const selection = dispatchSelections.get(String(dispatchFocusTechId));
+  if (!selection) return;
+  selection.serviceItemId = service.id;
+  selection.durationMinutes = Number(service.durationMinutes || Number.parseInt(service.duration, 10));
   document.querySelector('#clock-service').value = service.id;
-  document.querySelector('#clock-duration').value = Number.parseInt(service.duration, 10);
+  document.querySelector('#clock-duration').value = selection.durationMinutes;
+  renderDispatchSelection();
+});
+document.querySelector('#dispatch-allocation-list').addEventListener('focusin', event => {
+  const participant = event.target.closest('[data-dispatch-participant]');
+  if (!participant) return;
+  dispatchFocusTechId = participant.dataset.dispatchParticipant;
+  renderDispatchServiceCatalog();
+  document.querySelectorAll('[data-dispatch-participant]').forEach(item => item.classList.toggle('focused', item === participant));
+  document.querySelectorAll('[data-dispatch-tech]').forEach(item => item.classList.toggle('focused', String(item.dataset.dispatchTech) === String(dispatchFocusTechId)));
+});
+document.querySelector('#dispatch-allocation-list').addEventListener('change', event => {
+  const technicianId = event.target.dataset.techService || event.target.dataset.techClockType || event.target.dataset.techDuration;
+  if (!technicianId) return;
+  const selection = dispatchSelections.get(String(technicianId));
+  if (!selection) return;
+  dispatchFocusTechId = technicianId;
+  if (event.target.dataset.techService) {
+    selection.serviceItemId = event.target.value;
+    const service = state.services.find(item => String(item.id) === String(event.target.value));
+    if (service) selection.durationMinutes = Number(service.durationMinutes || Number.parseInt(service.duration, 10));
+  }
+  if (event.target.dataset.techClockType) {
+    if (['BOOKED_QUEUE','BOOKED_CALL'].includes(event.target.value) && clockingTechIds.length > 1) {
+      toast('预定排钟和预定点钟每单只能选择一位技师');
+      renderDispatchSelection();
+      return;
+    }
+    selection.clockType = event.target.value;
+  }
+  if (event.target.dataset.techDuration) selection.durationMinutes = Number(event.target.value);
   renderDispatchSelection();
 });
 document.querySelector('#dispatch-service-categories').addEventListener('click', event => {
@@ -3607,32 +4062,42 @@ document.querySelector('#clock-type').addEventListener('change', event => {
     const busy = clockingTechIds.filter(id => state.technicians.find(tech => String(tech.id) === String(id))?.state !== 'available');
     if (busy.length) { clockingTechIds = clockingTechIds.filter(id => !busy.some(item => String(item) === String(id))); toast('已移除正在服务或待接单的技师'); }
   }
-  renderDispatchSelection(true);
+  const focusSelection = dispatchSelections.get(String(dispatchFocusTechId));
+  if (focusSelection) focusSelection.clockType = event.target.value;
+  renderDispatchSelection();
+});
+document.querySelector('#clock-duration').addEventListener('change', event => {
+  const selection = dispatchSelections.get(String(dispatchFocusTechId));
+  if (selection) selection.durationMinutes = Number(event.target.value);
+  renderDispatchSelection();
 });
 document.querySelector('#clock-form').addEventListener('submit', async event => {
   event.preventDefault();
   const selectedTechs = clockingTechIds.map(id => state.technicians.find(item => String(item.id) === String(id))).filter(Boolean);
-  const service = state.services.find(item => item.id === document.querySelector('#clock-service').value);
-  const duration = Number(document.querySelector('#clock-duration').value);
   const roomId = document.querySelector('#clock-room').value;
   if (!selectedTechs.length) { toast('请至少选择一位技师'); return; }
-  if (!service) { toast('请选择服务项目'); return; }
-  if (!roomId || !Number.isFinite(duration) || duration < 15 || duration > 360) { toast('请检查房间与服务时长'); return; }
-  const clockType = document.querySelector('#clock-type').value;
-  const reservation = clockType === 'BOOKED_QUEUE' || clockType === 'BOOKED_CALL';
-  if (reservation && selectedTechs.length !== 1) { toast('预定排钟和预定点钟每单只能选择一位技师'); return; }
   const participants = selectedDispatchParticipants();
-  if (!reservation && (participants.some(item => !Number.isInteger(item.allocationBp) || item.allocationBp <= 0) || participants.reduce((sum,item) => sum + item.allocationBp, 0) !== 10000)) { toast('技师业绩分配比例必须大于 0%，且合计正好为 100%'); return; }
-  const endpoint = reservation ? 'http://localhost:8080/api/v1/service-reservations' : 'http://localhost:8080/api/v1/service-sessions/clock-in';
+  const invalidParticipant = participants.find(item => !state.services.some(service => String(service.id) === String(item.serviceItemId)) || !Number.isFinite(item.plannedDurationMinutes) || item.plannedDurationMinutes < 15 || item.plannedDurationMinutes > 360);
+  if (!roomId || invalidParticipant) { toast('请检查每位技师的项目和服务时长'); return; }
+  const primary = participants[0];
+  const service = state.services.find(item => String(item.id) === String(primary.serviceItemId));
+  const clockType = primary.clockType;
+  const duration = primary.plannedDurationMinutes;
+  const reservation = participants.some(item => ['BOOKED_QUEUE','BOOKED_CALL'].includes(item.clockType));
+  if (reservation && selectedTechs.length !== 1) { toast('预定排钟和预定点钟每单只能选择一位技师'); return; }
+  const batch = selectedTechs.length > 1;
+  const endpoint = reservation ? 'http://localhost:8080/api/v1/service-reservations' : batch ? 'http://localhost:8080/api/v1/service-sessions/clock-in-batch' : 'http://localhost:8080/api/v1/service-sessions/clock-in';
   const payload = reservation
     ? { technicianId: selectedTechs[0].id, roomId, serviceItemId: service.id, plannedDurationMinutes: duration, reservationType: clockType, note: null }
-    : { technicianId: selectedTechs[0].id, participants, roomId, serviceItemId: service.id, plannedDurationMinutes: duration, clockType };
+    : batch
+      ? { roomId, participants }
+      : { technicianId: selectedTechs[0].id, roomId, serviceItemId: service.id, plannedDurationMinutes: duration, clockType };
   const response = await fetch(endpoint, { method: 'POST', headers: storeContextHeaders(true), body: JSON.stringify(payload) });
   if (!response.ok) { const detail = (await response.text()).replace(/^"|"$/g, ''); toast(reservation ? `预约登记失败：${detail || '请刷新后重试'}` : `上钟失败：${detail || '技师或房间可能已被占用'}`); return; }
   document.querySelector('#clock-dialog').close();
   await Promise.all([loadFoundationData(), loadReservations()]);
   const technicianNames = selectedTechs.map(tech => tech.name).join('、');
-  toast(reservation ? `${technicianNames} 已登记${clockTypeLabels[clockType]}：${service.name}，房间已预留` : `${technicianNames} 已安排：${service.name} ${duration} 分钟，等待全部技师接单`);
+  toast(reservation ? `${technicianNames} 已登记${clockTypeLabels[clockType]}：${service.name}，房间已预留` : batch ? `${selectedTechs.length} 位技师已按独立项目安排，等待接单` : `${technicianNames} 已安排：${service.name} ${duration} 分钟，等待技师接单`);
 });
 document.querySelector('#add-technician').addEventListener('click', () => openTechnicianDialog());
 document.querySelector('#add-technician').insertAdjacentHTML('beforebegin', '<button class="button secondary" id="manage-tech-accounts">账号管理</button>');

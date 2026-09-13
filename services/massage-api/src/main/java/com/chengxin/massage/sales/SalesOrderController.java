@@ -229,8 +229,12 @@ public class SalesOrderController {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     AdminSessionService.AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
     boolean manager = actor.roles().contains("STORE_MANAGER");
+    boolean cashier = actor.roles().contains("CASHIER") || actor.roles().contains("FRONTDESK");
     boolean tenantAdmin = actor.roles().contains("TENANT_ADMIN");
-    if (!manager && !tenantAdmin) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "历史补单仅限店长");
+    // The route is separately gated by HISTORICAL_ORDER_CREATE in the
+    // permission filter.  Keep this role check aligned with that contract so
+    // an explicitly authorised front-desk cashier can create a backfill.
+    if (!manager && !cashier && !tenantAdmin) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "历史补单仅限店长或授权前台");
     if (!Boolean.TRUE.equals(input.confirmed())) throw bad("请完成二次确认后再提交历史补单");
     LocalDate currentBusinessDate = businessClock.currentBusinessDate(storeId);
     if (input.backfillDate().isAfter(currentBusinessDate)) throw bad("补单日期不能晚于当前营业日");

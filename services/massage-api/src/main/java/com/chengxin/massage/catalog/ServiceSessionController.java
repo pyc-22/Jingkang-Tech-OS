@@ -14,6 +14,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Value;
@@ -145,6 +146,91 @@ public class ServiceSessionController {
       }
       if (detail != null && detail.contains("service_session_active_bed_idx")) {
         throw conflict("该房间没有可用床位");
+      }
+      throw exception;
+    }
+  }
+
+  /**
+   * Creates one service session per technician for a multi-technician room.
+   * The legacy clock-in route intentionally keeps its single-session contract;
+   * this route gives each technician an independent item, clock type and
+   * duration while reusing the same eligibility, bed and dispatch safeguards.
+   */
+  @PostMapping("/clock-in-batch")
+  @Transactional
+  List<ServiceSession> clockInBatch(@Valid @RequestBody ClockInBatchInput input,
+                                     @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                                     @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+    UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    AdminSessionService.AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
+    try {
+      List<BatchParticipantInput> participants = normalizeBatchParticipants(input);
+      for (UUID technicianId : participants.stream().map(BatchParticipantInput::technicianId).sorted().toList()) {
+        lockActiveTechnician(storeId, technicianId);
+      }
+      for (BatchParticipantInput participant : participants) {
+        schedulePolicy.requireClockInEligibility(storeId, participant.technicianId());
+        if (hasActiveTechnician(storeId, participant.technicianId())) {
+          throw conflict("Technician already has a pending or active service");
+        }
+      }
+      ensureActive(storeId, "room", input.roomId(), "Room is unavailable");
+      // Serialize multi-technician assignments for one room before selecting beds.
+      // Without the room lock, concurrent requests can both observe the same free bed.
+      lockRoom(storeId, input.roomId());
+      List<UUID> bedIds = resolveBeds(storeId, input.roomId(), participants.size());
+      LocalDate businessDate = businessClock.currentBusinessDate(storeId);
+      List<ResolvedBatchParticipant> resolved = new ArrayList<>();
+      for (BatchParticipantInput participant : participants) {
+        ResolvedServiceItem service = itemVersions.activeItem(storeId, participant.serviceItemId(), businessDate)
+          .orElseThrow(() -> badRequest("Service item is unavailable"));
+        String clockType = normalizeClockType(participant.clockType());
+        int allocationBp = participant.allocationBp() == null ? 10000 : participant.allocationBp();
+        if (allocationBp != 10000) throw badRequest("Each technician allocation must total 100 percent");
+        resolved.add(new ResolvedBatchParticipant(participant, service, clockType, allocationBp));
+      }
+
+      OffsetDateTime acceptanceDeadline = OffsetDateTime.now().plusSeconds(acceptanceTimeoutSeconds);
+      List<ServiceSession> created = new ArrayList<>();
+      for (int index = 0; index < resolved.size(); index++) {
+        ResolvedBatchParticipant item = resolved.get(index);
+        UUID sessionId = UUID.randomUUID();
+        jdbc.sql("insert into service_session(id,tenant_id,store_id,technician_id,room_id,bed_id,service_item_id,service_name_snapshot,service_price_cents,planned_duration_minutes,started_at,expected_end_at,status,note,clock_type,price_version_id,counts_as_clock_snapshot,acceptance_deadline_at) values(:id,:tenant,:store,:technician,:room,:bed,:service,:name,:price,:duration,null,null,'PENDING_ACCEPTANCE',:note,:clockType,:priceVersion,:countsAsClock,:deadline)")
+          .param("id", sessionId).param("tenant", TENANT_ID).param("store", storeId)
+          .param("technician", item.input().technicianId()).param("room", input.roomId()).param("bed", bedIds.get(index))
+          .param("service", item.service().id()).param("name", item.service().name()).param("price", item.service().priceCents())
+          .param("duration", item.input().plannedDurationMinutes()).param("note", item.input().note())
+          .param("clockType", item.clockType()).param("priceVersion", item.service().priceVersionId())
+          .param("countsAsClock", item.service().countsAsClock()).param("deadline", acceptanceDeadline).update();
+        UUID participantId = UUID.randomUUID();
+        jdbc.sql("insert into service_session_participant(id,tenant_id,store_id,service_session_id,technician_id,slot_no,sequence_no,participation_type,allocation_bp,status,acceptance_deadline_at) values(:id,:tenant,:store,:session,:technician,1,1,'PRIMARY',:allocation,'PENDING_ACCEPTANCE',:deadline)")
+          .param("id", participantId).param("tenant", TENANT_ID).param("store", storeId).param("session", sessionId)
+          .param("technician", item.input().technicianId()).param("allocation", item.allocationBp()).param("deadline", acceptanceDeadline).update();
+        dispatchEvents.record(storeId, sessionId, participantId, "ASSIGNED", null, item.input().technicianId(), acceptanceDeadline,
+          "批量派单：每位技师独立项目与钟类", actor.userId(), actor.displayName());
+        ServiceSession session = session(storeId, sessionId);
+        audits.record(authorization, storeId, "SERVICE", "SERVICE_ASSIGNED", "service_session", sessionId,
+          "批量派单；技师项目、钟类和时长独立配置，等待技师接单", null, session);
+        created.add(session);
+      }
+      recordRoomStatus(storeId, input.roomId(), "RESERVED", "Awaiting " + created.size() + " technician acceptance(s)");
+      return created;
+    } catch (ResponseStatusException exception) {
+      if (exception.getStatusCode().value() == 400 || exception.getStatusCode().value() == 409) {
+        LOGGER.warn("Batch clock-in rejected: storeId={}, roomId={}, participants={}, httpStatus={}, cause={}",
+          storeId, input.roomId(), input.participants(), exception.getStatusCode().value(), exception.getReason());
+      }
+      throw exception;
+    } catch (DataIntegrityViolationException exception) {
+      String detail = exception.getMostSpecificCause().getMessage();
+      LOGGER.warn("Batch clock-in database conflict: storeId={}, roomId={}, participants={}, constraintDetail={}",
+        storeId, input.roomId(), input.participants(), detail);
+      if (detail != null && detail.contains("uk_participant_technician_active")) {
+        throw conflict("Technician already has a pending or active service");
+      }
+      if (detail != null && detail.contains("service_session_active_bed_idx")) {
+        throw conflict("该房间没有足够的可用床位");
       }
       throw exception;
     }
@@ -343,6 +429,18 @@ public class ServiceSessionController {
     return statement.query(UUID.class).optional().orElseThrow(() -> conflict("该房间没有可用床位"));
   }
 
+  private List<UUID> resolveBeds(UUID storeId, UUID roomId, int requiredCount) {
+    ensureRoomBeds(storeId, roomId);
+    List<UUID> beds = jdbc.sql("select b.id from room_bed b where b.store_id=:store and b.room_id=:room and b.active=true "
+        + "and not exists(select 1 from service_session ss where ss.store_id=:store and ss.bed_id=b.id "
+        + "and ss.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE')) "
+        + "order by b.sort_order limit :requiredCount for update")
+      .param("store", storeId).param("room", roomId).param("requiredCount", requiredCount)
+      .query(UUID.class).list();
+    if (beds.size() < requiredCount) throw conflict("该房间没有足够的可用床位");
+    return beds;
+  }
+
   /**
    * Backfills only missing bed slots and serializes the operation on the room
    * row.  Existing disabled/customized beds are left untouched.  This keeps
@@ -504,6 +602,26 @@ public class ServiceSessionController {
     return requested;
   }
 
+  private List<BatchParticipantInput> normalizeBatchParticipants(ClockInBatchInput input) {
+    if (input.participants() == null || input.participants().isEmpty()) {
+      throw badRequest("At least one technician is required");
+    }
+    Set<UUID> unique = new HashSet<>();
+    for (BatchParticipantInput participant : input.participants()) {
+      if (participant.technicianId() == null || !unique.add(participant.technicianId())) {
+        throw badRequest("Technicians must be distinct");
+      }
+      if (participant.serviceItemId() == null) throw badRequest("Service item is required");
+      if (participant.plannedDurationMinutes() == null || participant.plannedDurationMinutes() < 15 || participant.plannedDurationMinutes() > 360) {
+        throw badRequest("Service duration must be between 15 and 360 minutes");
+      }
+      if (participant.allocationBp() != null && participant.allocationBp() != 10000) {
+        throw badRequest("Each technician allocation must total 100 percent");
+      }
+    }
+    return input.participants();
+  }
+
   private String normalizeClockType(String clockType) {
     if (clockType == null || clockType.isBlank()) return "QUEUE";
     if ("QUEUE".equals(clockType) || "CALL".equals(clockType) || "SELECTED".equals(clockType)
@@ -550,6 +668,12 @@ public class ServiceSessionController {
   record QueuedReservation(UUID id, UUID roomId, UUID serviceItemId, String reservationType, String serviceNameSnapshot, Integer servicePriceCents, Short plannedDurationMinutes, String note, UUID priceVersionId, Boolean countsAsClockSnapshot) {}
   record ServiceSession(UUID id, UUID technicianId, String technicianName, UUID roomId, String roomCode, UUID serviceItemId, String serviceNameSnapshot, Integer servicePriceCents, Short plannedDurationMinutes, OffsetDateTime startedAt, OffsetDateTime expectedEndAt, OffsetDateTime endedAt, LocalDate businessDate, String status, String note, String clockType, Long version, Integer extensionTotalCents, Integer extensionTotalMinutes, Integer extensionCount, String extensionTechnicianIds, String extensionSummary, String participantTechnicianIds, String activeParticipantTechnicianIds, String activeTechnicianName, Long participantCount, String serviceNo, String orderNo, String settlementNo, Long receivableCents, Long paidCents, String paymentMethods, Long commissionCents) {}
   record ParticipantInput(@NotNull UUID technicianId, @Min(1) @Max(10000) Integer allocationBp) {}
+  record BatchParticipantInput(@NotNull UUID technicianId, @NotNull UUID serviceItemId,
+                               @NotNull @Min(15) @Max(360) Short plannedDurationMinutes,
+                               Integer allocationBp, String clockType, String note) {}
+  record ResolvedBatchParticipant(BatchParticipantInput input, ResolvedServiceItem service,
+                                 String clockType, int allocationBp) {}
+  record ClockInBatchInput(@NotNull UUID roomId, @NotNull @Size(min = 1, max = 4) List<@Valid BatchParticipantInput> participants) {}
   record VoidInput(@NotBlank String reason) {}
   record ClockTypeChangeInput(@NotBlank String clockType, String reason) {}
   record ClockInInput(UUID technicianId, List<@Valid ParticipantInput> participants, @NotNull UUID roomId, UUID bedId, @NotNull UUID serviceItemId, @NotNull @Min(15) @Max(360) Short plannedDurationMinutes, String note, String clockType) {}

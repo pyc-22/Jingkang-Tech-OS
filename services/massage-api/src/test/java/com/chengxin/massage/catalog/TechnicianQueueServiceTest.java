@@ -38,14 +38,14 @@ class TechnicianQueueServiceTest {
   }
 
   @Test
-  void appliesCurrentDayAttendanceGateAndKeepsLegacyRowsCompatible() throws Exception {
+  void appliesCurrentDayAttendanceGateAndExcludesUnclockedTechnicians() throws Exception {
     String source = java.nio.file.Files.readString(java.nio.file.Path.of(
       "src/main/java/com/chengxin/massage/catalog/TechnicianQueueService.java"))
       .replaceAll("\\s+", " ");
 
     assertThat(source).contains("left join technician_clock_in attendance");
     assertThat(source).contains("attendance.business_date=:date");
-    assertThat(source).contains("attendance.technician_id is null");
+    assertThat(source).doesNotContain("attendance.technician_id is null");
     assertThat(source).contains("attendance.clock_in_time is not null");
     assertThat(source).contains("attendance.clock_out_time is null");
     assertThat(source).contains("attendance_eligible");
@@ -57,10 +57,10 @@ class TechnicianQueueServiceTest {
     assertThat(positions).isGreaterThan(candidates);
     assertThat(stored).isGreaterThan(positions);
     assertThat(source.substring(candidates, positions))
-      .contains("attendance.business_date=:date", "attendance.clock_out_time is null")
+      .contains("attendance.business_date=:date", "attendance.clock_in_time is not null", "attendance.clock_out_time is null")
       .contains(":date");
     assertThat(source.substring(positions, stored))
-      .contains("attendance.business_date=:date", "attendance.clock_out_time is null")
+      .contains("attendance.business_date=:date", "attendance.clock_in_time is not null", "attendance.clock_out_time is null")
       .contains(".param(\"date\", day.businessDate())");
     assertThat(source.substring(stored))
       .contains("attendance.business_date=:date", "attendance_eligible")

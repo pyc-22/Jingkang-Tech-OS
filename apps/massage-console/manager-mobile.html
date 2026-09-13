@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>靖康科技运营 - 管理看板</title>
-    <link rel="stylesheet" href="./manager-mobile.css?v=20260912-full-optimization-v1" />
-    <link rel="stylesheet" href="./login-portal.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./manager-mobile.css?v=20260913-next-optimization-v1" />
+    <link rel="stylesheet" href="./login-portal.css?v=20260913-next-optimization-v1" />
   </head>
   <body class="login-portal-page">
     <main class="manager-shell">
@@ -88,9 +88,9 @@
           <div class="manager-dispatch-summary"><span>钟类、项目、房间和技师均按当前门店实时状态加载</span><span id="manager-dispatch-sync">等待同步</span></div>
         </section>
         <section class="manager-section manager-backfill-section" id="manager-backfill-section" data-manager-page-panel="more" data-manager-permission="HISTORICAL_ORDER_CREATE">
-          <div class="section-heading manager-home-section-heading"><div><p class="manager-section-kicker">历史补录</p><h2>补录历史订单</h2><small>仅限获授予历史订单权限的店长，补录日期不得晚于当前营业日</small></div><button class="manager-primary-button" id="manager-open-historical-backfill" type="button">新建补单</button></div>
+          <div class="section-heading manager-home-section-heading"><div><p class="manager-section-kicker">历史补录</p><h2>历史补单记录</h2><small>店长端仅查看本门店补单记录，创建补单请在前台端完成</small></div></div>
           <div class="manager-backfill-result hidden" id="manager-historical-result" role="status"></div>
-          <div class="manager-expense-list-heading"><b>我的补单记录</b><button class="manager-secondary-button" id="manager-refresh-historical-backfills" type="button" title="刷新历史补单记录">刷新</button></div>
+          <div class="manager-expense-list-heading"><b>本门店补单记录</b><div class="manager-inline-actions"><input id="manager-historical-filter-date" type="date" aria-label="补单日期筛选" title="补单日期筛选"><button class="manager-secondary-button" id="manager-refresh-historical-backfills" type="button" title="刷新历史补单记录">刷新</button></div></div>
           <div id="manager-historical-backfill-list" class="manager-expense-list"><p class="comparison-empty">正在加载历史补单记录</p></div>
         </section>
 
@@ -105,7 +105,6 @@
             <button type="button" data-manager-shortcut="business" data-manager-permission="DAILY_REPORT_VIEW"><span aria-hidden="true">▥</span><b>营业数据</b><small>日报与渠道</small></button>
             <button type="button" data-manager-shortcut="commission" data-manager-permission="REPORT_VIEW"><span aria-hidden="true">¥</span><b>技师提成</b><small>汇总与明细</small></button>
             <button type="button" data-manager-shortcut="expense" data-manager-permission="EXPENSE_STORE_VIEW"><span aria-hidden="true">▣</span><b>费用报销</b><small>提交与进度</small></button>
-            <button type="button" data-manager-shortcut="historical-backfill" data-manager-permission="HISTORICAL_ORDER_CREATE"><span aria-hidden="true">↺</span><b>历史补单</b><small>补录历史订单</small></button>
             <button type="button" data-manager-shortcut="more"><span aria-hidden="true">•••</span><b>更多管理</b><small>跨门店查询</small></button>
           </div>
         </section>
@@ -151,7 +150,6 @@
     <dialog id="manager-expense-preview"><div class="manager-expense-preview-card"><div class="expense-editor-title"><h3 id="manager-expense-preview-title">凭证预览</h3><button class="manager-quiet-button" id="manager-expense-preview-close" type="button">关闭</button></div><div id="manager-expense-preview-content" class="manager-expense-preview-content"></div></div></dialog>
     <dialog id="manager-expense-detail-dialog"><div class="manager-expense-detail-card"><div class="expense-editor-title"><div><p>费用报销单</p><h3 id="manager-expense-detail-title">报销详情</h3></div><button class="manager-quiet-button" id="manager-expense-detail-close" type="button">关闭</button></div><div id="manager-expense-detail-content" class="manager-expense-detail-content"></div><div class="expense-editor-actions" id="manager-expense-detail-actions"></div></div></dialog>
     <dialog id="manager-clock-dialog"><form id="manager-clock-form" class="manager-clock-dialog-card"><div class="expense-editor-title"><div><p>现场安排</p><h3>安排技师上钟</h3></div><button class="manager-quiet-button" id="manager-clock-close" type="button">关闭</button></div><div class="manager-clock-grid"><label>上钟类别<select id="manager-clock-type" name="clockType"><option value="QUEUE">排钟</option><option value="CALL">点钟</option><option value="SELECTED">选钟</option><option value="BOOKED_QUEUE">预定排钟</option><option value="BOOKED_CALL">预定点钟</option></select></label><label>服务房间<select id="manager-clock-room" name="roomId" required></select></label><label class="manager-clock-full">服务项目<select id="manager-clock-service" name="serviceItemId" required></select></label><label>服务时长<input id="manager-clock-duration" name="duration" type="number" min="15" max="360" step="5" required /><small>分钟，默认跟随项目</small></label></div><div class="manager-clock-picker"><div class="manager-clock-picker-heading"><b>选择技师</b><small id="manager-clock-tech-count">最多选择 4 位</small></div><div id="manager-clock-tech-list" class="manager-clock-tech-list"></div></div><div id="manager-clock-allocation" class="manager-clock-allocation"></div><p class="manager-clock-note">即时派钟会进入技师端待接单；预定钟会先占用房间并在前一单结束后提醒技师。</p><div class="expense-editor-actions"><button class="manager-secondary-button" id="manager-clock-cancel" type="button">取消</button><button class="manager-primary-button" type="submit">确认安排</button></div></form></dialog>
-<dialog id="manager-historical-backfill-dialog"><form id="manager-historical-backfill-form" class="manager-clock-dialog-card"><div class="expense-editor-title"><div><p>历史补录</p><h3>补录历史订单</h3></div><button class="manager-quiet-button" id="manager-historical-backfill-close" type="button">关闭</button></div><div class="manager-clock-grid"><label>营业日期<input id="manager-backfill-date" name="backfillDate" type="date" required></label><label>服务房间<select id="manager-backfill-room" name="roomId"></select></label><label class="manager-clock-full">服务项目<select id="manager-backfill-service" name="serviceItemId" required></select></label><label>服务时长<input id="manager-backfill-duration" name="durationMinutes" type="number" min="15" max="360" step="5" required></label><label>会员（可选）<input id="manager-backfill-member" name="memberId" placeholder="会员 UUID，可留空" maxlength="64"></label><label>结算金额（元）<input id="manager-backfill-amount" name="amount" type="number" min="0.01" step="0.01" required></label></div><div class="manager-clock-picker"><div class="manager-clock-picker-heading"><b>技师与分配</b><small>选择一位或多位，合计 100%</small></div><div id="manager-backfill-tech-list" class="manager-clock-tech-list"></div><div id="manager-backfill-allocation" class="manager-clock-allocation"></div></div><div class="manager-backfill-payment" id="manager-backfill-payments"><div class="manager-backfill-payment-row"><label>收款方式<select id="manager-backfill-payment-method" name="paymentMethod"></select></label><label>收款金额（元）<input id="manager-backfill-payment-amount" name="paymentAmount" type="number" min="0.01" step="0.01" required></label></div><button class="manager-secondary-button" id="manager-backfill-add-payment" type="button">添加收款方式</button></div><p class="manager-clock-note">提交前会进行两次确认，补单会写入历史营业日并保留操作人。</p><div class="manager-backfill-result hidden" id="manager-backfill-dialog-result" role="status"></div><div class="expense-editor-actions"><button class="manager-secondary-button" id="manager-historical-backfill-cancel" type="button">取消</button><button class="manager-primary-button" type="submit">确认补单</button></div></form></dialog>
-    <script src="./manager-mobile.js?v=20260912-full-optimization-v1"></script>
+    <script src="./manager-mobile.js?v=20260913-next-optimization-v1"></script>
   </body>
 </html>

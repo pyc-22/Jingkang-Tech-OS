@@ -212,13 +212,13 @@ test('historical backfill uses the same idempotent write and offline queue path'
 });
 
 test('updated idempotency assets use the P0 release cache version', () => {
-  assert.match(index, /offline-sync\.js\?v=20260912-full-optimization-v1/);
-  assert.match(mobileHtml, /mobile\.js\?v=20260912-full-optimization-v1/);
-  assert.match(mobileHtml, /offline-sync\.js\?v=20260912-full-optimization-v1/);
-  assert.match(mobile, /technician-service-worker\.js\?v=20260912-full-optimization-v1/);
-  assert.match(technicianWorker, /jingkang-technician-20260912-full-optimization-v1/);
+  assert.match(index, /offline-sync\.js\?v=20260913-next-optimization-v1/);
+  assert.match(mobileHtml, /mobile\.js\?v=20260913-next-optimization-v1/);
+  assert.match(mobileHtml, /offline-sync\.js\?v=20260913-next-optimization-v1/);
+  assert.match(mobile, /technician-service-worker\.js\?v=20260913-next-optimization-v1/);
+  assert.match(technicianWorker, /jingkang-technician-20260913-next-optimization-v1/);
 });
 
 test('release health endpoint reports the complete mobile and daily report release', () => {
-  assert.match(home, /20260912-full-optimization-v1/);
+  assert.match(home, /20260913-next-optimization-v1/);
 });
