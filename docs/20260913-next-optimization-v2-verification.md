@@ -35,7 +35,7 @@ powershell -ExecutionPolicy Bypass -File tools/release/package-full-optimization
 本轮 clean package 生成的 JAR SHA-256：
 
 ```text
-3CE22F72FB52234E03CE45A2A3567DEC75BA325EBDB146E71A25296746A575A3
+AF9A112483DBD06400EDEB0E4FF468EADF65CDC77FEA30AD94A2B18EA1D4FB40
 ```
 
 ZIP SHA-256 以最终打包命令输出为准，并在交付记录中报告；包内清单不写入 ZIP 自身哈希，避免自引用。清单已覆盖 90 个业务文件，连同 `SHA256SUMS.txt` 共 91 个文件。
