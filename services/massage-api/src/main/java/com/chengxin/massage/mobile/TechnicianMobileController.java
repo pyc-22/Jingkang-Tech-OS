@@ -102,7 +102,9 @@ public class TechnicianMobileController {
     List<MobileReservation> reservations = jdbc.sql("select sr.id,sr.reservation_type,sr.service_name_snapshot,r.code room_code,sr.planned_duration_minutes,sr.note,sr.created_at from service_reservation sr join room r on r.id=sr.room_id where sr.store_id=:store and sr.technician_id=:technician and sr.status='WAITING' order by sr.created_at desc")
       .param("store", technician.storeId()).param("technician", technician.id()).query(MobileReservation.class).list();
     TechnicianSchedulePolicy.TechnicianEligibility eligibility = schedulePolicy.eligibility(technician.storeId(), technician.id());
-    return new MobileDashboard(technician, summary, activeSession, acceptedSession, pendingSession, recentSessions, reservations, eligibility.eligible(), eligibility.reason());
+    TechnicianSchedulePolicy.ClockInStatus attendance = schedulePolicy.clockInStatus(technician.storeId(), technician.id());
+    return new MobileDashboard(technician, summary, activeSession, acceptedSession, pendingSession, recentSessions, reservations,
+      eligibility.eligible(), eligibility.reason(), attendance.clockedIn(), attendance.clockInTime(), attendance.legacyCompatible());
   }
 
   @GetMapping("/performance")
@@ -328,6 +330,7 @@ public class TechnicianMobileController {
   @Transactional
   void confirmDispatchNotification(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
     Technician technician = currentTechnician(authorization);
+    schedulePolicy.requireClockedIn(technician.storeId(), technician.id());
     PendingDispatch dispatch = jdbc.sql("select participant.id participant_id,ss.id session_id,ss.room_id,ss.service_name_snapshot,r.code room_code,ss.planned_duration_minutes,ss.created_at started_at,participant.acceptance_deadline_at from service_session ss join service_session_participant participant on participant.service_session_id=ss.id join room r on r.id=ss.room_id where ss.store_id=:store and participant.technician_id=:technician and participant.status='PENDING_ACCEPTANCE' and (participant.acceptance_deadline_at is null or participant.acceptance_deadline_at>now()) and ss.status in ('PENDING_ACCEPTANCE','REASSIGNMENT_REQUIRED') order by ss.created_at asc limit 1")
       .param("store", technician.storeId()).param("technician", technician.id()).query(PendingDispatch.class).optional().orElse(null);
     int updated = dispatch == null ? 0 : jdbc.sql("update service_session_participant set status='ACCEPTED',accepted_at=now() where id=:participant and status='PENDING_ACCEPTANCE' and (acceptance_deadline_at is null or acceptance_deadline_at>now())")
@@ -347,6 +350,7 @@ public class TechnicianMobileController {
   DispatchDecline rejectDispatchNotification(@Valid @RequestBody DispatchDeclineInput input,
                                              @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
     Technician technician = currentTechnician(authorization);
+    schedulePolicy.requireClockedIn(technician.storeId(), technician.id());
     PendingDispatch dispatch = jdbc.sql("select participant.id participant_id,ss.id session_id,ss.room_id,ss.service_name_snapshot,r.code room_code,ss.planned_duration_minutes,ss.created_at started_at,participant.acceptance_deadline_at from service_session ss join service_session_participant participant on participant.service_session_id=ss.id join room r on r.id=ss.room_id where ss.store_id=:store and participant.technician_id=:technician and participant.status='PENDING_ACCEPTANCE' and (participant.acceptance_deadline_at is null or participant.acceptance_deadline_at>now()) and ss.status in ('PENDING_ACCEPTANCE','REASSIGNMENT_REQUIRED') order by ss.created_at asc limit 1 for update")
       .param("store", technician.storeId()).param("technician", technician.id()).query(PendingDispatch.class).optional()
       .orElseThrow(() -> conflict("No pending service assignment"));
@@ -375,6 +379,7 @@ public class TechnicianMobileController {
   TransferRequestResult requestTransfer(@Valid @RequestBody TransferRequestInput input,
                                         @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
     Technician technician = currentTechnician(authorization);
+    schedulePolicy.requireClockedIn(technician.storeId(), technician.id());
     PendingTransferSource source = jdbc.sql("select participant.id participant_id,ss.id session_id,ss.status,participant.status participant_status from service_session ss join service_session_participant participant on participant.service_session_id=ss.id where ss.store_id=:store and participant.technician_id=:technician and participant.status in ('PENDING_ACCEPTANCE','ACCEPTED') and ss.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED') order by ss.created_at asc limit 1 for update of ss")
       .param("store", technician.storeId()).param("technician", technician.id()).query(PendingTransferSource.class).optional()
       .orElseThrow(() -> conflict("当前没有可转单的待接单服务"));
@@ -398,6 +403,7 @@ public class TechnicianMobileController {
   @Transactional
   ServiceSession startService(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
     Technician technician = currentTechnician(authorization);
+    schedulePolicy.requireClockedIn(technician.storeId(), technician.id());
     ServiceSession accepted = jdbc.sql(sessionSql("and ss.status='ACCEPTED' and not exists(select 1 from service_transfer_request transfer where transfer.service_session_id=ss.id and transfer.from_technician_id=:technician and transfer.status='REQUESTED') and exists(select 1 from service_session_participant current_participant where current_participant.service_session_id=ss.id and current_participant.technician_id=:technician and current_participant.status='ACCEPTED')", "limit 1"))
       .param("store", technician.storeId()).param("technician", technician.id()).query(ServiceSession.class).optional()
       .orElseThrow(() -> conflict("No accepted service awaiting start"));
@@ -444,6 +450,7 @@ public class TechnicianMobileController {
   ServiceSession addExtension(@Valid @RequestBody ExtensionInput input,
                               @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
     Technician technician = currentTechnician(authorization);
+    schedulePolicy.requireClockedIn(technician.storeId(), technician.id());
     ServiceSession active = activeSession(technician);
     ServiceDurationPolicyService.SessionState locked = durationPolicies.lockSession(technician.storeId(), active.id());
     if (!"IN_SERVICE".equals(locked.status())) throw conflict("No active service");
@@ -559,5 +566,5 @@ public class TechnicianMobileController {
   record MobileCommissionSummary(Long recordCount, Long baseAmountCents, Long commissionCents) {}
   record MobileReservation(UUID id, String reservationType, String serviceNameSnapshot, String roomCode, Short plannedDurationMinutes, String note, OffsetDateTime createdAt) {}
   record ServiceSession(UUID id, UUID serviceItemId, String roomCode, String serviceNameSnapshot, Integer servicePriceCents, Short plannedDurationMinutes, OffsetDateTime startedAt, OffsetDateTime expectedEndAt, OffsetDateTime endedAt, LocalDate businessDate, String status, String clockType, Integer extensionTotalCents, Integer extensionTotalMinutes, String extensionSummary) {}
-  record MobileDashboard(Technician technician, PerformanceSummary summary, ServiceSession activeSession, ServiceSession acceptedSession, ServiceSession pendingSession, List<ServiceSession> recentSessions, List<MobileReservation> reservations, Boolean clockInEligible, String clockInReason) {}
+  record MobileDashboard(Technician technician, PerformanceSummary summary, ServiceSession activeSession, ServiceSession acceptedSession, ServiceSession pendingSession, List<ServiceSession> recentSessions, List<MobileReservation> reservations, Boolean clockInEligible, String clockInReason, Boolean clockedIn, OffsetDateTime clockInAt, Boolean clockInLegacyCompatible) {}
 }

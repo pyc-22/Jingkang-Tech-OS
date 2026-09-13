@@ -2,6 +2,7 @@ package com.chengxin.massage.admin;
 
 import java.time.LocalTime;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 import jakarta.validation.Valid;
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
@@ -34,6 +36,7 @@ import com.chengxin.massage.operations.BusinessClockService;
 @CrossOrigin(origins = "*")
 public class AccessControlController {
   private static final UUID TENANT_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
+  private static final String HISTORICAL_ORDER_CREATE = "HISTORICAL_ORDER_CREATE";
   private final JdbcClient jdbc;
   private final MobileSessionService sessions;
   private final AdminSessionService adminSessions;
@@ -208,6 +211,117 @@ public class AccessControlController {
       input.active() ? "User enabled" : "User disabled", before, userAccount(id));
   }
 
+  /** Lists every store manager and the explicit historical-backfill grant for a store. */
+  @GetMapping("/stores/{storeId}/backfill-managers")
+  List<BackfillManager> backfillManagers(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                                         @PathVariable UUID storeId) {
+    authorize(authorization);
+    ensureStores(List.of(storeId));
+    return jdbc.sql("""
+      select u.id manager_id,u.login_name manager_login_name,u.display_name manager_name,u.active manager_active,
+             coalesce(grant_row.is_active,false) is_active,grant_row.granted_at,grant_row.revoked_at,
+             granted_by.display_name granted_by_name,revoked_by.display_name revoked_by_name
+      from app_user u
+      join user_role ur on ur.user_id=u.id
+      join role role_row on role_row.id=ur.role_id and role_row.code='STORE_MANAGER'
+      join user_store_scope scope on scope.user_id=u.id and scope.store_id=:store
+      left join store_manager_backfill_permission grant_row
+        on grant_row.store_id=:store and grant_row.manager_id=u.id and grant_row.tenant_id=:tenant
+      left join app_user granted_by on granted_by.id=grant_row.granted_by
+      left join app_user revoked_by on revoked_by.id=grant_row.revoked_by
+      where u.tenant_id=:tenant
+      order by u.active desc,u.display_name,u.login_name
+      """).param("store", storeId).param("tenant", TENANT_ID).query(BackfillManager.class).list();
+  }
+
+  /** Enables or revokes the explicit per-store grant; every transition is audited. */
+  @PutMapping("/stores/{storeId}/backfill-managers/{managerId}")
+  @Transactional
+  BackfillManager updateBackfillManager(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                                        @PathVariable UUID storeId, @PathVariable UUID managerId,
+                                        @RequestBody ActiveInput input) {
+    authorize(authorization);
+    ensureStores(List.of(storeId));
+    ensureStoreManagerScope(storeId, managerId);
+    BackfillPermissionState before = jdbc.sql("select id,store_id,manager_id,is_active,granted_by,granted_at,revoked_by,revoked_at from store_manager_backfill_permission where tenant_id=:tenant and store_id=:store and manager_id=:manager")
+      .param("tenant", TENANT_ID).param("store", storeId).param("manager", managerId)
+      .query(BackfillPermissionState.class).optional().orElse(null);
+    UUID actorId = adminSessions.requireAuthenticatedUserId(authorization);
+    OffsetDateTime now = OffsetDateTime.now();
+    if (input.active()) {
+      jdbc.sql("""
+        insert into store_manager_backfill_permission(
+          id,tenant_id,store_id,manager_id,granted_by,granted_at,revoked_by,revoked_at,is_active,updated_at)
+        values(:id,:tenant,:store,:manager,:actor,:at,null,null,true,:at)
+        on conflict (store_id,manager_id) do update set
+          granted_by=:actor,granted_at=:at,revoked_by=null,revoked_at=null,is_active=true,updated_at=:at
+        """).param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId)
+        .param("manager", managerId).param("actor", actorId).param("at", now).update();
+    } else {
+      jdbc.sql("""
+        insert into store_manager_backfill_permission(
+          id,tenant_id,store_id,manager_id,revoked_by,revoked_at,is_active,updated_at)
+        values(:id,:tenant,:store,:manager,:actor,:at,false,:at)
+        on conflict (store_id,manager_id) do update set
+          revoked_by=:actor,revoked_at=:at,is_active=false,updated_at=:at
+        """).param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId)
+        .param("manager", managerId).param("actor", actorId).param("at", now).update();
+    }
+    BackfillManager after = backfillManagers(authorization, storeId).stream()
+      .filter(row -> managerId.equals(row.managerId())).findFirst().orElseThrow(() -> notFound("Store manager not found"));
+    audits.record(authorization, storeId, "ACCESS",
+      input.active() ? "HISTORICAL_BACKFILL_PERMISSION_GRANTED" : "HISTORICAL_BACKFILL_PERMISSION_REVOKED",
+      "store_manager_backfill_permission", managerId,
+      input.active() ? "Historical backfill permission granted" : "Historical backfill permission revoked",
+      before, after);
+    return after;
+  }
+
+  /** Lists historical orders for administrator review and export clients. */
+  @GetMapping("/historical-backfills")
+  List<HistoricalBackfillRecord> historicalBackfills(
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+      @RequestParam(required = false) UUID storeId,
+      @RequestParam(required = false) LocalDate from,
+      @RequestParam(required = false) LocalDate to,
+      @RequestParam(required = false) UUID backfillBy) {
+    authorize(authorization);
+    StringBuilder sql = new StringBuilder("""
+      select o.id order_id,o.store_id,s.code store_code,s.name store_name,o.order_no,o.settlement_no,
+             o.backfill_date,o.receivable_cents,o.paid_cents,
+             coalesce(string_agg(distinct payment.payment_method, ',' order by payment.payment_method),'') payment_methods,
+             o.backfill_by,actor.display_name backfill_by_name,o.backfill_at,o.status,o.refund_status
+      from sales_order o
+      join store s on s.id=o.store_id and s.tenant_id=:tenant
+      left join app_user actor on actor.id=o.backfill_by
+      left join payment_record payment on payment.order_id=o.id
+      where o.tenant_id=:tenant and o.is_historical_backfill=true
+      """);
+    if (storeId != null) sql.append(" and o.store_id=:storeId");
+    if (from != null) sql.append(" and o.backfill_date>=:fromDate");
+    if (to != null) sql.append(" and o.backfill_date<=:toDate");
+    if (backfillBy != null) sql.append(" and o.backfill_by=:backfillBy");
+    sql.append(" group by o.id,o.store_id,s.code,s.name,o.order_no,o.settlement_no,o.backfill_date,o.receivable_cents,o.paid_cents,o.backfill_by,actor.display_name,o.backfill_at,o.status,o.refund_status order by o.backfill_date desc,o.backfill_at desc");
+    JdbcClient.StatementSpec statement = jdbc.sql(sql.toString()).param("tenant", TENANT_ID);
+    if (storeId != null) statement = statement.param("storeId", storeId);
+    if (from != null) statement = statement.param("fromDate", from);
+    if (to != null) statement = statement.param("toDate", to);
+    if (backfillBy != null) statement = statement.param("backfillBy", backfillBy);
+    return statement.query(HistoricalBackfillRecord.class).list();
+  }
+
+  private void ensureStoreManagerScope(UUID storeId, UUID managerId) {
+    boolean valid = jdbc.sql("""
+      select exists(
+        select 1 from app_user u
+        join user_role ur on ur.user_id=u.id
+        join role role_row on role_row.id=ur.role_id and role_row.code='STORE_MANAGER'
+        join user_store_scope scope on scope.user_id=u.id and scope.store_id=:store
+        where u.id=:manager and u.tenant_id=:tenant)
+      """).param("store", storeId).param("manager", managerId).param("tenant", TENANT_ID).query(Boolean.class).single();
+    if (!valid) throw notFound("Store manager not found");
+  }
+
   private Store store(UUID id) { return jdbc.sql("select id,code,name,timezone,business_day_cutoff,address,contact_phone,business_hours,active from store where id=:id and tenant_id=:tenant").param("id", id).param("tenant", TENANT_ID).query(Store.class).single(); }
   private LocalTime cutoff(LocalTime value) { return value == null ? LocalTime.of(5, 0) : value.withSecond(0).withNano(0); }
   private void seedPaymentMethods(UUID storeId) {
@@ -247,4 +361,14 @@ public class AccessControlController {
   record CreateUserInput(@NotBlank @Size(max = 80) String loginName, @NotBlank @Size(max = 120) String displayName, @NotBlank @Size(min = 8, max = 128) String password, @NotEmpty List<@NotNull UUID> roleIds, List<UUID> storeIds) {}
   record AccessAssignment(@NotEmpty List<@NotNull UUID> roleIds, List<UUID> storeIds) {}
   record ActiveInput(boolean active) {}
+  record BackfillManager(UUID managerId, String managerLoginName, String managerName, Boolean managerActive,
+                         Boolean isActive, OffsetDateTime grantedAt, OffsetDateTime revokedAt,
+                         String grantedByName, String revokedByName) {}
+  record BackfillPermissionState(UUID id, UUID storeId, UUID managerId, Boolean isActive,
+                                 UUID grantedBy, OffsetDateTime grantedAt, UUID revokedBy, OffsetDateTime revokedAt) {}
+  record HistoricalBackfillRecord(UUID orderId, UUID storeId, String storeCode, String storeName,
+                                  String orderNo, String settlementNo, LocalDate backfillDate,
+                                  Long receivableCents, Long paidCents, String paymentMethods,
+                                  UUID backfillBy, String backfillByName, OffsetDateTime backfillAt,
+                                  String status, String refundStatus) {}
 }

@@ -660,3 +660,35 @@ dialog > .dialog-card {
 .form-grid label[hidden] { display:none !important; }
 .form-grid label.is-hidden { display:none !important; }
 @media (max-width:560px){.business-correction-change{grid-template-columns:minmax(0,1fr);}.business-correction-change>strong{transform:rotate(90deg);height:18px;}.business-correction-side b{white-space:normal;}.business-correction-history-heading{display:grid;gap:3px;}}
+
+/* 20260912 requirements 3/6/7: compact frontdesk layout, readable cards, automatic wrapping */
+.frontdesk-layout { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+.room-panel .room-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; max-height:430px; overflow-y:auto; align-content:start; }
+.room-panel .room { min-width:150px; min-height:116px; }
+.room-panel .room strong { font-size:23px; }
+.room-panel .room small { font-size:15px; }
+.room-panel .room .room-top { font-size:14px; }
+.technician-panel .technician-name { font-size:17px; }
+.technician-panel .technician-name small { font-size:14px; }
+.technician-panel .tech-state,.technician-panel .tech-action { min-height:44px; font-size:14px; }
+.operator-menu-trigger { display:grid; gap:2px; padding:0; border:0; background:transparent; color:inherit; text-align:left; cursor:pointer; }
+.operator-menu-trigger b { color:#fff; font-size:14px; }
+.operator-menu-trigger small { color:#a9beb8; font-size:11px; }
+.sidebar-footer { position:relative; }
+.operator-menu { position:absolute; left:0; bottom:58px; z-index:20; min-width:170px; padding:6px; border:1px solid #47615b; border-radius:6px; background:#17352f; box-shadow:0 8px 24px rgba(0,0,0,.22); }
+.operator-menu button { display:block; width:100%; min-height:36px; padding:0 10px; border:0; border-radius:4px; color:#dce9e4; background:transparent; text-align:left; font-size:12px; }
+.operator-menu button:hover { background:#285149; color:#fff; }
+.operator-profile-content { display:grid; gap:7px; padding:12px 0; color:#31413e; }
+.operator-profile-content b { font-size:18px; }
+.operator-profile-content span,.operator-profile-content small { color:var(--muted); font-size:13px; }
+@media (max-width:900px) { .frontdesk-layout { grid-template-columns:minmax(0,1fr); } }
+
+/* 20260912 requirement 3: every primary frontdesk action remains touch-friendly
+   after the larger card typography is applied. Keep this final override after
+   the legacy room-specific styles so the minimum target is deterministic. */
+.room-panel .room-actions > button,
+.technician-panel .tech-card > .tech-action,
+.technician-panel .technician > .tech-action {
+  min-height:44px;
+  font-size:14px;
+}

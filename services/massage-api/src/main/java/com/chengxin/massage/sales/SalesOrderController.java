@@ -11,6 +11,7 @@ import java.util.Set;
 import java.util.UUID;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
@@ -70,6 +71,7 @@ public class SalesOrderController {
                           @RequestParam(required = false) LocalDate to,
                           @RequestParam(defaultValue = "") String paymentMethod,
                           @RequestParam(defaultValue = "") String status,
+                          @RequestParam(required = false) Boolean historicalBackfill,
                           @RequestParam(defaultValue = "0") @Min(0) int page,
                           @RequestParam(defaultValue = "50") @Min(1) int size,
                           @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
@@ -77,11 +79,12 @@ public class SalesOrderController {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     int safeSize = Math.min(size, 200);
     int safePage = Math.max(page, 0);
-    StringBuilder sql = new StringBuilder("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id where o.store_id=:store and (o.order_no ilike :q or o.settlement_no ilike :q or coalesce(m.name,'') ilike :q or coalesce(m.phone,'') ilike :q)");
+    StringBuilder sql = new StringBuilder("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version,o.is_historical_backfill historical_backfill,o.backfill_date backfill_date,o.backfill_by backfill_by,o.backfill_at backfill_at,backfill_actor.display_name backfill_by_name from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id left join app_user backfill_actor on backfill_actor.id=o.backfill_by where o.store_id=:store and (o.order_no ilike :q or o.settlement_no ilike :q or coalesce(m.name,'') ilike :q or coalesce(m.phone,'') ilike :q)");
     if (from != null) sql.append(" and o.business_date >= :fromDate");
     if (to != null) sql.append(" and o.business_date <= :toDate");
     if (!paymentMethod.isBlank()) sql.append(" and exists (select 1 from payment_record filter_payment where filter_payment.order_id=o.id and filter_payment.payment_method=:paymentMethod)");
     if (!status.isBlank()) sql.append(" and o.status=:status");
+    if (historicalBackfill != null) sql.append(" and o.is_historical_backfill=:historicalBackfill");
     sql.append(" order by coalesce(o.settled_at,o.created_at) desc limit :limit offset :offset");
     JdbcClient.StatementSpec statement = jdbc.sql(sql.toString())
       .param("store", storeId).param("q", "%" + query.trim() + "%")
@@ -90,7 +93,39 @@ public class SalesOrderController {
     if (to != null) statement = statement.param("toDate", to);
     if (!paymentMethod.isBlank()) statement = statement.param("paymentMethod", paymentMethod.trim());
     if (!status.isBlank()) statement = statement.param("status", status.trim());
+    if (historicalBackfill != null) statement = statement.param("historicalBackfill", historicalBackfill);
     return statement.query(OrderSummary.class).list();
+  }
+
+  /** Returns only historical backfills created by the authenticated manager in the current store. */
+  @GetMapping("/historical-backfills/mine")
+  List<MyHistoricalBackfillRecord> myHistoricalBackfills(
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+      @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+    UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    AdminSessionService.AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
+    boolean manager = actor.roles().contains("STORE_MANAGER");
+    boolean tenantAdmin = actor.roles().contains("TENANT_ADMIN");
+    if (!manager && !tenantAdmin) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "历史补单记录仅限店长");
+    }
+    return jdbc.sql("""
+      select o.id order_id,o.order_no,o.settlement_no,o.backfill_date,
+             o.receivable_cents,o.paid_cents,
+             coalesce(string_agg(distinct payment.payment_method, ',' order by payment.payment_method),'') payment_methods,
+             o.backfill_by,actor.display_name backfill_by_name,o.backfill_at,o.status,o.refund_status
+      from sales_order o
+      left join app_user actor on actor.id=o.backfill_by
+      left join payment_record payment on payment.order_id=o.id
+      where o.tenant_id=:tenant and o.store_id=:store
+        and o.is_historical_backfill=true and o.backfill_by=:backfillBy
+      group by o.id,o.order_no,o.settlement_no,o.backfill_date,o.receivable_cents,o.paid_cents,
+               o.backfill_by,actor.display_name,o.backfill_at,o.status,o.refund_status
+      order by o.backfill_date desc,o.backfill_at desc
+      limit 100
+      """)
+      .param("tenant", TENANT_ID).param("store", storeId).param("backfillBy", actor.userId())
+      .query(MyHistoricalBackfillRecord.class).list();
   }
 
   @GetMapping("/pending-service-sessions")
@@ -119,7 +154,7 @@ public class SalesOrderController {
                      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                      @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
-    OrderSummary order = jdbc.sql("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id where o.id=:id and o.store_id=:store")
+    OrderSummary order = jdbc.sql("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version,o.is_historical_backfill historical_backfill,o.backfill_date backfill_date,o.backfill_by backfill_by,o.backfill_at backfill_at,backfill_actor.display_name backfill_by_name from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id left join app_user backfill_actor on backfill_actor.id=o.backfill_by where o.id=:id and o.store_id=:store")
       .param("id", id).param("store", storeId).query(OrderSummary.class).single();
     List<OrderLine> lines = jdbc.sql("select line.id,line.service_item_id,line.item_name_snapshot,line.unit_price_cents,line.duration_minutes,line.quantity,line.line_amount_cents,link.service_session_id,session.technician_id,coalesce((select string_agg(technician.name,'、' order by participant.slot_no,participant.sequence_no) from service_session_participant participant join technician technician on technician.id=participant.technician_id where participant.service_session_id=session.id and participant.status='COMPLETED'),technician.name) technician_name,room.code room_code,room.name room_name,session.ended_at service_ended_at,session.clock_type,coalesce((select count(*) from service_session_participant participant where participant.service_session_id=session.id and participant.status='COMPLETED'),0) participant_count from sales_order_line line left join sales_order_service_session link on link.order_line_id=line.id left join service_session session on session.id=link.service_session_id left join technician technician on technician.id=session.technician_id left join room room on room.id=session.room_id where line.order_id=:id")
       .param("id", id).query(OrderLine.class).list();
@@ -175,10 +210,163 @@ public class SalesOrderController {
     if (state.commissionCount() > 0) reverseCommissionsForVoid(id, state.orderNo(), cancelledAt, businessClock.businessDate(storeId, cancelledAt));
     jdbc.sql("update sales_order set status='CANCELLED',cancel_reason=:reason,cancelled_at=:cancelledAt where id=:id and store_id=:store")
       .param("id", id).param("store", storeId).param("reason", reason).param("cancelledAt", cancelledAt).update();
-    OrderSummary cancelled = jdbc.sql("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id where o.id=:id and o.store_id=:store")
+    OrderSummary cancelled = jdbc.sql("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version,o.is_historical_backfill historical_backfill,o.backfill_date backfill_date,o.backfill_by backfill_by,o.backfill_at backfill_at,backfill_actor.display_name backfill_by_name from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id left join app_user backfill_actor on backfill_actor.id=o.backfill_by where o.id=:id and o.store_id=:store")
       .param("id", id).param("store", storeId).query(OrderSummary.class).single();
     audits.record(authorization, storeId, "SALES", "ORDER_VOIDED", "sales_order", id, "Sales order voided: " + reason, state, cancelled);
     return cancelled;
+  }
+
+  /**
+   * Creates a settled order for a prior business date without creating a live
+   * service session.  Commission rows still use the normal versioned rule and
+   * therefore participate in refunds, voids, daily reports, and monthly tiers.
+   */
+  @PostMapping("/historical-backfill")
+  @Transactional
+  HistoricalBackfillResult historicalBackfill(@Valid @RequestBody HistoricalBackfillInput input,
+                                               @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                                               @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+    UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    AdminSessionService.AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
+    boolean manager = actor.roles().contains("STORE_MANAGER");
+    boolean tenantAdmin = actor.roles().contains("TENANT_ADMIN");
+    if (!manager && !tenantAdmin) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "历史补单仅限店长");
+    if (!Boolean.TRUE.equals(input.confirmed())) throw bad("请完成二次确认后再提交历史补单");
+    LocalDate currentBusinessDate = businessClock.currentBusinessDate(storeId);
+    if (input.backfillDate().isAfter(currentBusinessDate)) throw bad("补单日期不能晚于当前营业日");
+    validateHistoricalPayload(input.lines(), input.settlementAmountCents());
+    if (input.settlementAmountCents() == null || input.settlementAmountCents() <= 0) throw bad("补单金额必须大于 0");
+    if (input.lines() == null || input.lines().isEmpty()) throw bad("补单必须至少选择一个服务项目和技师");
+    if (input.payments() == null || input.payments().isEmpty()) throw bad("补单必须选择收款方式");
+
+    // A role permission alone is not enough for store managers: the tenant
+    // administrator must explicitly enable the grant for this store.
+    if (manager) {
+      boolean granted = jdbc.sql("""
+        select exists(
+          select 1 from store_manager_backfill_permission grant_row
+          where grant_row.tenant_id=:tenant and grant_row.store_id=:store
+            and grant_row.manager_id=:manager and grant_row.is_active=true)
+        """).param("tenant", TENANT_ID).param("store", storeId).param("manager", actor.userId())
+        .query(Boolean.class).single();
+      if (!granted) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "当前店长尚未获得历史补单权限");
+    }
+    if (!adminSessions.hasPermission(authorization, "HISTORICAL_ORDER_CREATE")) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "缺少历史补单权限");
+    }
+    if (input.memberId() != null) ensureHistoricalMember(storeId, input.memberId());
+
+    OffsetDateTime operatedAt = OffsetDateTime.now();
+    String orderNo = nextOrderNo(operatedAt);
+    String settlementNo = "JS" + java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Shanghai"))
+      .format(java.time.format.DateTimeFormatter.ofPattern("yyMMdd"))
+      + String.format(java.util.Locale.ROOT, "%07d", jdbc.sql("select nextval('settlement_number_seq')").query(Long.class).single());
+    UUID orderId = UUID.randomUUID();
+    List<ResolvedHistoricalLine> resolvedLines = new ArrayList<>();
+    long receivable = 0;
+    for (HistoricalBackfillLineInput line : input.lines()) {
+      if (line == null || line.serviceItemId() == null) throw bad("请选择有效的服务项目");
+      ResolvedServiceItem item = itemVersions.activeItem(storeId, line.serviceItemId(), input.backfillDate())
+        .orElseThrow(() -> bad("该服务项目在补单日期不可用"));
+      short duration = line.durationMinutes() == null ? item.defaultDurationMinutes() : line.durationMinutes();
+      if (duration < 15 || duration > 360) throw bad("服务时长必须在 15 到 360 分钟之间");
+      String clockType = normalizeHistoricalClockType(line.clockType());
+      List<HistoricalTechnicianAllocation> allocations = normalizeHistoricalAllocations(storeId, line);
+      int allocationTotal = allocations.stream().mapToInt(allocation -> allocation.allocationBp()).sum();
+      if (allocationTotal != 10000) throw bad("同一项目的技师分配比例必须合计 100%");
+      if (line.roomId() != null) {
+        boolean roomExists = jdbc.sql("select exists(select 1 from room where id=:room and store_id=:store and active=true)")
+          .param("room", line.roomId()).param("store", storeId).query(Boolean.class).single();
+        if (!roomExists) throw bad("所选房间不可用或不属于当前门店");
+      }
+      resolvedLines.add(new ResolvedHistoricalLine(item, duration, clockType, allocations, line.roomId()));
+      receivable = Math.addExact(receivable, item.priceCents());
+    }
+    if (input.settlementAmountCents() > receivable) throw bad("补单金额不能超过项目合计");
+    long paid = input.payments().stream().mapToLong(PaymentInput::amountCents).sum();
+    if (paid != input.settlementAmountCents()) throw bad("各收款方式合计必须等于补单金额");
+
+    jdbc.sql("""
+      insert into sales_order(
+        id,tenant_id,store_id,member_id,order_no,settlement_no,cashier_name_snapshot,status,
+        receivable_cents,paid_cents,settled_at,business_date,is_historical_backfill,
+        backfill_date,backfill_by,backfill_at)
+      values(:id,:tenant,:store,:member,:no,:settlement,:cashier,'SETTLED',:receivable,:paid,
+             :settled,:businessDate,true,:backfillDate,:backfillBy,:backfillAt)
+      """).param("id", orderId).param("tenant", TENANT_ID).param("store", storeId)
+      .param("member", input.memberId()).param("no", orderNo).param("settlement", settlementNo)
+      .param("cashier", actor.displayName()).param("receivable", receivable).param("paid", paid)
+      .param("settled", operatedAt).param("businessDate", input.backfillDate())
+      .param("backfillDate", input.backfillDate()).param("backfillBy", actor.userId()).param("backfillAt", operatedAt).update();
+
+    List<String> paymentNames = new ArrayList<>();
+    for (ResolvedHistoricalLine line : resolvedLines) {
+      UUID orderLineId = UUID.randomUUID();
+      jdbc.sql("insert into sales_order_line(id,order_id,service_item_id,item_name_snapshot,unit_price_cents,duration_minutes,line_amount_cents) values(:id,:order,:service,:name,:price,:duration,:amount)")
+        .param("id", orderLineId).param("order", orderId).param("service", line.item().id())
+        .param("name", line.item().name()).param("price", line.item().priceCents()).param("duration", line.durationMinutes()).param("amount", line.item().priceCents()).update();
+      int allocatedAmount = 0;
+      for (int index = 0; index < line.allocations().size(); index++) {
+        HistoricalTechnicianAllocation allocation = line.allocations().get(index);
+        int share = index == line.allocations().size() - 1
+          ? line.item().priceCents() - allocatedAmount
+          : proportional(line.item().priceCents(), allocation.allocationBp(), 10000);
+        allocatedAmount += share;
+        short clockAdjustment = (short) (index == 0 && Boolean.TRUE.equals(line.item().countsAsClock()) ? 1 : 0);
+        short durationAdjustment = (short) (index == 0 ? line.durationMinutes() : 0);
+        CommissionBase commission = new CommissionBase(null, null, line.item().id(), allocation.technicianId(),
+          allocation.technicianName(), line.item().name(), share, line.clockType(), null, input.backfillDate(),
+          line.item().countsAsClock(), durationAdjustment, null, allocation.allocationBp(), 0,
+          clockAdjustment, allocation.allocationBp());
+        insertCommissionRecord(storeId, orderId, orderLineId, orderNo, settlementNo, commission, "MAIN", operatedAt, input.backfillDate());
+      }
+    }
+    for (PaymentInput payment : input.payments()) {
+      PaymentMethod method = paymentMethod(storeId, payment.method());
+      if ("MEMBER_BALANCE".equals(method.methodKind())) consumeHistoricalWallet(storeId, input.memberId(), payment.amountCents(), orderId, input.backfillDate());
+      paymentNames.add(method.name());
+      jdbc.sql("insert into payment_record(id,tenant_id,store_id,order_id,payment_method,payment_method_name_snapshot,amount_cents) values(:id,:tenant,:store,:order,:method,:name,:amount)")
+        .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("order", orderId)
+        .param("method", method.code()).param("name", method.name()).param("amount", payment.amountCents()).update();
+    }
+    HistoricalBackfillResult result = new HistoricalBackfillResult(orderId, orderNo, settlementNo,
+      input.backfillDate(), receivable, paid, actor.userId(), actor.displayName());
+    audits.record(authorization, storeId, "SALES", "HISTORICAL_ORDER_BACKFILLED", "sales_order", orderId,
+      "历史补单日期=" + input.backfillDate() + ";订单号=" + orderNo + ";金额=" + paid + ";支付方式=" + String.join(",", paymentNames), null, result);
+    return result;
+  }
+
+  private void validateHistoricalPayload(@NotEmpty List<@Valid HistoricalBackfillLineInput> lines,
+                                         @Min(1) Long amountCents) {
+    if (lines == null || lines.isEmpty()) throw bad("补单必须至少选择一个服务项目和技师");
+    if (amountCents == null || amountCents <= 0) throw bad("补单金额必须大于 0");
+  }
+
+  private List<HistoricalTechnicianAllocation> normalizeHistoricalAllocations(UUID storeId, HistoricalBackfillLineInput line) {
+    List<HistoricalTechnicianAllocation> requested = line.technicians() == null ? List.of() : line.technicians();
+    if (requested.isEmpty() && line.technicianId() != null) {
+      requested = List.of(new HistoricalTechnicianAllocation(line.technicianId(), line.allocationBp() == null ? 10000 : line.allocationBp()));
+    }
+    if (requested.isEmpty()) throw bad("每个补单项目必须至少选择一名技师");
+    List<HistoricalTechnicianAllocation> resolved = new ArrayList<>();
+    for (HistoricalTechnicianAllocation allocation : requested) {
+      if (allocation == null || allocation.technicianId() == null) throw bad("请选择有效的技师");
+      int bp = allocation.allocationBp() == null ? 0 : allocation.allocationBp();
+      if (bp < 1 || bp > 10000) throw bad("技师分配比例必须在 1% 到 100% 之间");
+      TechnicianSnapshot technician = jdbc.sql("select id,name from technician where id=:id and store_id=:store and active=true")
+        .param("id", allocation.technicianId()).param("store", storeId).query(TechnicianSnapshot.class).optional()
+        .orElseThrow(() -> bad("所选技师已停用或不属于当前门店"));
+      resolved.add(new HistoricalTechnicianAllocation(technician.id(), bp, technician.name()));
+    }
+    return resolved;
+  }
+
+  private String normalizeHistoricalClockType(String value) {
+    String normalized = value == null ? "QUEUE" : value.trim().toUpperCase();
+    if (!List.of("QUEUE", "CALL", "SELECTED", "BOOKED_QUEUE", "BOOKED_CALL", "EXTENSION").contains(normalized)) {
+      throw bad("钟类不受支持");
+    }
+    return normalized;
   }
 
   @PostMapping("/settle")
@@ -625,6 +813,13 @@ public class SalesOrderController {
     if (!exists) throw bad("Member is unavailable");
   }
 
+  /** Historical backfills must use a member and wallet opened in the selected store. */
+  private void ensureHistoricalMember(UUID storeId, UUID memberId) {
+    boolean exists = jdbc.sql("select exists(select 1 from member where id=:id and tenant_id=:tenant and registered_store_id=:store and active=true)")
+      .param("id", memberId).param("tenant", TENANT_ID).param("store", storeId).query(Boolean.class).single();
+    if (!exists) throw bad("会员不存在、已停用或不属于当前门店");
+  }
+
   private Line line(UUID storeId, LineInput input) {
     if (input.serviceSessionId() != null) {
       ServiceSessionForSettlement session = jdbc.sql("select ss.id,ss.service_item_id,ss.service_name_snapshot,ss.service_price_cents + coalesce((select sum(extension.service_price_cents) from service_session_extension extension where extension.service_session_id=ss.id),0) service_price_cents,ss.planned_duration_minutes,coalesce((select string_agg(extension.service_name_snapshot || ' ' || extension.planned_duration_minutes || '分钟', '、' order by extension.added_at) from service_session_extension extension where extension.service_session_id=ss.id),'') extension_summary,ss.business_date from service_session ss where ss.id=:id and ss.store_id=:store and ss.status='COMPLETED' for update of ss")
@@ -775,6 +970,20 @@ public class SalesOrderController {
       .param("amount", -amount).param("before", wallet.balanceCents()).param("after", after).param("note", orderId.toString()).param("businessDate", businessDate).update();
   }
 
+  private void consumeHistoricalWallet(UUID transactionStoreId, UUID memberId, long amount, UUID orderId, LocalDate businessDate) {
+    if (memberId == null) throw bad("使用会员余额付款时必须先选择会员");
+    Wallet wallet = jdbc.sql("select w.id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.member_id=:member and m.id=:member and m.tenant_id=:tenant and m.registered_store_id=:store and w.opened_store_id=:store for update")
+      .param("member", memberId).param("tenant", TENANT_ID).param("store", transactionStoreId).query(Wallet.class).optional()
+      .orElseThrow(() -> bad("会员钱包不存在或不属于当前门店"));
+    if (wallet.balanceCents() < amount) throw new ResponseStatusException(HttpStatus.CONFLICT, "会员余额不足，请调整付款方式或充值");
+    long after = wallet.balanceCents() - amount;
+    jdbc.sql("update member_wallet set balance_cents=:balance,updated_at=now(),version=version+1 where id=:id and opened_store_id=:store")
+      .param("balance", after).param("id", wallet.id()).param("store", transactionStoreId).update();
+    jdbc.sql("insert into wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,source,note,business_date) values(:id,:tenant,:store,:wallet,:member,'CONSUMPTION',:amount,:before,:after,'ORDER',:note,:businessDate)")
+      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", transactionStoreId).param("wallet", wallet.id()).param("member", memberId)
+      .param("amount", -amount).param("before", wallet.balanceCents()).param("after", after).param("note", orderId.toString()).param("businessDate", businessDate).update();
+  }
+
   private PaymentMethod paymentMethod(UUID storeId, String code) {
     return jdbc.sql("select code,name,method_kind from store_payment_method where store_id=:store and code=:code and active=true")
       .param("store", storeId).param("code", code).query(PaymentMethod.class).optional()
@@ -790,7 +999,7 @@ public class SalesOrderController {
   record Wallet(UUID id, Long balanceCents) {}
   record Order(UUID id, String orderNo, Long receivableCents, Long paidCents, String status, OffsetDateTime settledAt) {}
   record ExistingSessionOrder(UUID serviceSessionId, UUID id, String orderNo, Long receivableCents, Long paidCents, String status, OffsetDateTime settledAt) {}
-  record OrderSummary(UUID id, String orderNo, String settlementNo, String cashierNameSnapshot, String status, String refundStatus, Long receivableCents, Long paidCents, OffsetDateTime createdAt, OffsetDateTime settledAt, String cancelReason, OffsetDateTime cancelledAt, UUID memberId, String memberName, String memberPhone, Long memberBalanceCents, UUID correctedFromOrderId, String correctedFromOrderNo, String correctionReason, Integer financialCorrectionVersion, Integer businessCorrectionVersion) {}
+  record OrderSummary(UUID id, String orderNo, String settlementNo, String cashierNameSnapshot, String status, String refundStatus, Long receivableCents, Long paidCents, OffsetDateTime createdAt, OffsetDateTime settledAt, String cancelReason, OffsetDateTime cancelledAt, UUID memberId, String memberName, String memberPhone, Long memberBalanceCents, UUID correctedFromOrderId, String correctedFromOrderNo, String correctionReason, Integer financialCorrectionVersion, Integer businessCorrectionVersion, Boolean historicalBackfill, LocalDate backfillDate, UUID backfillBy, OffsetDateTime backfillAt, String backfillByName) {}
   record OrderVoidState(String status, Long paidCents, String orderNo, Long paymentCount, Long commissionCount, Long refundCount) {}
   record OrderLine(UUID id, UUID serviceItemId, String itemNameSnapshot, Long unitPriceCents, Short durationMinutes, Short quantity, Long lineAmountCents,
                    UUID serviceSessionId, UUID technicianId, String technicianName, String roomCode, String roomName, OffsetDateTime serviceEndedAt, String clockType, Long participantCount) {}
@@ -817,6 +1026,14 @@ public class SalesOrderController {
   record SettlementParticipant(UUID id, Short slotNo, Short sequenceNo, String participationType, Integer allocationBp, String status, UUID replacedParticipantId) {}
   record CommissionRule(String ruleType, Long fixedCents, Integer rateBp) {}
   record OrderDetail(OrderSummary order, List<OrderLine> lines, List<Payment> payments, List<BusinessCorrectionView> businessCorrections) {}
+  record HistoricalBackfillResult(UUID orderId, String orderNo, String settlementNo, LocalDate backfillDate,
+                                  Long receivableCents, Long paidCents, UUID backfillBy, String backfillByName) {}
+  record MyHistoricalBackfillRecord(UUID orderId, String orderNo, String settlementNo, LocalDate backfillDate,
+                                    Long receivableCents, Long paidCents, String paymentMethods,
+                                    UUID backfillBy, String backfillByName, OffsetDateTime backfillAt,
+                                    String status, String refundStatus) {}
+  record ResolvedHistoricalLine(ResolvedServiceItem item, Short durationMinutes, String clockType,
+                                List<HistoricalTechnicianAllocation> allocations, UUID roomId) {}
   record PendingServiceSession(UUID id, String serviceNo, UUID serviceItemId, String serviceNameSnapshot, Integer servicePriceCents, Short plannedDurationMinutes, OffsetDateTime endedAt, LocalDate businessDate, String technicianName, UUID roomId, String roomCode, String clockType, String extensionSummary) {}
   record SettleInput(UUID memberId, @NotEmpty List<@Valid LineInput> lines, @NotNull List<@Valid PaymentInput> payments,
                      Long settlementAmountCents, String waiveReason, UUID correctedFromOrderId, @Size(max = 240) String correctionReason) {}
@@ -825,4 +1042,19 @@ public class SalesOrderController {
   record VoidInput(@NotBlank String reason) {}
   record LineInput(UUID serviceItemId, UUID serviceSessionId, Short durationMinutes) {}
   record PaymentInput(@NotBlank String method, @NotNull @Min(1) Long amountCents) {}
+  record HistoricalBackfillInput(@NotNull LocalDate backfillDate, UUID memberId,
+                                 @NotEmpty List<@Valid HistoricalBackfillLineInput> lines,
+                                 @NotNull List<@Valid PaymentInput> payments,
+                                 @NotNull @Min(1) Long settlementAmountCents,
+                                 @NotNull Boolean confirmed) {}
+  record HistoricalBackfillLineInput(@NotNull UUID serviceItemId,
+                                     List<@Valid HistoricalTechnicianAllocation> technicians,
+                                     UUID technicianId, Integer allocationBp,
+                                     @Min(15) @Max(360) Short durationMinutes,
+                                     String clockType, UUID roomId) {}
+  record HistoricalTechnicianAllocation(UUID technicianId, Integer allocationBp, String technicianName) {
+    HistoricalTechnicianAllocation(UUID technicianId, Integer allocationBp) {
+      this(technicianId, allocationBp, null);
+    }
+  }
 }

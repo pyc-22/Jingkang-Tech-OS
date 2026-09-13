@@ -81,4 +81,11 @@ class P0ConflictRegressionTest {
     assertThat(source).contains("Retry-After");
     assertThat(source).contains("SC_SERVICE_UNAVAILABLE");
   }
+
+  @Test
+  void historicalBackfillUsesTheSharedOfflineIdempotencyFilter() throws Exception {
+    String source = Files.readString(Path.of(
+        "src/main/java/com/chengxin/massage/admin/OfflineOperationIdempotencyFilter.java"));
+    assertThat(source).contains("path.equals(\"/api/v1/sales-orders/historical-backfill\")");
+  }
 }

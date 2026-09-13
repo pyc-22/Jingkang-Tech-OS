@@ -63,9 +63,24 @@ public class BusinessPermissionFilter extends OncePerRequestFilter {
     if (path.startsWith("/api/v1/admin/access/")) return null;
     if (path.startsWith("/api/v1/admin/technician-accounts")) return required("ACCOUNT_MANAGE");
     if (path.startsWith("/api/v1/employees")) return required("FOUNDATION_MANAGE");
-    if (path.startsWith("/api/v1/foundation")) return isRead(method) ? any("FRONTDESK_SETTLE", "FOUNDATION_MANAGE") : required("FOUNDATION_MANAGE");
+    if (path.startsWith("/api/v1/foundation")) {
+      if (!isRead(method)) return required("FOUNDATION_MANAGE");
+      // Historical backfill only needs the same read-only foundation slices
+      // that its form renders. Keep unrelated foundation reads on the
+      // existing cashier/admin permission boundary.
+      boolean backfillRead = path.equals("/api/v1/foundation/rooms")
+        || path.equals("/api/v1/foundation/technicians")
+        || path.equals("/api/v1/foundation/service-items");
+      return backfillRead
+        ? any("FRONTDESK_SETTLE", "FOUNDATION_MANAGE", "HISTORICAL_ORDER_CREATE")
+        : any("FRONTDESK_SETTLE", "FOUNDATION_MANAGE");
+    }
     if (path.startsWith("/api/v1/rooms")) {
-      if (isRead(method)) return any("FRONTDESK_SETTLE", "FOUNDATION_MANAGE");
+      if (isRead(method)) {
+        return path.equals("/api/v1/rooms/statuses")
+          ? any("FRONTDESK_SETTLE", "FOUNDATION_MANAGE", "HISTORICAL_ORDER_CREATE")
+          : any("FRONTDESK_SETTLE", "FOUNDATION_MANAGE");
+      }
       if (path.contains("/status") || path.contains("complete-cleaning") || path.contains("confirm-payment")) return required("FRONTDESK_SETTLE");
       return required("FOUNDATION_MANAGE");
     }
@@ -100,10 +115,22 @@ public class BusinessPermissionFilter extends OncePerRequestFilter {
     if (path.startsWith("/api/v1/finance/expense-claims")) {
       return path.endsWith("/pay") ? required("EXPENSE_PAY") : required("EXPENSE_REVIEW");
     }
+    // Historical backfills are a separately granted capability. Keep this
+    // route ahead of the generic sales-order rule so a cashier's normal
+    // settlement permission cannot implicitly create backfill orders.
+    if (path.equals("/api/v1/sales-orders/historical-backfill")
+        || path.equals("/api/v1/sales-orders/historical-backfills/mine")) {
+      return required("HISTORICAL_ORDER_CREATE");
+    }
     if (path.matches("^/api/v1/sales-orders/[^/]+/refunds$")) return isRead(method) ? any("FRONTDESK_SETTLE", "ORDER_REFUND") : required("ORDER_REFUND");
     if (path.startsWith("/api/v1/sales-orders")) return required("FRONTDESK_SETTLE");
     if (path.startsWith("/api/v1/refunds")) return required("ORDER_REFUND");
-    if (path.startsWith("/api/v1/payment-methods")) return isRead(method) ? any("FRONTDESK_SETTLE", "FOUNDATION_MANAGE") : required("FOUNDATION_MANAGE");
+    if (path.startsWith("/api/v1/payment-methods")) {
+      if (!isRead(method)) return required("FOUNDATION_MANAGE");
+      return path.equals("/api/v1/payment-methods")
+        ? any("FRONTDESK_SETTLE", "FOUNDATION_MANAGE", "HISTORICAL_ORDER_CREATE")
+        : any("FRONTDESK_SETTLE", "FOUNDATION_MANAGE");
+    }
     if (path.startsWith("/api/v1/print-settings")) return isRead(method) ? any("FRONTDESK_SETTLE", "FOUNDATION_MANAGE") : required("FOUNDATION_MANAGE");
     if (path.startsWith("/api/v1/commissions")) return isRead(method) ? any("REPORT_VIEW", "FOUNDATION_MANAGE") : required("FOUNDATION_MANAGE");
     return null;

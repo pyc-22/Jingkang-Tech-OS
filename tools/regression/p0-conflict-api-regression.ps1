@@ -27,6 +27,8 @@ $apiErrorLog = Join-Path $root '.runtime-logs\p0-conflict-api-regression.err.log
 $jdkSocketDir = 'C:\tmp\jdsock'
 $savedEnvironment = @{}
 
+Add-Type -AssemblyName System.Net.Http
+
 function Invoke-Psql([string]$Db, [string]$Sql) {
   # Windows PowerShell 5 promotes native stderr (including PostgreSQL NOTICE) to a
   # terminating error when the script-wide ErrorActionPreference is Stop.
@@ -43,15 +45,58 @@ function Invoke-Psql([string]$Db, [string]$Sql) {
   return (($nativeOutput | Out-String).Trim())
 }
 
-function Invoke-Api([string]$Method, [string]$Path, [string]$Body = $null, [hashtable]$RequestHeaders = $jsonHeaders) {
-  $parameters = @{ Uri = "$base$Path"; Method = $Method; Headers = $RequestHeaders; SkipHttpErrorCheck = $true }
-  if ($null -ne $Body) { $parameters.Body = $Body }
-  $response = Invoke-WebRequest @parameters
-  [pscustomobject]@{
-    Status = [int]$response.StatusCode
-    Body = [string]$response.Content
-    Headers = $response.Headers
+function Read-WebExceptionResponse($Exception) {
+  $webResponse = $Exception.Response
+  if ($null -eq $webResponse) { throw $Exception }
+  $body = ''
+  $stream = $null
+  $reader = $null
+  try {
+    $stream = $webResponse.GetResponseStream()
+    if ($stream) {
+      $reader = New-Object System.IO.StreamReader($stream)
+      $body = $reader.ReadToEnd()
+    }
+  } finally {
+    if ($reader) { $reader.Dispose() }
+    elseif ($stream) { $stream.Dispose() }
   }
+  $headers = @{}
+  foreach ($key in $webResponse.Headers.AllKeys) { $headers[$key] = $webResponse.Headers[$key] }
+  [pscustomobject]@{
+    Status = [int]$webResponse.StatusCode
+    Body = [string]$body
+    Headers = $headers
+  }
+}
+
+function Invoke-Http([string]$Method, [string]$Uri, [string]$Body = $null, [hashtable]$RequestHeaders = @{}) {
+  $client = New-Object System.Net.Http.HttpClient
+  $request = New-Object System.Net.Http.HttpRequestMessage ([System.Net.Http.HttpMethod]::new($Method), $Uri)
+  foreach ($key in $RequestHeaders.Keys) {
+    [void]$request.Headers.TryAddWithoutValidation([string]$key, [string]$RequestHeaders[$key])
+  }
+  if (-not [string]::IsNullOrEmpty($Body)) {
+    $request.Content = New-Object System.Net.Http.StringContent($Body, [System.Text.Encoding]::UTF8, 'application/json')
+  }
+  try {
+    $response = $client.SendAsync($request).GetAwaiter().GetResult()
+    $headers = @{}
+    foreach ($header in $response.Headers) { $headers[$header.Key] = ($header.Value -join ',') }
+    foreach ($header in $response.Content.Headers) { $headers[$header.Key] = ($header.Value -join ',') }
+    return [pscustomobject]@{
+      Status = [int]$response.StatusCode
+      Body = [string]$response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+      Headers = $headers
+    }
+  } finally {
+    $request.Dispose()
+    $client.Dispose()
+  }
+}
+
+function Invoke-Api([string]$Method, [string]$Path, [string]$Body = $null, [hashtable]$RequestHeaders = $jsonHeaders) {
+  Invoke-Http $Method "$base$Path" $Body $RequestHeaders
 }
 
 function Assert-Status($Response, [int[]]$Expected, [string]$Label) {
@@ -77,8 +122,24 @@ function Start-ParallelRequest([string]$Name, [string]$Path, [string]$Body, [str
     }
     if ($OperationId) { $headers['X-Offline-Operation-Id'] = $OperationId }
     while ([datetime]::UtcNow -lt $StartAt) { Start-Sleep -Milliseconds 10 }
-    $response = Invoke-WebRequest -Uri "$Base$Path" -Method POST -Headers $headers -Body $Body -SkipHttpErrorCheck
-    [pscustomobject]@{ Name = $MyInvocation.MyCommand.Name; Status = [int]$response.StatusCode; Body = [string]$response.Content }
+    Add-Type -AssemblyName System.Net.Http
+    $client = New-Object System.Net.Http.HttpClient
+    $request = New-Object System.Net.Http.HttpRequestMessage ([System.Net.Http.HttpMethod]::Post, "$Base$Path")
+    foreach ($key in $headers.Keys) {
+      [void]$request.Headers.TryAddWithoutValidation([string]$key, [string]$headers[$key])
+    }
+    $request.Content = New-Object System.Net.Http.StringContent($Body, [System.Text.Encoding]::UTF8, 'application/json')
+    try {
+      $response = $client.SendAsync($request).GetAwaiter().GetResult()
+      [pscustomobject]@{
+        Name = $MyInvocation.MyCommand.Name
+        Status = [int]$response.StatusCode
+        Body = [string]$response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+      }
+    } finally {
+      $request.Dispose()
+      $client.Dispose()
+    }
   } -ArgumentList $base, $Path, $Body, $store, $token, $OperationId, $StartAt
 }
 
@@ -137,10 +198,14 @@ try {
   foreach ($attempt in 1..60) {
     Start-Sleep -Milliseconds 500
     try {
-      $health = Invoke-WebRequest -Uri "$base/api/health" -SkipHttpErrorCheck
-      if ($health.StatusCode -eq 200) { $ready = $true; break }
-    } catch {}
-    if ($apiProcess.HasExited) { break }
+      $health = Invoke-Http GET "$base/api/health"
+      if ($health.Status -eq 200) { $ready = $true; break }
+    } catch {
+      if ($attempt -eq 60) { Write-Host ("Health probe error: " + $_.Exception.Message) }
+    }
+    # Some Windows JDK launchers report the wrapper process as exited while the
+    # child JVM is still binding the port. Keep probing for the full window;
+    # the log and listener check below determine a genuine startup failure.
   }
   if (-not $ready) { throw "API did not become healthy on $base. See $apiLog" }
   Write-Host "API ready: $base"
@@ -299,6 +364,12 @@ try {
   if ($apiProcess -and -not $KeepApi -and -not $apiProcess.HasExited) {
     Stop-Process -Id $apiProcess.Id -Force
     $apiProcess.WaitForExit()
+  }
+  if (-not $KeepApi) {
+    try {
+      $listener = Get-NetTCPConnection -LocalPort $ApiPort -State Listen -ErrorAction SilentlyContinue
+      if ($listener) { Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue }
+    } catch {}
   }
   foreach ($name in $savedEnvironment.Keys) {
     [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process')

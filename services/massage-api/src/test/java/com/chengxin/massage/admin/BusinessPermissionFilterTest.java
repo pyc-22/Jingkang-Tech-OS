@@ -19,7 +19,7 @@ class BusinessPermissionFilterTest {
   @Test
   void mapsReadAndWriteOperationsToDifferentPermissions() {
     assertThat(filter.requiredPermissionsFor("/api/v1/foundation/technicians", "GET"))
-      .containsExactly("FRONTDESK_SETTLE", "FOUNDATION_MANAGE");
+      .containsExactly("FRONTDESK_SETTLE", "FOUNDATION_MANAGE", "HISTORICAL_ORDER_CREATE");
     assertThat(filter.requiredPermissionsFor("/api/v1/foundation/technicians", "POST"))
       .containsExactly("FOUNDATION_MANAGE");
     assertThat(filter.requiredPermissionsFor("/api/v1/employees", "GET"))

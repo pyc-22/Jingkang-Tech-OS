@@ -42,6 +42,7 @@
     const path = new URL(url, location.href).pathname;
     return path.startsWith('/api/v1/service-sessions') || path.startsWith('/api/v1/service-reservations')
       || path.startsWith('/api/v1/service-room-transfers') || /^\/api\/v1\/rooms\/[^/]+\/(status|complete-cleaning|confirm-payment)$/.test(path)
+      || path === '/api/v1/sales-orders/historical-backfill'
       || /^\/api\/v1\/mobile\/technician\/(dispatch-notification\/(confirm|reject)|start-service|clock-out|extensions|service-room-transfers)$/.test(path);
   };
   const operationLabel = operation => {
@@ -111,6 +112,7 @@
       || path === '/api/v1/service-sessions/clock-in'
       || /^\/api\/v1\/members\/[^/]+\/recharges$/.test(path)
       || path === '/api/v1/member-wallet/recharge'
+      || path === '/api/v1/sales-orders/historical-backfill'
       || /^\/api\/v1\/rooms\/[^/]+\/(status|complete-cleaning|confirm-payment)$/.test(path)
       || /^\/api\/v1\/mobile\/technician\/(start-service|clock-out|extensions)$/.test(path);
   };

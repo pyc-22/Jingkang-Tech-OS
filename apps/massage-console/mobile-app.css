@@ -51,6 +51,49 @@ body { background: #dfe7e4; }
 #dashboard-screen { display: grid; gap: 14px; }
 #dashboard-screen.hidden { display: none; }
 .mobile-page-hidden { display: none !important; }
+.mobile-attendance-gate {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 15px;
+  border: 1px solid #f0d8b8;
+  border-radius: 8px;
+  background: #fff8ed;
+}
+.mobile-attendance-gate.hidden, .mobile-attendance-status.hidden { display: none; }
+.attendance-gate-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 7px;
+  color: #9a5a20;
+  background: #ffe9c9;
+  font-size: 11px;
+  font-weight: 700;
+}
+.attendance-gate-copy { min-width: 0; }
+.attendance-gate-copy h2 { color: #734318; font-size: 15px; }
+.attendance-gate-copy p { margin-top: 4px; color: #98704c; font-size: 11px; line-height: 1.45; }
+.attendance-gate-copy small { display: block; margin-top: 5px; color: #b08a65; font-size: 10px; }
+.mobile-attendance-gate .mobile-action { grid-column: 1 / -1; min-height: 42px; margin-top: 1px; border-radius: 6px; background: #c2772e; box-shadow: none; }
+.mobile-attendance-gate .mobile-action:disabled { opacity: .6; cursor: not-allowed; }
+.mobile-attendance-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 7px 10px;
+  border: 1px solid #cae8db;
+  border-radius: 6px;
+  color: #236b55;
+  background: #effaf5;
+  font-size: 11px;
+}
+.mobile-attendance-status time { margin-left: auto; color: #6b8e82; font-size: 10px; }
+.attendance-status-dot { width: 7px; height: 7px; border-radius: 50%; background: #2ca66f; }
+.mobile-attendance-locked { display: none !important; }
 .current-service, .leave-section, .performance-section, .recent-section {
   margin: 0;
   padding: 17px;

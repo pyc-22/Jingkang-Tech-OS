@@ -14,9 +14,9 @@ test('print item details use stable narrow and wide layouts', () => {
   assert.match(app, /col-amount\{width:19%;text-align:right;white-space:nowrap/);
   assert.match(app, /show\('showLineAmount'\) && \(!show\('showUnitPrice'\) \|\| narrowPaper\)/);
   assert.doesNotMatch(app, /printBrowserReceiptByOptions[\s\S]*<pre>\$\{receiptEscape\(text\)\}/);
-  assert.match(html, /app\.js\?v=20260911-p0-conflict-fix-v1/);
-  assert.match(html, /styles\.css\?v=20260905-daily-customer-count-override-v1/);
-  assert.match(html, /frontdesk-card-settlement\.css\?v=20260828-settlement-print-v1/);
+  assert.match(html, /app\.js\?v=20260912-full-optimization-v1/);
+  assert.match(html, /styles\.css\?v=20260912-full-optimization-v1/);
+  assert.match(html, /frontdesk-card-settlement\.css\?v=20260912-full-optimization-v1/);
 });
 
 test('print settings expose clock type and keep it enabled by default', () => {

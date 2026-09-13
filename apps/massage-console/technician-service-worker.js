@@ -1,16 +1,18 @@
-const CACHE_NAME = 'jingkang-technician-20260911-p0-conflict-fix-v1';
+const CACHE_NAME = 'jingkang-technician-20260912-full-optimization-v1';
+const ASSET_VERSION = '20260912-full-optimization-v1';
 const APP_SHELL = [
-  './mobile.html',
-  './mobile.js',
-  './mobile.css',
-  './mobile-clock.css',
-  './mobile-extension.css',
-  './mobile-dispatch-alert.css',
-  './mobile-auth.css',
-  './mobile-app.css',
-  './offline-sync.css',
-  './offline-sync.js',
-  './login-portal.css',
+  `./mobile.html?v=${ASSET_VERSION}`,
+  `./technician.webmanifest?v=${ASSET_VERSION}`,
+  `./mobile.js?v=${ASSET_VERSION}`,
+  `./mobile.css?v=${ASSET_VERSION}`,
+  `./mobile-clock.css?v=${ASSET_VERSION}`,
+  `./mobile-extension.css?v=${ASSET_VERSION}`,
+  `./mobile-dispatch-alert.css?v=${ASSET_VERSION}`,
+  `./mobile-auth.css?v=${ASSET_VERSION}`,
+  `./mobile-app.css?v=${ASSET_VERSION}`,
+  `./offline-sync.css?v=${ASSET_VERSION}`,
+  `./offline-sync.js?v=${ASSET_VERSION}`,
+  `./login-portal.css?v=${ASSET_VERSION}`,
   './assets/technician-dispatch-alert.mp3',
   './assets/service-reminder-ten-minutes.mp3',
   './assets/service-reminder-five-minutes.mp3',
@@ -40,7 +42,7 @@ self.addEventListener('fetch', event => {
     const copy = response.clone();
     caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
     return response;
-  }).catch(() => caches.match(request)));
+  }).catch(() => caches.match(request, { ignoreSearch: true })));
 });
 
 self.addEventListener('push', event => {

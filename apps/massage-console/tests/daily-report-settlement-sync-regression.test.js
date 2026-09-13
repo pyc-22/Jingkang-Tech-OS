@@ -39,7 +39,7 @@ test('daily report payment method fields are escaped and read-only', () => {
   assert.match(daily, /readonly aria-label="当日\$\{name\}"/);
   assert.match(daily, /channel\.salesCents/);
   assert.match(daily, /channel\.refundCents/);
-  assert.match(index, /daily-report\.css\?v=20260907-daily-report-unification-v1/);
+  assert.match(index, /daily-report\.css\?v=20260912-full-optimization-v1/);
 });
 
 test('daily customer count exposes an independent correction and restore workflow', () => {
@@ -88,7 +88,7 @@ test('daily cash flow label and browser cache version use the current report wor
   assert.match(controller, /"dailyCashFlowCents"\.equals\(base\.fieldCode\(\)\)[\s\S]*"当日净实收"\.equals\(configured\.fieldLabel\(\)\)/);
   assert.match(daily, /<label>当日现金流（元）<input name="dailyCashFlowCents"/);
   assert.doesNotMatch(daily, /当日净实收/);
-  assert.match(index, /daily-report\.js\?v=20260910-manager-technician-refactor-v1/);
+  assert.match(index, /daily-report\.js\?v=20260912-full-optimization-v1/);
 });
 
 test('daily report exposes card-opening counts and refund occurrence dates', () => {
@@ -97,7 +97,7 @@ test('daily report exposes card-opening counts and refund occurrence dates', () 
   assert.match(daily, /reportData\.unifiedMetrics\?\.refundOccurrences/);
   assert.match(daily, /退款完成时间/);
   assert.match(daily, /原订单营业日：/);
-  assert.match(index, /daily-report\.js\?v=20260910-manager-technician-refactor-v1/);
+  assert.match(index, /daily-report\.js\?v=20260912-full-optimization-v1/);
 });
 
 test('daily payment totals use settlement business day while refunds keep the original order business day', () => {

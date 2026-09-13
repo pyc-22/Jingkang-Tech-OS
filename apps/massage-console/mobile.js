@@ -1,4 +1,5 @@
 const mobileApi = '/api/v1/mobile';
+const mobileAttendanceApi = '/api/v1/technicians';
 const mobileTokenKey = 'chengxin-mobile-access-token';
 const mobileMoney = (cents) => `¥${(Number(cents || 0) / 100).toFixed(2)}`;
 const mobileSignedMoney = (cents) => `${Number(cents||0)<0?'-':''}${mobileMoney(Math.abs(Number(cents||0)))}`;
@@ -33,6 +34,7 @@ let mobileDispatchDeadlineTimer=null;
 let mobileTransferNoticeKey=null;
 let mobileServiceReminderTimer=null;
 let mobileServiceReminderSessionKey=null;
+let mobileAttendanceBlocked=false;
 const mobileServiceReminderAudioSources={
   'ten-minutes':'./assets/service-reminder-ten-minutes.mp3',
   'five-minutes':'./assets/service-reminder-five-minutes.mp3',
@@ -44,6 +46,7 @@ const mobileLocalDate=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shangh
 
 function clearMobileSession() {
   localStorage.removeItem(mobileTokenKey);
+  mobileAttendanceBlocked=false;
   stopMobileDispatchAlert();
   document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close());
 }
@@ -224,7 +227,10 @@ async function enableMobileDispatchSound() {
 }
 
 async function pollMobileDispatchNotification() {
-  if (!localStorage.getItem(mobileTokenKey)) return;
+  if (!localStorage.getItem(mobileTokenKey) || mobileAttendanceBlocked) {
+    stopMobileDispatchAlert();
+    return;
+  }
   try {
     const response=await fetch(`${mobileApi}/technician/dispatch-notification`,{headers:mobileAuthHeaders()});
     if(response.status===401){clearMobileSession();showLogin('登录已失效，请重新登录');return;}
@@ -244,6 +250,55 @@ async function pollMobileDispatchNotification() {
       }
     }
   } catch { /* Keep the current alert active until a successful sync clears it. */ }
+}
+
+function renderMobileAttendance(dashboard) {
+  const gate=document.querySelector('#mobile-attendance-gate');
+  const status=document.querySelector('#mobile-attendance-status');
+  const clockInButton=document.querySelector('#mobile-clock-in');
+  const clockInAt=document.querySelector('#mobile-clock-in-at');
+  const date=document.querySelector('#mobile-attendance-date');
+  const statusText=status?.querySelector('span:nth-of-type(2)');
+  const clockedIn=dashboard.clockedIn===true;
+  const legacyCompatible=dashboard.clockInLegacyCompatible===true;
+  const reason=dashboard.clockInReason||'AVAILABLE';
+  mobileAttendanceBlocked=!clockedIn && !legacyCompatible;
+  if(date)date.textContent=`${mobileLocalDate()} 营业日`;
+  if(clockInAt)clockInAt.textContent=dashboard.clockInAt ? `上班时间 ${mobileTime(dashboard.clockInAt)}` : '';
+  if(statusText)statusText.textContent=clockedIn ? '今日已打卡' : legacyCompatible ? '历史兼容模式' : '今日未打卡';
+  if(status)status.classList.toggle('hidden',mobileAttendanceBlocked && !legacyCompatible);
+  if(gate){
+    gate.classList.toggle('hidden',!mobileAttendanceBlocked);
+    const title=gate.querySelector('h2');
+    const copy=gate.querySelector('p');
+    const clockOut=reason==='CLOCKED_OUT';
+    if(title)title.textContent=clockOut?'今日已下班':'请先完成今日打卡';
+    if(copy)copy.textContent=clockOut?'今日打卡已结束，请明日再来':'打卡后才能接收派单和开始服务';
+    if(clockInButton){
+      clockInButton.disabled=clockOut;
+      clockInButton.textContent=clockOut?'今日已下班':'上班打卡';
+    }
+  }
+  ['#current-service','#mobile-pending-events','#mobile-reservation-section'].forEach(selector=>{
+    const section=document.querySelector(selector);
+    if(section)section.classList.toggle('mobile-attendance-locked',mobileAttendanceBlocked);
+  });
+  if(mobileAttendanceBlocked)stopMobileDispatchAlert();
+  return mobileAttendanceBlocked;
+}
+
+async function mobileClockIn() {
+  const button=document.querySelector('#mobile-clock-in');
+  if(!button || button.disabled)return;
+  button.disabled=true;
+  try {
+    const response=await fetch(`${mobileAttendanceApi}/clock-in`,{method:'POST',headers:{...mobileAuthHeaders(),'Content-Type':'application/json'},body:JSON.stringify({})});
+    if(response.status===401){clearMobileSession();showLogin('登录已失效，请重新登录');return;}
+    if(!response.ok){mobileToast(response.status===409?'今日已下班或打卡状态已变化，请刷新页面':'上班打卡失败，请稍后重试');return;}
+    await loadMobileDashboard();
+    mobileToast('已完成今日上班打卡');
+  } catch { mobileToast('上班打卡失败，请检查网络后重试'); }
+  finally { button.disabled=false; }
 }
 
 function showDashboard() {
@@ -528,6 +583,7 @@ async function loadMobileDashboard() {
     document.querySelector('#today-amount').textContent = mobileMoney(dashboard.summary.todayAmountCents);
     document.querySelector('#month-count').textContent = dashboard.summary.monthCompletedCount;
     document.querySelector('#month-amount').textContent = mobileMoney(dashboard.summary.monthAmountCents);
+    renderMobileAttendance(dashboard);
     mobileActiveSession=dashboard.activeSession;
     await loadMobileExtensionIntents();
     await loadMobileRoomTransferStatus(dashboard.activeSession);
@@ -558,6 +614,7 @@ document.querySelector('#logout-button').addEventListener('click', async () => {
   try { await fetch(`${mobileApi}/auth/logout`, { method:'POST', headers:mobileAuthHeaders() }); } finally { clearMobileSession(); showLogin('已退出登录'); }
 });
 document.querySelector('#enable-dispatch-sound').addEventListener('click',enableMobileDispatchSound);
+document.querySelector('#mobile-clock-in').addEventListener('click',mobileClockIn);
 document.querySelector('#reject-mobile-dispatch').addEventListener('click',openMobileRejectDispatchDialog);
 document.querySelector('#request-mobile-transfer').addEventListener('click',openMobileTransferDialog);
 document.querySelector('#close-mobile-transfer').addEventListener('click',()=>document.querySelector('#mobile-transfer-dialog').close());
@@ -654,7 +711,7 @@ selectMobilePage('current-service');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./technician-service-worker.js?v=20260911-p0-conflict-fix-v1').catch(() => {
+    navigator.serviceWorker.register('./technician-service-worker.js?v=20260912-full-optimization-v1').catch(() => {
       // The technician page remains fully available when offline caching is unavailable.
     });
   });

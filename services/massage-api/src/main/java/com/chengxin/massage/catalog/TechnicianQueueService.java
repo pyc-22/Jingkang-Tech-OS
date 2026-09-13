@@ -207,20 +207,27 @@ public class TechnicianQueueService {
           and status not in ('CANCELLED','REJECTED','EXPIRED')
         group by technician_id
       ) previous on previous.technician_id=technician.id
+      left join technician_clock_in attendance
+        on attendance.technician_id=technician.id
+       and attendance.store_id=technician.store_id
+       and attendance.business_date=:date
       where technician.store_id=:store and technician.active=true and technician.queue_enabled=true
+        and (attendance.technician_id is null
+          or (attendance.clock_in_time is not null and attendance.clock_out_time is null))
       order by coalesce(previous.call_count,0),coalesce(previous.queue_count,0),technician.queue_order,technician.code
       """)
-      .param("store", storeId).param("previousDate", previousDate).query(TechnicianSeed.class).list();
+      .param("store", storeId).param("previousDate", previousDate).param("date", businessDate)
+      .query(TechnicianSeed.class).list();
   }
 
   private List<QueuePosition> positions(QueueDay day) {
-    return jdbc.sql("select position.technician_id,technician.code technician_code,technician.name technician_name,position.queue_position,position.default_queue_order from technician_queue_position position join technician on technician.id=position.technician_id where position.queue_day_id=:day and technician.store_id=:store and technician.active=true and technician.queue_enabled=true order by position.queue_position,technician.code")
-      .param("day", day.id()).param("store", day.storeId()).query(QueuePosition.class).list();
+    return jdbc.sql("select position.technician_id,technician.code technician_code,technician.name technician_name,position.queue_position,position.default_queue_order from technician_queue_position position join technician on technician.id=position.technician_id left join technician_clock_in attendance on attendance.technician_id=technician.id and attendance.store_id=technician.store_id and attendance.business_date=:date where position.queue_day_id=:day and technician.store_id=:store and technician.active=true and technician.queue_enabled=true and (attendance.technician_id is null or (attendance.clock_in_time is not null and attendance.clock_out_time is null)) order by position.queue_position,technician.code")
+      .param("day", day.id()).param("store", day.storeId()).param("date", day.businessDate()).query(QueuePosition.class).list();
   }
 
   private List<StoredQueuePosition> storedPositions(QueueDay day) {
-    return jdbc.sql("select position.technician_id,position.queue_position,technician.active technician_active,technician.queue_enabled queue_enabled from technician_queue_position position join technician on technician.id=position.technician_id where position.queue_day_id=:day and technician.store_id=:store order by position.queue_position,technician.code")
-      .param("day", day.id()).param("store", day.storeId()).query(StoredQueuePosition.class).list();
+    return jdbc.sql("select position.technician_id,position.queue_position,technician.active technician_active,technician.queue_enabled queue_enabled,(attendance.technician_id is null or (attendance.clock_in_time is not null and attendance.clock_out_time is null)) attendance_eligible from technician_queue_position position join technician on technician.id=position.technician_id left join technician_clock_in attendance on attendance.technician_id=technician.id and attendance.store_id=technician.store_id and attendance.business_date=:date where position.queue_day_id=:day and technician.store_id=:store order by position.queue_position,technician.code")
+      .param("day", day.id()).param("store", day.storeId()).param("date", day.businessDate()).query(StoredQueuePosition.class).list();
   }
 
   private void insertPosition(QueueDay day, TechnicianSeed technician, int position) {
@@ -241,9 +248,10 @@ public class TechnicianQueueService {
   record TechnicianSeed(UUID id, String code, String name, Integer queueOrder, Integer callCount, Integer queueCount) {}
   public record QueueOrder(UUID technicianId) {}
   public record QueuePosition(UUID technicianId, String technicianCode, String technicianName, Integer queuePosition, Integer defaultQueueOrder) {}
-  private record StoredQueuePosition(UUID technicianId, Integer queuePosition, boolean technicianActive, boolean queueEnabled) {
+  private record StoredQueuePosition(UUID technicianId, Integer queuePosition, boolean technicianActive, boolean queueEnabled,
+                                     boolean attendanceEligible) {
     boolean eligible() {
-      return technicianActive && queueEnabled;
+      return technicianActive && queueEnabled && attendanceEligible;
     }
   }
   public record QueueSnapshot(LocalDate businessDate, List<QueuePosition> technicians) {}

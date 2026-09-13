@@ -165,6 +165,11 @@ h1,h2,p { margin:0; } h1 { margin-top:5px; font-size:25px; line-height:1.15; } h
 #manager-clock-dialog { width:min(560px,calc(100vw - 20px)); max-width:calc(100vw - 20px); max-height:calc(100dvh - 20px); padding:0; border:0; border-radius:7px; background:#fff; box-shadow:0 18px 60px rgba(15,46,42,.24); }
 #manager-clock-dialog::backdrop { background:rgba(14,39,34,.38); }
 .manager-clock-dialog-card { display:grid; gap:12px; padding:16px; }
+.manager-backfill-payment { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.manager-backfill-payment-row { display:grid; grid-template-columns:1fr 1fr auto; gap:10px; align-items:end; grid-column:1 / -1; }
+.manager-backfill-payment > #manager-backfill-add-payment { justify-self:start; }
+.manager-backfill-result { margin-top:10px; padding:9px 11px; border:1px solid #b9dfd4; border-radius:5px; color:#14665b; background:#eefaf6; font-size:12px; }
+@media (max-width:560px) { .manager-backfill-payment { grid-template-columns:1fr; } .manager-backfill-payment-row { grid-template-columns:1fr; } }
 .manager-clock-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
 .manager-clock-grid label,.manager-clock-picker { display:grid; gap:5px; color:#566863; font-size:11px; font-weight:700; }
 .manager-clock-grid label select,.manager-clock-grid label input { width:100%; min-height:35px; padding:0 8px; border:1px solid #ccdcd5; border-radius:4px; color:var(--ink); background:#fff; font-size:11px; }

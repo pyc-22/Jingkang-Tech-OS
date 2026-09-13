@@ -4,21 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>靖康科技运营</title>
-    <link rel="stylesheet" href="./styles.css?v=20260905-daily-customer-count-override-v1" />
-    <link rel="stylesheet" href="./technician-accounts.css" />
-    <link rel="stylesheet" href="./frontdesk-cleaning.css" />
-    <link rel="stylesheet" href="./room-payment.css" />
-    <link rel="stylesheet" href="./frontdesk-pending-settlement.css" />
-    <link rel="stylesheet" href="./service-management.css" />
-    <link rel="stylesheet" href="./member-center.css" />
-    <link rel="stylesheet" href="./login-portal.css" />
-    <link rel="stylesheet" href="./daily-report.css?v=20260907-daily-report-unification-v1" />
-    <link rel="stylesheet" href="./monthly-targets.css" />
-    <link rel="stylesheet" href="./offline-sync.css" />
-    <link rel="stylesheet" href="./frontdesk-card-settlement.css?v=20260828-settlement-print-v1" />
-    <link rel="stylesheet" href="./audit-center.css" />
-    <link rel="stylesheet" href="./security-alert.css" />
-    <link rel="stylesheet" href="./finance-center.css?v=20260829-expense-detail-v1" />
+    <link rel="stylesheet" href="./styles.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./technician-accounts.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./frontdesk-cleaning.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./room-payment.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./frontdesk-pending-settlement.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./service-management.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./member-center.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./login-portal.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./daily-report.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./monthly-targets.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./offline-sync.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./frontdesk-card-settlement.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./audit-center.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./security-alert.css?v=20260912-full-optimization-v1" />
+    <link rel="stylesheet" href="./finance-center.css?v=20260912-full-optimization-v1" />
   </head>
   <body>
     <div class="app-shell">
@@ -53,17 +53,23 @@
           </details>
         </nav>
         <div class="sidebar-footer">
-          <div class="operator"><b>刘晓雯</b><small>前台主管</small></div>
-          <button class="icon-button" title="退出登录" aria-label="退出登录">↪</button>
+          <button class="operator operator-menu-trigger" id="operator-menu-trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+            <b id="current-operator-name">当前账号</b><small id="current-operator-role">正在加载</small>
+          </button>
+          <button class="icon-button" id="logout-button" type="button" title="退出登录" aria-label="退出登录">↪</button>
+          <div class="operator-menu hidden" id="operator-menu" role="menu">
+            <button type="button" data-account-action="profile">账号信息</button>
+            <button type="button" data-account-action="password">修改密码</button>
+            <button type="button" data-account-action="store">切换门店</button>
+            <button type="button" data-account-action="logout">退出登录</button>
+          </div>
         </div>
       </aside>
-
       <main class="workspace">
         <header class="topbar">
           <div class="store-select"><b>郑州中原万达店</b><span>⌄</span></div>
           <div class="topbar-actions"><span class="business-date">2026 年 7 月 21 日 · 周二</span><button class="icon-button" title="消息通知" aria-label="消息通知">●</button></div>
         </header>
-
         <section class="view frontdesk-view" id="frontdesk-view">
           <div class="page-heading">
             <div><p class="eyebrow">当班运营</p><h1>前台收银</h1></div>
@@ -79,7 +85,7 @@
 
             <section class="panel technician-panel">
               <div class="panel-heading"><div><h2>技师队列</h2><p>排钟服务开始后自动置于队尾</p></div><button class="text-button" id="sort-techs">刷新队列</button></div>
-              <div class="queue-summary"><span>在岗 <b id="on-duty-count">8</b></span><span>可派 <b id="available-tech-count">5</b></span><span>服务中 <b id="serving-tech-count">3</b></span></div>
+              <div class="queue-summary"><span>已打卡 <b id="clocked-in-tech-count">0</b> 人 / 共 <b id="total-tech-count">0</b> 人</span><span>在岗 <b id="on-duty-count">0</b></span><span>可派 <b id="available-tech-count">0</b></span><span>服务中 <b id="serving-tech-count">0</b></span></div>
               <div class="technician-list" id="technician-list"></div>
             </section>
 
@@ -202,11 +208,11 @@
     <dialog id="finance-payment-dialog"><form id="finance-payment-form" class="dialog-card compact"><div class="dialog-heading"><div><p class="eyebrow">报销付款</p><h2>确认付款</h2></div><button class="icon-button" type="button" id="close-finance-payment" aria-label="关闭">×</button></div><div id="finance-payment-detail" class="finance-review-detail"></div><div class="form-grid"><label>付款金额（元）<input name="amount" id="finance-payment-amount" type="number" min="0.01" step="0.01" required /></label><label>付款日期<input name="paymentDate" id="finance-payment-date" type="date" required /></label><label>付款方式<input name="paymentMethod" value="银行转账" maxlength="50" required /></label><label>付款凭证号<input name="paymentReference" maxlength="160" placeholder="可选" /></label><label class="form-full">付款备注<textarea name="note" rows="2" maxlength="2000" placeholder="可选"></textarea></label></div><div class="dialog-actions"><button class="button secondary" type="button" id="cancel-finance-payment">取消</button><button class="button primary" type="submit">确认付款</button></div></form></dialog>
     <dialog id="member-edit-dialog"><form id="member-edit-form" class="dialog-card compact"><div class="dialog-heading"><div><p class="eyebrow">会员档案</p><h2>编辑会员资料</h2></div><button class="icon-button" type="button" id="close-member-edit" aria-label="关闭">×</button></div><div class="form-grid"><label>会员姓名<input name="name" maxlength="80" required /></label><label>手机号<input name="phone" maxlength="30" required /></label></div><div class="dialog-actions"><button class="button secondary" type="button" id="cancel-member-edit">取消</button><button class="button primary" type="submit">保存资料</button></div></form></dialog>
     <div class="toast hidden" id="toast"></div>
-    <script src="./app.js?v=20260911-p0-conflict-fix-v1"></script>
-    <script src="./daily-report.js?v=20260910-manager-technician-refactor-v1"></script>
-    <script src="./monthly-targets.js"></script>
-    <script src="./offline-sync.js?v=20260911-p0-conflict-fix-v1"></script>
-    <script src="./audit-center.js"></script>
-    <script src="./security-alert.js"></script>
+    <script src="./app.js?v=20260912-full-optimization-v1"></script>
+    <script src="./daily-report.js?v=20260912-full-optimization-v1"></script>
+    <script src="./monthly-targets.js?v=20260912-full-optimization-v1"></script>
+    <script src="./offline-sync.js?v=20260912-full-optimization-v1"></script>
+    <script src="./audit-center.js?v=20260912-full-optimization-v1"></script>
+    <script src="./security-alert.js?v=20260912-full-optimization-v1"></script>
   </body>
 </html>

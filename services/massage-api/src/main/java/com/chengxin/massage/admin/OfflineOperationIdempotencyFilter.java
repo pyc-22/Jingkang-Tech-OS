@@ -112,6 +112,7 @@ public class OfflineOperationIdempotencyFilter extends OncePerRequestFilter {
       || path.startsWith("/api/v1/service-room-transfers") || path.matches("^/api/v1/rooms/[^/]+/(status|complete-cleaning|confirm-payment)$")
       || path.startsWith("/api/v1/mobile/technician/")
       || path.matches("^/api/v1/sales-orders/(settle|[^/]+/(void|refunds))$")
+      || path.equals("/api/v1/sales-orders/historical-backfill")
       || path.startsWith("/api/v1/refunds")
       || path.matches("^/api/v1/members/[^/]+/recharges$")
       || path.equals("/api/v1/member-wallet/recharge");

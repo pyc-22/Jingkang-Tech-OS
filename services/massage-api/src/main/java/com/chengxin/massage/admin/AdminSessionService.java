@@ -20,6 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class AdminSessionService {
   private static final UUID TENANT_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
+  private static final String HISTORICAL_ORDER_CREATE = "HISTORICAL_ORDER_CREATE";
   private static final SecureRandom RANDOM = new SecureRandom();
   private final JdbcClient jdbc;
 
@@ -46,8 +47,16 @@ public class AdminSessionService {
   @Transactional
   public boolean hasPermission(String authorization, String permission) {
     UUID user = requireUserId(authorization);
-    return jdbc.sql("select exists(select 1 from user_role ur join role r on r.id=ur.role_id where ur.user_id=:user and r.code='TENANT_ADMIN') or exists(select 1 from user_role ur join role_permission rp on rp.role_id=ur.role_id join permission p on p.id=rp.permission_id where ur.user_id=:user and p.code=:permission)")
-      .param("user", user).param("permission", permission).query(Boolean.class).single();
+    return jdbc.sql("""
+      select exists(select 1 from user_role ur join role r on r.id=ur.role_id where ur.user_id=:user and r.code='TENANT_ADMIN')
+        or exists(select 1 from user_role ur join role_permission rp on rp.role_id=ur.role_id join permission p on p.id=rp.permission_id where ur.user_id=:user and p.code=:permission)
+        or (:permission=:historicalPermission and exists(
+          select 1 from store_manager_backfill_permission grant_row
+          join user_role manager_role on manager_role.user_id=grant_row.manager_id
+          join role manager_role_def on manager_role_def.id=manager_role.role_id and manager_role_def.code='STORE_MANAGER'
+          where grant_row.tenant_id=:tenant and grant_row.manager_id=:user and grant_row.is_active=true))
+      """)
+      .param("user", user).param("permission", permission).param("historicalPermission", HISTORICAL_ORDER_CREATE).param("tenant", TENANT_ID).query(Boolean.class).single();
   }
 
   public UUID requireAuthenticatedUserId(String authorization) {
@@ -81,9 +90,9 @@ public class AdminSessionService {
   @Transactional
   public AdminSession session(String authorization) {
     UUID user = requireUserId(authorization);
-    String displayName = jdbc.sql("select display_name from app_user where id=:user and tenant_id=:tenant")
-      .param("user", user).param("tenant", TENANT_ID).query(String.class).single();
-    return new AdminSession(displayName, roleCodes(user), storeIds(user), permissionCodes(user));
+    UserProfile profile = jdbc.sql("select login_name,display_name from app_user where id=:user and tenant_id=:tenant")
+      .param("user", user).param("tenant", TENANT_ID).query(UserProfile.class).single();
+    return new AdminSession(profile.loginName(), profile.displayName(), roleCodes(user), storeIds(user), permissionCodes(user));
   }
 
   @Transactional
@@ -107,6 +116,26 @@ public class AdminSessionService {
   @Transactional
   void logout(String authorization) { if (authorization == null || !authorization.startsWith("Bearer ")) return; jdbc.sql("update user_login_session set revoked_at=now() where token_hash=:hash and revoked_at is null").param("hash", tokenHash(authorization.substring(7))).update(); }
 
+  @Transactional
+  public void changePassword(String authorization, String currentPassword, String newPassword) {
+    UUID user = requireUserId(authorization);
+    String encoded = jdbc.sql("select password_hash from app_user where id=:user and tenant_id=:tenant and active=true")
+      .param("user", user).param("tenant", TENANT_ID).query(String.class).optional().orElseThrow(this::unauthorized);
+    if (!matches(currentPassword, encoded)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前密码不正确");
+    jdbc.sql("update app_user set password_hash=:password,updated_at=now(),version=version+1 where id=:user and tenant_id=:tenant")
+      .param("password", encodePassword(newPassword)).param("user", user).param("tenant", TENANT_ID).update();
+  }
+
+  public String encodePassword(String password) {
+    byte[] salt = new byte[16];
+    RANDOM.nextBytes(salt);
+    try {
+      byte[] hash = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+        .generateSecret(new PBEKeySpec(password.toCharArray(), salt, 310000, 256)).getEncoded();
+      return "PBKDF2$310000$" + Base64.getUrlEncoder().withoutPadding().encodeToString(salt) + "$" + Base64.getUrlEncoder().withoutPadding().encodeToString(hash);
+    } catch (Exception exception) { throw new IllegalStateException(exception); }
+  }
+
   private UUID requireUserId(String authorization) {
     if (authorization == null || !authorization.startsWith("Bearer ")) throw unauthorized();
     String hash = tokenHash(authorization.substring(7));
@@ -121,8 +150,14 @@ public class AdminSessionService {
     if (isTenantAdmin(user)) {
       return jdbc.sql("select code from permission order by code").query(String.class).list();
     }
-    return jdbc.sql("select distinct p.code from user_role ur join role_permission rp on rp.role_id=ur.role_id join permission p on p.id=rp.permission_id where ur.user_id=:user order by p.code")
+    List<String> permissions = jdbc.sql("select distinct p.code from user_role ur join role_permission rp on rp.role_id=ur.role_id join permission p on p.id=rp.permission_id where ur.user_id=:user order by p.code")
       .param("user", user).query(String.class).list();
+    if (jdbc.sql("select exists(select 1 from store_manager_backfill_permission where tenant_id=:tenant and manager_id=:user and is_active=true)")
+        .param("tenant", TENANT_ID).param("user", user).query(Boolean.class).single()) {
+      permissions = new java.util.ArrayList<>(permissions);
+      permissions.add(HISTORICAL_ORDER_CREATE);
+    }
+    return permissions;
   }
   private boolean isTenantAdmin(UUID user) { return jdbc.sql("select exists(select 1 from user_role ur join role r on r.id=ur.role_id where ur.user_id=:user and r.code='TENANT_ADMIN')").param("user", user).query(Boolean.class).single(); }
   private boolean matches(String password, String encoded) { String[] parts=encoded.split("\\$",4); if(parts.length!=4||!"PBKDF2".equals(parts[0]))return false; try{int iterations=Integer.parseInt(parts[1]);byte[] salt=Base64.getUrlDecoder().decode(parts[2]);byte[] expected=Base64.getUrlDecoder().decode(parts[3]);byte[] actual=SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(new PBEKeySpec(password.toCharArray(),salt,iterations,expected.length*8)).getEncoded();return MessageDigest.isEqual(actual,expected);}catch(Exception ignored){return false;} }
@@ -131,9 +166,10 @@ public class AdminSessionService {
   private ResponseStatusException unauthorized() { return new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid administrator credentials"); }
 
   record User(UUID id, String displayName, String passwordHash) {}
+  record UserProfile(String loginName, String displayName) {}
   record IdentityRow(UUID id, String displayName) {}
   public record AdminStore(UUID id, String code, String name, String timezone) {}
   public record AuthenticatedIdentity(UUID userId, String displayName, List<String> roles) {}
-  public record AdminSession(String displayName, List<String> roles, List<UUID> storeIds, List<String> permissions) {}
+  public record AdminSession(String loginName, String displayName, List<String> roles, List<UUID> storeIds, List<String> permissions) {}
   record AdminLogin(String accessToken, OffsetDateTime expiresAt, String displayName, List<String> roles, List<UUID> storeIds, List<String> permissions) {}
 }

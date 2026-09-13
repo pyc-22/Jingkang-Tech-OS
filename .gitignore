@@ -78,6 +78,7 @@ deploy/preflight-*/
 deploy/*-staging/
 deploy/*-stage/
 deploy/*-package/
+.release-staging/
 deploy/repair-fw-*.sql
 deploy/run-repair-fw-*.ps1
 deploy/run.cmd
