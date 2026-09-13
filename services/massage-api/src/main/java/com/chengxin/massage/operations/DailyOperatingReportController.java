@@ -24,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -373,6 +374,8 @@ public class DailyOperatingReportController {
         report.paymentChannels().forEach(channel -> {
           channelItems.add(item(channel.name() + "收款", money(channel.salesCents())));
           channelItems.add(item(channel.name() + "退款", money(channel.refundCents())));
+          channelItems.add(item(channel.name() + "充值", money(channel.rechargeCents())));
+          channelItems.add(item(channel.name() + "充值退款", money(channel.rechargeRefundCents())));
           channelItems.add(item(channel.name() + "净实收", money(channel.netCents())));
         });
         channelItems.add(item("支付渠道净合计", money(report.derived().paymentChannelTotalCents())));
@@ -617,8 +620,8 @@ public class DailyOperatingReportController {
       for (LocalDate date = from; !date.isAfter(to); date = date.plusDays(1)) {
         for (DailyReportService.ChannelMetrics channel : dailyReports.channels(storeId, date)) {
           PaymentChannelSummary old = combined.get(channel.code());
-          if (old == null) combined.put(channel.code(), new PaymentChannelSummary(channel.code(), channel.name(), channel.methodKind(), channel.active(), channel.cashCounted(), channel.salesCents(), channel.refundCents(), channel.netCents()));
-          else combined.put(channel.code(), new PaymentChannelSummary(old.code(), old.name(), old.methodKind(), old.active(), old.cashCounted(), old.salesCents() + channel.salesCents(), old.refundCents() + channel.refundCents(), old.netCents() + channel.netCents()));
+          if (old == null) combined.put(channel.code(), new PaymentChannelSummary(channel.code(), channel.name(), channel.methodKind(), channel.active(), channel.cashCounted(), channel.salesCents(), channel.refundCents(), channel.rechargeCents(), channel.rechargeRefundCents()));
+          else combined.put(channel.code(), new PaymentChannelSummary(old.code(), old.name(), old.methodKind(), old.active(), old.cashCounted(), old.salesCents() + channel.salesCents(), old.refundCents() + channel.refundCents(), old.rechargeCents() + channel.rechargeCents(), old.rechargeRefundCents() + channel.rechargeRefundCents()));
         }
       }
       return combined.values().stream().toList();
@@ -648,20 +651,40 @@ public class DailyOperatingReportController {
         and refund.business_date between :from and :to
       group by refund_payment.payment_method
       """).param("store", storeId).param("from", from).param("to", to).query(NamedChannelRow.class).list();
+    List<NamedChannelRow> rechargeRows = jdbc.sql("""
+      select coalesce(payment.payment_method,'UNSPECIFIED') code,
+             coalesce(max(payment.payment_method_name_snapshot),case when payment.payment_method is null then '未指定' else payment.payment_method end) name,
+             coalesce(sum(payment.amount_cents),0) amount_cents
+      from wallet_transaction payment
+      where payment.store_id=:store and payment.transaction_type='RECHARGE'
+        and payment.business_date between :from and :to
+      group by payment.payment_method
+      """).param("store", storeId).param("from", from).param("to", to).query(NamedChannelRow.class).list();
+    List<NamedChannelRow> rechargeRefundRows = jdbc.sql("""
+      select coalesce(payment.payment_method,'UNSPECIFIED') code,
+             coalesce(max(payment.payment_method_name_snapshot),case when payment.payment_method is null then '未指定' else payment.payment_method end) name,
+             coalesce(sum(-payment.amount_cents),0) amount_cents
+      from wallet_transaction payment
+      where payment.store_id=:store and payment.transaction_type='ADJUSTMENT' and payment.source='RECHARGE_REFUND'
+        and payment.business_date between :from and :to
+      group by payment.payment_method
+      """).param("store", storeId).param("from", from).param("to", to).query(NamedChannelRow.class).list();
     Map<String, Long> sales = channelAmounts(definitions, salesRows);
     Map<String, Long> refunds = channelAmounts(definitions, refundRows);
+    Map<String, Long> recharges = channelAmounts(definitions, rechargeRows);
+    Map<String, Long> rechargeRefunds = channelAmounts(definitions, rechargeRefundRows);
     return definitions.values().stream()
       .sorted(Comparator.comparingInt(ChannelDefinition::sortOrder).thenComparing(ChannelDefinition::code))
       .map(method -> new PaymentChannelSummary(method.code(), method.name(), method.methodKind(), method.active(), method.cashCounted(),
         sales.getOrDefault(method.code(), 0L), refunds.getOrDefault(method.code(), 0L),
-        sales.getOrDefault(method.code(), 0L) - refunds.getOrDefault(method.code(), 0L)))
+        recharges.getOrDefault(method.code(), 0L), rechargeRefunds.getOrDefault(method.code(), 0L)))
       .toList();
   }
 
   static long externalOrderCashFlow(List<PaymentChannelSummary> channels) {
     return channels.stream()
       .filter(channel -> !"MEMBER_BALANCE".equalsIgnoreCase(channel.methodKind()))
-      .mapToLong(PaymentChannelSummary::netCents)
+      .mapToLong(PaymentChannelSummary::orderNetCents)
       .sum();
   }
 
@@ -762,7 +785,18 @@ public class DailyOperatingReportController {
   public record StoreReportView(UUID storeId, String storeCode, String storeName, ReportView report) {}
   public record MonthlySummary(long monthlyTargetCents, long salesAmountCents, long cashFlowCents, long cardSaleCents, long cardOpenCents, long cardOpenCount, long cardRenewCents, long cardConsumptionCents, long customerCount, long extensionCount, long cashCents, long alipayCents, long douyinCents, long meituanCents, long freeOrderCents, long entertainmentCents, long refundAmountCents, long callClockCount) {}
   public record PaymentChannelSummary(String code, String name, String methodKind, boolean active, boolean cashCounted,
-                                      long salesCents, long refundCents, long netCents) {}
+                                      long salesCents, long refundCents, long rechargeCents, long rechargeRefundCents) {
+    public PaymentChannelSummary(String code, String name, String methodKind, boolean active, boolean cashCounted,
+                                 long salesCents, long refundCents, long netCents) {
+      this(code, name, methodKind, active, cashCounted, salesCents, refundCents, 0, 0);
+    }
+    @JsonProperty("orderNetCents")
+    public long orderNetCents() { return salesCents - refundCents; }
+    @JsonProperty("rechargeNetCents")
+    public long rechargeNetCents() { return rechargeCents - rechargeRefundCents; }
+    @JsonProperty("netCents")
+    public long netCents() { return orderNetCents() + rechargeNetCents(); }
+  }
   public record DerivedMetrics(BigDecimal dailyTargetCompletionRate, BigDecimal monthlyTargetCompletionRate,
                                long paymentChannelTotalCents, BigDecimal averageCustomerSpendCents,
                                BigDecimal dailyAverageCustomerSpendCents, BigDecimal dailyServiceClockRate,

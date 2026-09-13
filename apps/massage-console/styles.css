@@ -707,3 +707,483 @@ dialog > .dialog-card {
 .clock-out-confirm-details span { display:flex; justify-content:space-between; gap:16px; color:var(--muted); font-size:12px; }
 .clock-out-confirm-details b { color:var(--ink); text-align:right; }
 @media (max-width:640px) { .dispatch-participant-grid { grid-template-columns:1fr; } }
+
+/* Historical backfill form layout */
+#historical-backfill-dialog {
+  width:min(780px,calc(100vw - 32px));
+  max-width:calc(100vw - 32px);
+  max-height:calc(100dvh - 24px);
+}
+#historical-backfill-dialog .historical-backfill-card {
+  width:100%;
+  max-width:none;
+  padding:24px;
+  display:grid;
+  gap:16px;
+}
+#historical-backfill-dialog .dialog-heading {
+  margin-bottom:0;
+  padding-bottom:16px;
+  border-bottom:1px solid var(--line);
+}
+.historical-backfill-section {
+  min-width:0;
+  padding:16px;
+  border:1px solid #dce8e3;
+  border-radius:6px;
+  background:#fbfdfc;
+}
+.historical-backfill-section-heading {
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:14px;
+}
+.historical-backfill-section-heading > div {
+  display:grid;
+  gap:4px;
+  min-width:0;
+}
+.historical-backfill-section-heading b {
+  color:#24443e;
+  font-size:13px;
+}
+.historical-backfill-section-heading small,
+.historical-backfill-help,
+.historical-backfill-technicians-heading small {
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.5;
+}
+.historical-backfill-field,
+.historical-backfill-member-summary,
+.historical-backfill-payment label {
+  display:grid;
+  gap:7px;
+  min-width:0;
+  color:#52625e;
+  font-size:12px;
+  font-weight:700;
+}
+.historical-backfill-field input,
+.historical-backfill-field select,
+.historical-backfill-payment select,
+.historical-backfill-payment input {
+  width:100%;
+  min-width:0;
+  height:37px;
+  padding:0 9px;
+  border:1px solid var(--line);
+  border-radius:5px;
+  outline:0;
+  color:var(--ink);
+  background:#fff;
+  font:inherit;
+  font-size:12px;
+}
+.historical-backfill-field input:focus,
+.historical-backfill-field select:focus,
+.historical-backfill-payment select:focus,
+.historical-backfill-payment input:focus {
+  border-color:#5e9d90;
+  box-shadow:0 0 0 3px rgba(8,123,115,.1);
+}
+.historical-backfill-order-section {
+  background:#f8fcfa;
+}
+.historical-backfill-date-field {
+  grid-template-columns:100px minmax(0,260px);
+  align-items:center;
+  margin-bottom:14px;
+}
+.historical-backfill-date-field input {
+  width:100%;
+}
+.historical-backfill-member {
+  display:grid;
+  grid-template-columns:minmax(150px,.65fr) minmax(0,1.35fr);
+  gap:12px;
+  align-items:start;
+  padding-top:14px;
+  border-top:1px solid #e6efeb;
+}
+.historical-backfill-member-summary {
+  align-content:start;
+  padding-top:4px;
+}
+.historical-backfill-member-summary span {
+  color:#52625e;
+}
+.historical-backfill-member-summary b {
+  color:#1c413b;
+  font-size:14px;
+}
+.historical-backfill-member-summary small {
+  color:var(--muted);
+  font-size:11px;
+  font-weight:400;
+  line-height:1.45;
+}
+.historical-backfill-member-picker {
+  position:relative;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:8px;
+  min-width:0;
+}
+.historical-backfill-member-picker .search-field {
+  width:auto;
+  min-width:0;
+  height:37px;
+  background:#fff;
+}
+.historical-backfill-member-picker .search-field input {
+  height:34px;
+}
+.historical-backfill-member-results {
+  grid-column:1 / -1;
+  width:100%;
+  max-height:190px;
+  border:1px solid var(--line);
+  border-radius:5px;
+  background:#fff;
+}
+.historical-backfill-lines {
+  display:grid;
+  gap:0;
+}
+.historical-backfill-line-list,
+#historical-backfill-line-list {
+  display:grid;
+  gap:12px;
+}
+.historical-backfill-line {
+  min-width:0;
+  padding:14px;
+  border:1px solid #cfe1da;
+  border-radius:6px;
+  background:#fff;
+}
+.historical-backfill-line-heading {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:13px;
+  padding-bottom:10px;
+  border-bottom:1px solid #e7efec;
+}
+.historical-backfill-line-heading b {
+  color:#1e4740;
+  font-size:13px;
+}
+.historical-backfill-line-heading .icon-button,
+.historical-backfill-payment-remove {
+  flex:none;
+  width:30px;
+  height:30px;
+  border:1px solid #e0e8e5;
+  color:#9a6258;
+  background:#fff;
+  font-size:18px;
+}
+.historical-backfill-line-heading .icon-button:hover,
+.historical-backfill-payment-remove:hover {
+  border-color:#d2a49c;
+  background:#fff7f5;
+}
+.historical-backfill-line-fields {
+  display:grid;
+  grid-template-columns:repeat(6,minmax(0,1fr));
+  gap:10px;
+}
+.historical-backfill-service-field,
+.historical-backfill-clock-field {
+  grid-column:span 3;
+}
+.historical-backfill-duration-field,
+.historical-backfill-room-field,
+.historical-backfill-line-total {
+  grid-column:span 2;
+}
+.historical-backfill-line-total {
+  display:grid;
+  align-content:start;
+  gap:7px;
+  min-width:0;
+  color:#52625e;
+  font-size:12px;
+  font-weight:700;
+}
+.historical-backfill-line-total strong {
+  display:flex;
+  align-items:center;
+  height:37px;
+  padding:0 9px;
+  border:1px solid #dfeae5;
+  border-radius:5px;
+  color:#17665f;
+  background:#f4faf7;
+  font-size:13px;
+}
+.historical-backfill-technicians {
+  margin-top:16px;
+  padding-top:14px;
+  border-top:1px solid #e7efec;
+}
+.historical-backfill-technicians-heading {
+  display:flex;
+  align-items:baseline;
+  justify-content:space-between;
+  gap:12px;
+}
+.historical-backfill-technicians-heading b {
+  color:#2b4b45;
+  font-size:12px;
+}
+.historical-backfill-technician-list {
+  display:grid;
+  gap:8px;
+  margin-top:10px;
+}
+.historical-backfill-technician {
+  display:grid;
+  grid-template-columns:18px minmax(0,1fr) minmax(92px,30%) 18px;
+  align-items:center;
+  gap:9px;
+  min-width:0;
+  padding:9px 10px;
+  border:1px solid #e2ebe7;
+  border-radius:5px;
+  background:#fbfdfc;
+  color:#334541;
+  font-size:12px;
+  font-weight:400;
+}
+.historical-backfill-technician.selected {
+  border-color:#9fcfc4;
+  background:#f1faf6;
+}
+.historical-backfill-technician > input[type="checkbox"] {
+  width:15px;
+  height:15px;
+  margin:0;
+  accent-color:var(--teal);
+}
+.historical-backfill-technician-info {
+  display:grid;
+  gap:3px;
+  min-width:0;
+}
+.historical-backfill-technician-info b,
+.historical-backfill-technician-info small {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.historical-backfill-technician-info b {
+  color:#294841;
+  font-size:12px;
+}
+.historical-backfill-technician-info small {
+  color:var(--muted);
+  font-size:10px;
+}
+.historical-backfill-allocation {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:5px;
+  min-width:0;
+}
+.historical-backfill-allocation input {
+  height:32px;
+  padding:0 7px;
+  text-align:right;
+}
+.historical-backfill-allocation em {
+  color:#52625e;
+  font-size:12px;
+  font-style:normal;
+}
+.historical-backfill-allocation input:disabled {
+  color:#98a49f;
+  background:#f2f5f4;
+}
+.historical-backfill-settlement {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:16px;
+  padding:0;
+  border:0;
+  background:transparent;
+}
+.historical-backfill-amount-section,
+.historical-backfill-payment-section {
+  min-width:0;
+  padding:16px;
+  border:1px solid #dce8e3;
+  border-radius:6px;
+  background:#fbfdfc;
+}
+.historical-backfill-amount-rows {
+  display:grid;
+  gap:10px;
+}
+.historical-backfill-amount-row {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(120px,180px);
+  align-items:center;
+  gap:12px;
+  min-height:37px;
+  color:#52625e;
+  font-size:12px;
+  font-weight:700;
+}
+.historical-backfill-amount-row strong {
+  color:#17665f;
+  font-size:16px;
+  text-align:right;
+}
+.historical-backfill-amount-row input {
+  width:100%;
+  height:37px;
+  padding:0 9px;
+  border:1px solid var(--line);
+  border-radius:5px;
+  color:var(--ink);
+  background:#fff;
+  font:inherit;
+  font-size:13px;
+  text-align:right;
+}
+.historical-backfill-help {
+  margin-top:12px;
+}
+.historical-backfill-payment-section .historical-backfill-section-heading {
+  align-items:center;
+}
+.historical-backfill-payment-list {
+  display:grid;
+  gap:9px;
+}
+#historical-backfill-payment-list {
+  display:grid;
+  gap:9px;
+}
+.historical-backfill-payment {
+  display:grid;
+  grid-template-columns:minmax(0,2fr) minmax(0,2fr) minmax(42px,1fr);
+  align-items:end;
+  gap:8px;
+  min-width:0;
+  padding:10px;
+  border:1px solid #e0eae6;
+  border-radius:5px;
+  background:#fff;
+}
+.historical-backfill-payment label {
+  gap:5px;
+  font-size:10px;
+  font-weight:600;
+}
+.historical-backfill-payment-method select {
+  height:34px;
+}
+.historical-backfill-payment-amount {
+  min-width:0;
+}
+.historical-backfill-currency-input {
+  display:flex;
+  align-items:center;
+  min-width:0;
+  height:34px;
+  border:1px solid var(--line);
+  border-radius:5px;
+  background:#fff;
+}
+.historical-backfill-currency-input:focus-within {
+  border-color:#5e9d90;
+  box-shadow:0 0 0 3px rgba(8,123,115,.1);
+}
+.historical-backfill-currency-input i {
+  flex:none;
+  padding-left:8px;
+  color:#72817d;
+  font-style:normal;
+}
+.historical-backfill-currency-input input {
+  height:32px;
+  padding-left:5px;
+  border:0;
+  text-align:right;
+}
+.historical-backfill-payment-remove {
+  justify-self:end;
+  margin-bottom:2px;
+}
+.historical-backfill-payment-summary {
+  margin-top:12px;
+  color:#52625e;
+  font-size:11px;
+  text-align:right;
+}
+.historical-backfill-payment-summary b {
+  color:#17665f;
+  font-variant-numeric:tabular-nums;
+}
+#historical-backfill-dialog .dialog-actions {
+  margin-top:0;
+  padding-top:16px;
+  border-top:1px solid var(--line);
+}
+@media (max-width:700px) {
+  #historical-backfill-dialog {
+    width:calc(100vw - 16px);
+    max-width:calc(100vw - 16px);
+  }
+  #historical-backfill-dialog .historical-backfill-card {
+    padding:16px;
+  }
+  .historical-backfill-member,
+  .historical-backfill-settlement {
+    grid-template-columns:1fr;
+  }
+  .historical-backfill-line-fields {
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  .historical-backfill-service-field,
+  .historical-backfill-clock-field,
+  .historical-backfill-duration-field,
+  .historical-backfill-room-field,
+  .historical-backfill-line-total {
+    grid-column:span 1;
+  }
+  .historical-backfill-service-field,
+  .historical-backfill-clock-field {
+    grid-column:span 2;
+  }
+}
+@media (max-width:480px) {
+  .historical-backfill-date-field {
+    grid-template-columns:1fr;
+    gap:6px;
+  }
+  .historical-backfill-member-picker,
+  .historical-backfill-payment {
+    grid-template-columns:1fr;
+  }
+  .historical-backfill-member-picker .button {
+    width:max-content;
+  }
+  .historical-backfill-technician {
+    grid-template-columns:18px minmax(0,1fr) 82px 15px;
+    gap:7px;
+    padding:8px;
+  }
+  .historical-backfill-payment-remove {
+    justify-self:start;
+    margin:0;
+  }
+}

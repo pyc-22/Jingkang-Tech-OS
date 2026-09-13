@@ -3,6 +3,7 @@ package com.chengxin.massage.operations;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.math.BigDecimal;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 class DailyOperatingReportControllerTest {
@@ -34,6 +35,36 @@ class DailyOperatingReportControllerTest {
       new DailyOperatingReportController.PaymentChannelSummary("WECHAT", "微信支付", "EXTERNAL", true, true, 8_000, 1_000, 7_000));
 
     assertThat(DailyOperatingReportController.externalOrderCashFlow(channels)).isEqualTo(7_000);
+  }
+
+  @Test
+  void paymentChannelNetSeparatesOrderAndRechargeMovements() {
+    var channel = new DailyOperatingReportController.PaymentChannelSummary(
+      "WECHAT", "微信支付", "EXTERNAL", true, false, 20_000, 2_000, 128_800, 0);
+
+    assertThat(channel.orderNetCents()).isEqualTo(18_000);
+    assertThat(channel.rechargeNetCents()).isEqualTo(128_800);
+    assertThat(channel.netCents()).isEqualTo(146_800);
+  }
+
+  @Test
+  void paymentChannelNetSubtractsRechargeRefundFromTheOriginalChannel() {
+    var channel = new DailyOperatingReportController.PaymentChannelSummary(
+      "ALIPAY", "支付宝", "EXTERNAL", true, false, 0, 0, 128_800, 30_000);
+
+    assertThat(channel.rechargeNetCents()).isEqualTo(98_800);
+    assertThat(channel.netCents()).isEqualTo(98_800);
+  }
+
+  @Test
+  void paymentChannelDerivedNetsAreSerializedForTheDailyReportClient() throws Exception {
+    var channel = new DailyOperatingReportController.PaymentChannelSummary(
+      "WECHAT", "微信支付", "EXTERNAL", true, false, 20_000, 2_000, 128_800, 30_000);
+    var json = new ObjectMapper().readTree(new ObjectMapper().writeValueAsString(channel));
+
+    assertThat(json.get("orderNetCents").asLong()).isEqualTo(18_000);
+    assertThat(json.get("rechargeNetCents").asLong()).isEqualTo(98_800);
+    assertThat(json.get("netCents").asLong()).isEqualTo(116_800);
   }
 
   @Test

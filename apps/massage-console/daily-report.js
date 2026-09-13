@@ -70,16 +70,23 @@
   function renderDailyPaymentFields(channels) {
     const target = document.querySelector('#daily-report-payment-fields');
     if (!target) return;
-    const rows = (channels || []).filter(channel => channel.active || Number(channel.salesCents || 0) !== 0 || Number(channel.refundCents || 0) !== 0);
+    const rows = (channels || []).filter(channel => channel.active
+      || Number(channel.salesCents || 0) !== 0
+      || Number(channel.refundCents || 0) !== 0
+      || Number(channel.rechargeCents || 0) !== 0
+      || Number(channel.rechargeRefundCents || 0) !== 0);
     if (!rows.length) {
       target.innerHTML = '<div class="daily-report-payment-fields-heading"><b>当日收款方式</b><small>当前门店暂无启用收款方式</small></div>';
       return;
     }
-    target.innerHTML = `<div class="daily-report-payment-fields-heading"><b>当日收款方式</b><small>按订单实际收款渠道自动汇总，金额只读</small></div><div class="daily-report-payment-grid">${rows.map(channel => {
+    target.innerHTML = `<div class="daily-report-payment-fields-heading"><b>当日收款方式</b><small>按订单实际收款渠道自动汇总，金额只读；会员充值按支付方式计入</small></div><div class="daily-report-payment-grid">${rows.map(channel => {
       const name = dailyReportEscape(channel.name || channel.code || '收款方式');
       const code = dailyReportEscape(channel.code || '');
       const net = Number(channel.netCents || 0);
-      return `<label data-report-payment-field="${code}"><span>当日${name}（元）</span><input type="number" step="0.01" value="${(net / 100).toFixed(2)}" readonly aria-label="当日${name}"><small>收款 ${cents(channel.salesCents)} · 退款 ${cents(channel.refundCents)} · 净收 ${cents(net)}</small></label>`;
+      const recharge = Number(channel.rechargeCents || 0);
+      const rechargeRefund = Number(channel.rechargeRefundCents || 0);
+      const rechargeNote = recharge || rechargeRefund ? ` · 充值 ${cents(recharge)} · 充值退款 ${cents(rechargeRefund)}` : '';
+      return `<label data-report-payment-field="${code}"><span>当日${name}（元）</span><input type="number" step="0.01" value="${(net / 100).toFixed(2)}" readonly aria-label="当日${name}"><small>收款 ${cents(channel.salesCents)} · 退款 ${cents(channel.refundCents)}${rechargeNote} · 净收 ${cents(net)}</small></label>`;
     }).join('')}</div>`;
   }
   function configuredMonthlyRows() {
@@ -188,16 +195,16 @@
     ].map(([label, value, note]) => `<article><span>${label}</span><strong>${value}</strong><small>${note}</small></article>`).join('');
     renderRefundOccurrences(reportData.unifiedMetrics?.refundOccurrences);
     document.querySelector('#daily-report-month-rate').textContent = `月度完成 ${percent(derived.monthlyTargetCompletionRate)}`;
-    const monthlyChannelRows = (reportData.monthlyPaymentChannels || []).filter(channel => channel.active || channel.salesCents || channel.refundCents).map(channel => `<tr data-report-payment-channel="${channel.code}"><th>累计${channel.name}净实收</th><td>${cents(channel.netCents)}</td></tr>`).join('');
+    const monthlyChannelRows = (reportData.monthlyPaymentChannels || []).filter(channel => channel.active || channel.salesCents || channel.refundCents || channel.rechargeCents || channel.rechargeRefundCents).map(channel => `<tr data-report-payment-channel="${channel.code}"><th>累计${channel.name}净实收</th><td>${cents(channel.netCents)}</td></tr>`).join('');
     document.querySelector('#daily-report-monthly-records').innerHTML = configuredMonthlyRows().map(([label, key, type]) => { const config = configFor(key); const value = key === 'averageCustomerSpendCents' ? derived[key] : key === 'serviceClockRate' ? derived.monthlyServiceClockRate : monthly[key]; const display = type === 'amount' ? cents(value) : type === 'percent' ? percent(value) : Number(value || 0); return `<tr data-report-field="${key}"><th>${config.fieldLabel || label}</th><td>${display}</td></tr>`; }).join('') + monthlyChannelRows;
     renderServiceStructure(values, monthly, derived);
-    const payments = (reportData.paymentChannels || []).filter(channel => channel.active || channel.salesCents || channel.refundCents);
+    const payments = (reportData.paymentChannels || []).filter(channel => channel.active || channel.salesCents || channel.refundCents || channel.rechargeCents || channel.rechargeRefundCents);
     renderDailyPaymentFields(reportData.paymentChannels);
     const colors = ['#0f67b1','#16866f','#d28416','#a94a62','#59636f','#6b57a5'];
     const total = Number(derived.paymentChannelTotalCents || 0);
     const scale = payments.reduce((sum, channel) => sum + Math.abs(Number(channel.netCents || 0)), 0);
     document.querySelector('#daily-report-payment-total').textContent = cents(total);
-    document.querySelector('#daily-report-payment-bars').innerHTML = payments.map((channel, index) => { const value = Number(channel.netCents || 0); const ratio = scale ? Math.abs(value) / scale * 100 : 0; return `<div class="daily-payment-row"><span>${channel.name}</span><div><i style="width:${ratio ? Math.max(2, ratio) : 0}%;background:${colors[index % colors.length]}"></i></div><b>${cents(value)}</b><small>${ratio.toFixed(1)}% · 退款 ${cents(channel.refundCents)}</small></div>`; }).join('') || '<p class="table-empty">当日暂无前台结算记录</p>';
+    document.querySelector('#daily-report-payment-bars').innerHTML = payments.map((channel, index) => { const value = Number(channel.netCents || 0); const ratio = scale ? Math.abs(value) / scale * 100 : 0; const recharge = Number(channel.rechargeCents || 0); const rechargeRefund = Number(channel.rechargeRefundCents || 0); return `<div class="daily-payment-row"><span>${channel.name}</span><div><i style="width:${ratio ? Math.max(2, ratio) : 0}%;background:${colors[index % colors.length]}"></i></div><b>${cents(value)}</b><small>${ratio.toFixed(1)}% · 退款 ${cents(channel.refundCents)}${recharge || rechargeRefund ? ` · 充值净额 ${cents(recharge - rechargeRefund)}` : ''}</small></div>`; }).join('') || '<p class="table-empty">当日暂无前台结算记录</p>';
     const locked = status === 'PUBLISHED';
     form.querySelectorAll('input,textarea,button').forEach(control => control.disabled = locked || !access.canEdit);
     document.querySelector('#daily-report-publish').disabled = locked || !access.canPublish;
@@ -339,7 +346,7 @@
   function printReport() {
     const printWindow = window.open('', '_blank');
     if (!printWindow) { toast('请允许浏览器打开打印窗口'); return; }
-    printWindow.document.write(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${selectedStoreName()} 每日营业日报</title><link rel="stylesheet" href="${location.origin}/styles.css?v=20260913-next-optimization-v1"><link rel="stylesheet" href="${location.origin}/daily-report.css?v=20260913-next-optimization-v1"></head><body class="daily-report-print"><main class="workspace">${printableReport()}</main></body></html>`);
+    printWindow.document.write(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${selectedStoreName()} 每日营业日报</title><link rel="stylesheet" href="${location.origin}/styles.css?v=20260913-next-optimization-v2"><link rel="stylesheet" href="${location.origin}/daily-report.css?v=20260913-next-optimization-v2"></head><body class="daily-report-print"><main class="workspace">${printableReport()}</main></body></html>`);
     printWindow.document.close();
     printWindow.addEventListener('load', () => { printWindow.focus(); printWindow.print(); });
   }

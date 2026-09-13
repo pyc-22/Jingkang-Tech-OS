@@ -124,8 +124,9 @@ public class OperationsReportController {
       .map(c -> new ChannelAmount(c.code(), c.salesCents())).toList();
     List<ChannelAmount> refunds = metrics.channels().stream().filter(c -> c.refundCents() != 0)
       .map(c -> new ChannelAmount(c.code(), c.refundCents())).toList();
-    List<ChannelAmount> recharges = jdbc.sql("select payment_method,coalesce(sum(amount_cents),0) amount_cents from wallet_transaction where store_id=:store and (transaction_type='RECHARGE' or (transaction_type='ADJUSTMENT' and source='RECHARGE_REFUND')) and payment_method is not null and business_date=cast(:date as date) group by payment_method") .param("store",storeId).param("date",day).query(ChannelAmount.class).list();
-    long cashNet = amount(sales,"CASH") - amount(refunds,"CASH");
+    List<ChannelAmount> recharges = metrics.channels().stream().filter(c -> c.rechargeNetCents() != 0)
+      .map(c -> new ChannelAmount(c.code(), c.rechargeNetCents())).toList();
+    long cashNet = amount(sales,"CASH") - amount(refunds,"CASH") + amount(recharges,"CASH");
     return new PaymentChannelSummary(day,sales,refunds,recharges,cashNet);
   }
 

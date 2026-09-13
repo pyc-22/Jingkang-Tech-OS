@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 
@@ -76,10 +77,8 @@ public class DailyReportService {
       wallet.consumptionDebitCents(), wallet.consumptionRefundCents());
     long netSales = Math.subtractExact(orders.salesAmountCents(), refunds.refundAmountCents());
     long externalCash = channels.stream().filter(c -> !"MEMBER_BALANCE".equalsIgnoreCase(c.methodKind()))
-      .mapToLong(ChannelMetrics::netCents).sum();
-    long rechargeNet = wallet.rechargeAmountCents()
-      + jdbc.sql("select coalesce(sum(amount_cents),0)::bigint from wallet_transaction where store_id=:store and transaction_type='ADJUSTMENT' and source='RECHARGE_REFUND' and business_date=:date")
-        .param("store", storeId).param("date", businessDate).query(Long.class).single();
+      .mapToLong(ChannelMetrics::orderNetCents).sum();
+    long rechargeNet = channels.stream().mapToLong(ChannelMetrics::rechargeNetCents).reduce(0L, Math::addExact);
     long customerCount = jdbc.sql("select customer_count from daily_customer_count_override where store_id=:store and business_date=:date")
       .param("store", storeId).param("date", businessDate).query(Long.class).optional().orElse(orders.customerCount());
     List<RefundOccurrence> refundOccurrences = jdbc.sql("""
@@ -123,6 +122,30 @@ public class DailyReportService {
         result.put(row.code(), old == null ? new ChannelMetrics(row.code(), row.name(), "MEMBER_BALANCE".equals(row.code()) ? "MEMBER_BALANCE" : "EXTERNAL", false, false, 0, row.amountCents(), Short.MAX_VALUE)
           : old.withRefunds(row.amountCents()));
       });
+    jdbc.sql("""
+      select coalesce(wt.payment_method,'UNSPECIFIED') code,
+             coalesce(max(wt.payment_method_name_snapshot),case when wt.payment_method is null then '未指定' else wt.payment_method end) name,
+             coalesce(sum(wt.amount_cents),0)::bigint amount_cents
+      from wallet_transaction wt
+      where wt.store_id=:store and wt.business_date=:date and wt.transaction_type='RECHARGE'
+      group by wt.payment_method
+      """).param("store", storeId).param("date", date).query(NamedAmount.class).list().forEach(row -> {
+        ChannelMetrics old = result.get(row.code());
+        result.put(row.code(), old == null ? new ChannelMetrics(row.code(), row.name(), "EXTERNAL", false, false, 0, 0, row.amountCents(), 0, Short.MAX_VALUE)
+          : old.withRecharges(row.amountCents()));
+      });
+    jdbc.sql("""
+      select coalesce(wt.payment_method,'UNSPECIFIED') code,
+             coalesce(max(wt.payment_method_name_snapshot),case when wt.payment_method is null then '未指定' else wt.payment_method end) name,
+             coalesce(sum(-wt.amount_cents),0)::bigint amount_cents
+      from wallet_transaction wt
+      where wt.store_id=:store and wt.business_date=:date and wt.transaction_type='ADJUSTMENT' and wt.source='RECHARGE_REFUND'
+      group by wt.payment_method
+      """).param("store", storeId).param("date", date).query(NamedAmount.class).list().forEach(row -> {
+        ChannelMetrics old = result.get(row.code());
+        result.put(row.code(), old == null ? new ChannelMetrics(row.code(), row.name(), "EXTERNAL", false, false, 0, 0, 0, row.amountCents(), Short.MAX_VALUE)
+          : old.withRechargeRefunds(row.amountCents()));
+      });
     return result.values().stream().sorted(Comparator.comparingInt(ChannelMetrics::sortOrder).thenComparing(ChannelMetrics::code)).toList();
   }
 
@@ -140,10 +163,21 @@ public class DailyReportService {
                              long rechargeNetCents, long externalOrderCashFlowCents, long cashFlowCents,
                              List<ChannelMetrics> channels, List<RefundOccurrence> refundOccurrences) {}
   public record ChannelMetrics(String code, String name, String methodKind, boolean active, boolean cashCounted,
-                               long salesCents, long refundCents, short sortOrder) {
-    public long netCents() { return salesCents - refundCents; }
-    ChannelMetrics withSales(long amount) { return new ChannelMetrics(code, name == null || name.isBlank() ? code : name, methodKind, active, cashCounted, amount, refundCents, sortOrder); }
-    ChannelMetrics withRefunds(long amount) { return new ChannelMetrics(code, name == null || name.isBlank() ? code : name, methodKind, active, cashCounted, salesCents, amount, sortOrder); }
+                               long salesCents, long refundCents, long rechargeCents, long rechargeRefundCents, short sortOrder) {
+    public ChannelMetrics(String code, String name, String methodKind, boolean active, boolean cashCounted,
+                          long salesCents, long refundCents, short sortOrder) {
+      this(code, name, methodKind, active, cashCounted, salesCents, refundCents, 0, 0, sortOrder);
+    }
+    @JsonProperty("orderNetCents")
+    public long orderNetCents() { return salesCents - refundCents; }
+    @JsonProperty("rechargeNetCents")
+    public long rechargeNetCents() { return rechargeCents - rechargeRefundCents; }
+    @JsonProperty("netCents")
+    public long netCents() { return orderNetCents() + rechargeNetCents(); }
+    ChannelMetrics withSales(long amount) { return new ChannelMetrics(code, name == null || name.isBlank() ? code : name, methodKind, active, cashCounted, amount, refundCents, rechargeCents, rechargeRefundCents, sortOrder); }
+    ChannelMetrics withRefunds(long amount) { return new ChannelMetrics(code, name == null || name.isBlank() ? code : name, methodKind, active, cashCounted, salesCents, amount, rechargeCents, rechargeRefundCents, sortOrder); }
+    ChannelMetrics withRecharges(long amount) { return new ChannelMetrics(code, name == null || name.isBlank() ? code : name, methodKind, active, cashCounted, salesCents, refundCents, amount, rechargeRefundCents, sortOrder); }
+    ChannelMetrics withRechargeRefunds(long amount) { return new ChannelMetrics(code, name == null || name.isBlank() ? code : name, methodKind, active, cashCounted, salesCents, refundCents, rechargeCents, amount, sortOrder); }
   }
   public record RefundOccurrence(UUID id, String refundNo, String orderNo, long amountCents,
                                  OffsetDateTime completedAt, LocalDate refundBusinessDate,

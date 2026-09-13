@@ -8,6 +8,7 @@ const daily = fs.readFileSync(path.join(root, 'daily-report.js'), 'utf8');
 const index = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const manager = fs.readFileSync(path.join(root, 'manager-mobile.js'), 'utf8');
 const controller = fs.readFileSync(path.resolve(root, '..', '..', 'services', 'massage-api', 'src', 'main', 'java', 'com', 'chengxin', 'massage', 'operations', 'DailyOperatingReportController.java'), 'utf8');
+const service = fs.readFileSync(path.resolve(root, '..', '..', 'services', 'massage-api', 'src', 'main', 'java', 'com', 'chengxin', 'massage', 'operations', 'DailyReportService.java'), 'utf8');
 const operations = fs.readFileSync(path.resolve(root, '..', '..', 'services', 'massage-api', 'src', 'main', 'java', 'com', 'chengxin', 'massage', 'operations', 'OperationsReportController.java'), 'utf8');
 
 test('saved reports merge manual fields with live front desk settlement values', () => {
@@ -19,16 +20,18 @@ test('saved reports merge manual fields with live front desk settlement values',
 test('daily report renders configured payment channels and channel refunds dynamically', () => {
   assert.match(controller, /from store_payment_method where store_id=:store/);
   assert.match(controller, /paymentChannels\(storeId, date, date\)/);
-  assert.match(controller, /sales\.getOrDefault\(method\.code\(\), 0L\) - refunds\.getOrDefault/);
+  assert.match(controller, /sales\.getOrDefault\(method\.code\(\), 0L\), refunds\.getOrDefault\(method\.code\(\), 0L\)/);
+  assert.match(controller, /recharges\.getOrDefault\(method\.code\(\), 0L\), rechargeRefunds\.getOrDefault\(method\.code\(\), 0L\)/);
   assert.match(daily, /reportData\.paymentChannels/);
   assert.match(daily, /reportData\.monthlyPaymentChannels/);
   assert.match(daily, /退款 \$\{cents\(channel\.refundCents\)\}/);
+  assert.match(daily, /充值 \$\{cents\(recharge\)\}/);
 });
 
 test('daily report form renders configured payment methods in the data entry section', () => {
   assert.match(daily, /id="daily-report-payment-fields"/);
   assert.match(daily, /renderDailyPaymentFields\(reportData\.paymentChannels\)/);
-  assert.match(daily, /按订单实际收款渠道自动汇总，金额只读/);
+  assert.match(daily, /按订单实际收款渠道自动汇总，金额只读；会员充值按支付方式计入/);
   assert.match(daily, /data-report-payment-field/);
   assert.doesNotMatch(daily, /<label>当日微信/);
   assert.doesNotMatch(daily, /<label>当日支付宝（元）/);
@@ -39,7 +42,7 @@ test('daily report payment method fields are escaped and read-only', () => {
   assert.match(daily, /readonly aria-label="当日\$\{name\}"/);
   assert.match(daily, /channel\.salesCents/);
   assert.match(daily, /channel\.refundCents/);
-  assert.match(index, /daily-report\.css\?v=20260913-next-optimization-v1/);
+  assert.match(index, /daily-report\.css\?v=20260913-next-optimization-v2/);
 });
 
 test('daily customer count exposes an independent correction and restore workflow', () => {
@@ -61,10 +64,21 @@ test('report save payload only contains target personnel and handover fields', (
 
 test('manager channel totals use settled order payments minus completed order refunds', () => {
   assert.match(operations, /sales\.status='SETTLED'/);
-  assert.match(operations, /amount\(sales,"CASH"\) - amount\(refunds,"CASH"\)/);
-  assert.match(manager, /channelAmount\(summary\.sales,method\.code\)-channelAmount\(summary\.refunds,method\.code\)/);
-  assert.doesNotMatch(manager, /channelAmount\(summary\.sales,method\.code\)\+channelAmount\(summary\.recharges/);
+  assert.match(operations, /amount\(sales,"CASH"\) - amount\(refunds,"CASH"\) \+ amount\(recharges,"CASH"\)/);
+  assert.match(manager, /function channelNetAmount\(summary,method\)\{return channelAmount\(summary\.sales\|\|\[\],method\)-channelAmount\(summary\.refunds\|\|\[\],method\)\+channelAmount\(summary\.recharges\|\|\[\],method\);\}/);
+  assert.match(manager, /summary\.recharges/);
   assert.match(manager, /payment-methods\?includeInactive=true/);
+});
+
+test('recharge movements retain their payment channel and flow into daily totals', () => {
+  assert.match(service, /transaction_type='RECHARGE'/);
+  assert.match(service, /wt\.payment_method_name_snapshot/);
+  assert.match(service, /transaction_type='ADJUSTMENT' and wt\.source='RECHARGE_REFUND'/);
+  assert.match(service, /rechargeCents - rechargeRefundCents/);
+  assert.match(controller, /rechargeCents\(\)/);
+  assert.match(daily, /rechargeCents/);
+  assert.match(daily, /rechargeRefundCents/);
+  assert.match(manager, /充值净额/);
 });
 
 test('monthly turnover excludes card sales while cash flow separates member balance orders', () => {
@@ -88,7 +102,7 @@ test('daily cash flow label and browser cache version use the current report wor
   assert.match(controller, /"dailyCashFlowCents"\.equals\(base\.fieldCode\(\)\)[\s\S]*"当日净实收"\.equals\(configured\.fieldLabel\(\)\)/);
   assert.match(daily, /<label>当日现金流（元）<input name="dailyCashFlowCents"/);
   assert.doesNotMatch(daily, /当日净实收/);
-  assert.match(index, /daily-report\.js\?v=20260913-next-optimization-v1/);
+  assert.match(index, /daily-report\.js\?v=20260913-next-optimization-v2/);
 });
 
 test('daily report exposes card-opening counts and refund occurrence dates', () => {
@@ -97,7 +111,7 @@ test('daily report exposes card-opening counts and refund occurrence dates', () 
   assert.match(daily, /reportData\.unifiedMetrics\?\.refundOccurrences/);
   assert.match(daily, /退款完成时间/);
   assert.match(daily, /原订单营业日：/);
-  assert.match(index, /daily-report\.js\?v=20260913-next-optimization-v1/);
+  assert.match(index, /daily-report\.js\?v=20260913-next-optimization-v2/);
 });
 
 test('daily payment totals use settlement business day while refunds keep the original order business day', () => {
