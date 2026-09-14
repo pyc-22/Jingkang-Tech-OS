@@ -61,9 +61,6 @@ public class ServiceDurationController {
                               @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     AdminSessionService.AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
-    if (input.technicianExtensionMaxMinutes() > input.serviceDurationMaxMinutes() - 15) {
-      throw error(HttpStatus.BAD_REQUEST, "Technician extension limit must leave at least 15 minutes for the base service");
-    }
     ServiceDurationPolicyService.Policy before = policies.policy(storeId);
     jdbc.sql("update store set service_duration_max_minutes=:maxDuration,technician_extension_max_minutes=:maxExtension,updated_at=now(),version=version+1 where id=:store and service_duration_max_minutes>=15")
       .param("maxDuration", input.serviceDurationMaxMinutes()).param("maxExtension", input.technicianExtensionMaxMinutes()).param("store", storeId).update();

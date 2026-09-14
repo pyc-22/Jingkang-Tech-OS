@@ -117,7 +117,7 @@ body { background: #dfe7e4; }
 .active-service b { font-size: 18px; }
 .active-service small { line-height: 1.6; }
 .active-service time { padding-top: 3px; color: var(--app-teal); }
-.mobile-service-actions { gap: 9px; margin-top: 18px; }
+.mobile-service-actions { grid-template-columns: 1fr; gap: 9px; margin-top: 18px; }
 .mobile-service-actions .mobile-action, .mobile-service-actions .mobile-secondary-action { min-height: 43px; border-radius: 6px; font-size: 13px; }
 .mobile-service-actions .mobile-secondary-action { border-color: #b8dcd1; color: #187266; background: #f4fbf8; }
 .mobile-action.danger { color: #a5541d; background: #fff0df; box-shadow: none; }

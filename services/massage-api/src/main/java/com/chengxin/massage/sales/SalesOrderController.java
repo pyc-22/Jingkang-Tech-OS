@@ -817,11 +817,11 @@ public class SalesOrderController {
     if (!exists) throw bad("Member is unavailable");
   }
 
-  /** Historical backfills must use a member and wallet opened in the selected store. */
+  /** Historical backfills use the tenant-shared member wallet, just like ordinary settlement. */
   private void ensureHistoricalMember(UUID storeId, UUID memberId) {
-    boolean exists = jdbc.sql("select exists(select 1 from member where id=:id and tenant_id=:tenant and registered_store_id=:store and active=true)")
-      .param("id", memberId).param("tenant", TENANT_ID).param("store", storeId).query(Boolean.class).single();
-    if (!exists) throw bad("会员不存在、已停用或不属于当前门店");
+    boolean exists = jdbc.sql("select exists(select 1 from member where id=:id and tenant_id=:tenant and active=true)")
+      .param("id", memberId).param("tenant", TENANT_ID).query(Boolean.class).single();
+    if (!exists) throw bad("会员不存在或已停用");
   }
 
   private Line line(UUID storeId, LineInput input) {
@@ -976,13 +976,13 @@ public class SalesOrderController {
 
   private void consumeHistoricalWallet(UUID transactionStoreId, UUID memberId, long amount, UUID orderId, LocalDate businessDate) {
     if (memberId == null) throw bad("使用会员余额付款时必须先选择会员");
-    Wallet wallet = jdbc.sql("select w.id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.member_id=:member and m.id=:member and m.tenant_id=:tenant and m.registered_store_id=:store and w.opened_store_id=:store for update")
-      .param("member", memberId).param("tenant", TENANT_ID).param("store", transactionStoreId).query(Wallet.class).optional()
-      .orElseThrow(() -> bad("会员钱包不存在或不属于当前门店"));
+    Wallet wallet = jdbc.sql("select w.id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.member_id=:member and m.tenant_id=:tenant and m.active=true and w.tenant_id=:tenant for update")
+      .param("member", memberId).param("tenant", TENANT_ID).query(Wallet.class).optional()
+      .orElseThrow(() -> bad("会员钱包不存在"));
     if (wallet.balanceCents() < amount) throw new ResponseStatusException(HttpStatus.CONFLICT, "会员余额不足，请调整付款方式或充值");
     long after = wallet.balanceCents() - amount;
-    jdbc.sql("update member_wallet set balance_cents=:balance,updated_at=now(),version=version+1 where id=:id and opened_store_id=:store")
-      .param("balance", after).param("id", wallet.id()).param("store", transactionStoreId).update();
+    jdbc.sql("update member_wallet set balance_cents=:balance,updated_at=now(),version=version+1 where id=:id")
+      .param("balance", after).param("id", wallet.id()).update();
     jdbc.sql("insert into wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,source,note,business_date) values(:id,:tenant,:store,:wallet,:member,'CONSUMPTION',:amount,:before,:after,'ORDER',:note,:businessDate)")
       .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", transactionStoreId).param("wallet", wallet.id()).param("member", memberId)
       .param("amount", -amount).param("before", wallet.balanceCents()).param("after", after).param("note", orderId.toString()).param("businessDate", businessDate).update();

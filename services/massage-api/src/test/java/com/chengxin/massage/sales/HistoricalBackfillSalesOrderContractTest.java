@@ -74,7 +74,7 @@ class HistoricalBackfillSalesOrderContractTest {
   }
 
   @Test
-  void isolatesHistoricalMemberAndWalletToTheSelectedStore() throws Exception {
+  void usesTheTenantSharedMemberAndWalletForHistoricalPayment() throws Exception {
     String source = Files.readString(Path.of(
         "src/main/java/com/chengxin/massage/sales/SalesOrderController.java"));
     int endpoint = source.indexOf("@PostMapping(\"/historical-backfill\")");
@@ -85,9 +85,11 @@ class HistoricalBackfillSalesOrderContractTest {
         .contains("ensureHistoricalMember(storeId, input.memberId())")
         .contains("consumeHistoricalWallet(storeId, input.memberId(), payment.amountCents(), orderId, input.backfillDate())");
     assertThat(source)
-        .contains("registered_store_id=:store")
-        .contains("w.opened_store_id=:store")
-        .contains("where id=:id and opened_store_id=:store");
+        .contains("m.tenant_id=:tenant and m.active=true")
+        .contains("w.tenant_id=:tenant")
+        .contains("where id=:id")
+        .doesNotContain("m.registered_store_id=:store")
+        .doesNotContain("w.opened_store_id=:store");
   }
 
   @Test

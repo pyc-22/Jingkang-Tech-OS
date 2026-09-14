@@ -65,7 +65,6 @@ test('manager can add an extension from an in-service room record using the fron
   assert.match(manager, /openManagerExtension\(extension\.dataset\.managerExtensionSession/);
   assert.match(manager, /service-sessions\/\$\{sessionId\}\/extensions/);
   assert.match(manager, /service-duration-policy/);
-  assert.match(manager, /technicianExtensionMaxMinutes/);
   assert.match(manager, /serviceDurationMaxMinutes/);
   assert.match(manager, /allowsExtension===true/);
   assert.match(manager, /manager-live-service-action/);

@@ -51,6 +51,8 @@ public class ServiceExtensionIntentController {
   @Transactional
   IntentResponse create(@Valid @RequestBody CreateIntentInput input,
       @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Technician extension intents are disabled");
+    /*
     var technician = mobileSessions.requireUserId(authorization);
     TechnicianSnapshot current = jdbc.sql("select t.id,t.store_id,t.name,t.active from technician_account_binding b join technician t on t.id=b.technician_id and t.store_id=b.store_id where b.user_id=:user and b.active=true")
       .param("user", technician).query(TechnicianSnapshot.class).optional()
@@ -68,7 +70,7 @@ public class ServiceExtensionIntentController {
       .param("memberName", session.memberName()).param("serviceName", session.serviceName()).param("note", trim(input.technicianNote())).update();
     IntentResponse result = intent(current.storeId(), id);
     audits.record(authorization, current.storeId(), "SERVICE", "SERVICE_EXTENSION_INTENT_CREATED", "service_extension_intent", id, "技师提交意向加钟提醒", null, result);
-    return result;
+    return result; */
   }
 
   @GetMapping
@@ -84,10 +86,11 @@ public class ServiceExtensionIntentController {
 
   @GetMapping("/mine")
   List<IntentResponse> mine(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
-    UUID userId = mobileSessions.requireUserId(authorization);
+    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Technician extension intents are disabled");
+    /* UUID userId = mobileSessions.requireUserId(authorization);
     TechnicianSnapshot technician = jdbc.sql("select t.id,t.store_id,t.name,t.active from technician_account_binding b join technician t on t.id=b.technician_id and t.store_id=b.store_id where b.user_id=:user and b.active=true")
       .param("user", userId).query(TechnicianSnapshot.class).optional().orElseThrow(() -> error(HttpStatus.UNAUTHORIZED, "Technician account is not active"));
-    return jdbc.sql(intentSql("where i.store_id=:store and i.technician_id=:technician")).param("store", technician.storeId()).param("technician", technician.id()).query(IntentResponse.class).list();
+    return jdbc.sql(intentSql("where i.store_id=:store and i.technician_id=:technician")).param("store", technician.storeId()).param("technician", technician.id()).query(IntentResponse.class).list(); */
   }
 
   @PutMapping("/{id}/contacted")

@@ -826,18 +826,15 @@ async function openFrontdeskExtension(sessionId, technicianId) {
   const policyResponse = await fetch('http://localhost:8080/api/v1/service-duration-policy', { headers:storeContextHeaders() });
   if (!policyResponse.ok) return toast('加钟规则加载失败，请刷新后重试');
   const policy = await policyResponse.json();
-  const extensionTotalMinutes = Number(session.extensionTotalMinutes || 0);
-  const remainingExtensionMinutes = Math.max(0, Math.min(
-    Number(policy.technicianExtensionMaxMinutes || 0) - extensionTotalMinutes,
-    Number(policy.serviceDurationMaxMinutes || 0) - Number(session.plannedDurationMinutes || 0)
-  ));
+  const remainingExtensionMinutes = Math.max(0,
+    Number(policy.serviceDurationMaxMinutes || 0) - Number(session.plannedDurationMinutes || 0));
   const services = state.services.filter(item => item.allowsExtension && Number(item.durationMinutes || 0) <= remainingExtensionMinutes);
-  if (remainingExtensionMinutes <= 0) return toast('本次服务已达到加钟上限');
-  if (!services.length) return toast('门店当前没有符合剩余额度的加钟项目');
+  if (remainingExtensionMinutes <= 0) return toast('本次服务已达到门店总时长上限');
+  if (!services.length) return toast('门店当前没有符合总时长上限的加钟项目');
   frontdeskExtensionSessionId = session.id;
   frontdeskExtensionTechnicianId = technicianId;
   document.querySelector('#frontdesk-extension-form').reset();
-  document.querySelector('#frontdesk-extension-summary').textContent = `${technician?.name || sessionDisplayTechnicianName(session)} · ${session.roomCode} 房 · 已加 ${extensionTotalMinutes} 分钟 · 最多可再加 ${remainingExtensionMinutes} 分钟 · 门店总时长上限 ${policy.serviceDurationMaxMinutes} 分钟。`;
+  document.querySelector('#frontdesk-extension-summary').textContent = `${technician?.name || sessionDisplayTechnicianName(session)} · ${session.roomCode} 房 · 当前总时长 ${Number(session.plannedDurationMinutes || 0)} 分钟 · 门店总时长剩余 ${remainingExtensionMinutes} 分钟。`;
   document.querySelector('#frontdesk-extension-service').innerHTML = groupedServiceSelectOptions(services);
   renderFrontdeskExtensionPreview();
   document.querySelector('#frontdesk-extension-dialog').showModal();
@@ -853,7 +850,7 @@ async function submitFrontdeskExtension(event) {
     const response = await fetch(`http://localhost:8080/api/v1/service-sessions/${frontdeskExtensionSessionId}/extensions`, { method:'POST', headers:storeContextHeaders(true), body:JSON.stringify({ technicianId:frontdeskExtensionTechnicianId, serviceItemId:form.get('serviceItemId') }) });
     if (!response.ok) {
       const message = response.status === 400
-        ? '本次服务已达到加钟上限，或所选项目已不可用'
+        ? '所选项目不可用或总服务时长超限'
         : response.status === 409
           ? '服务状态已变化，请刷新后重试'
           : '加钟提交失败，请检查网络后重试';
@@ -3105,13 +3102,10 @@ function installServiceDurationPolicyControl() {
     const policy = await current.json();
     const total = window.prompt('单次服务总时长上限（15-1440 分钟）', String(policy.serviceDurationMaxMinutes));
     if (total === null) return;
-    const extension = window.prompt('技师累计加钟上限（0-720 分钟）', String(policy.technicianExtensionMaxMinutes));
-    if (extension === null) return;
     const totalMinutes = Number.parseInt(total, 10);
-    const extensionMinutes = Number.parseInt(extension, 10);
-    if (!Number.isInteger(totalMinutes) || totalMinutes < 15 || totalMinutes > 1440 || !Number.isInteger(extensionMinutes) || extensionMinutes < 0 || extensionMinutes > 720 || extensionMinutes > totalMinutes - 15) return toast('请检查时长上限设置');
+    if (!Number.isInteger(totalMinutes) || totalMinutes < 15 || totalMinutes > 1440) return toast('请检查时长上限设置');
     const response = await fetch('http://localhost:8080/api/v1/service-duration-policy', {
-      method: 'PUT', headers: storeContextHeaders(true), body: JSON.stringify({ serviceDurationMaxMinutes: totalMinutes, technicianExtensionMaxMinutes: extensionMinutes })
+      method: 'PUT', headers: storeContextHeaders(true), body: JSON.stringify({ serviceDurationMaxMinutes: totalMinutes, technicianExtensionMaxMinutes: 0 })
     });
     if (!response.ok) return toast('时长设置保存失败');
     toast('时长设置已保存');

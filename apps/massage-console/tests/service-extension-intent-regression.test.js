@@ -9,9 +9,12 @@ const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
 const controller = fs.readFileSync(path.resolve(root, '..', '..', 'services', 'massage-api', 'src', 'main', 'java', 'com', 'chengxin', 'massage', 'catalog', 'ServiceExtensionIntentController.java'), 'utf8');
 const migration = fs.readFileSync(path.resolve(root, '..', '..', 'services', 'massage-api', 'src', 'main', 'resources', 'db', 'migration', 'V76__service_extension_intent_messages.sql'), 'utf8');
 
-test('technician submits an intent without duration or order mutation', () => {
-  assert.match(mobile, /id="mobile-extension-intent"/);
-  assert.match(mobile, /service-extension-intents/);
+test('technician mobile exposes only assignment acceptance and clock-out actions', () => {
+  assert.match(mobile, /id="confirm-mobile-dispatch"/);
+  assert.match(mobile, /id="mobile-clock-out"/);
+  assert.doesNotMatch(mobile, /mobile-extension-intent|service-extension-intents/);
+  assert.doesNotMatch(mobile, /mobile-(?:reject|transfer|extension|room-transfer)/);
+  assert.doesNotMatch(mobile, /dispatch-notification\/(?:reject|transfer)/);
   assert.match(controller, /@PostMapping/);
   assert.match(controller, /service_session_id/);
   assert.doesNotMatch(controller, /service_session_extension/);

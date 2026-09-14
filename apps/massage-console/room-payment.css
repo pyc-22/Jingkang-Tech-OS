@@ -9,5 +9,12 @@
 .room.pending-payment strong,
 .room.pending-payment small,
 .room.pending-payment .room-service-timer { color:inherit; }
+.room.pending-payment .room-pending-summary b,
+.room.pending-payment .room-pending-summary small,
+.room.pending-payment .room-service-main b,
+.room.pending-payment .room-service-main small,
+.room.pending-payment .room-service-state { color:#fff; }
+.room.pending-payment .room-pending-summary,
+.room.pending-payment .room-services { border-color:rgba(255,255,255,.34); }
 .room.pending-payment .room-paid-action { border-color:#fff; color:#fff; background:#633a9e; }
 .room.pending-payment .room-paid-action:hover { border-color:#fff; background:#45216f; }

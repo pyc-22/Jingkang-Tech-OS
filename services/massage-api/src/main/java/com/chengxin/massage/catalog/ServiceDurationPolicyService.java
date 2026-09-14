@@ -37,16 +37,14 @@ public class ServiceDurationPolicyService {
   }
 
   public void requireExtensionWithinLimit(Policy limits, int currentExtensionMinutes, int additionMinutes, int totalMinutes) {
-    if (currentExtensionMinutes + additionMinutes > limits.technicianExtensionMaxMinutes()) {
-      throw error(HttpStatus.BAD_REQUEST, "Technician extension time cannot exceed " + limits.technicianExtensionMaxMinutes() + " minutes");
-    }
+    // technician_extension_max_minutes is retained for schema/API compatibility;
+    // extension records are now limited only by the total service duration.
     requireTotalWithinLimit(limits, totalMinutes);
   }
 
   public int remainingExtensionMinutes(Policy limits, int currentExtensionMinutes, int totalMinutes) {
-    int extensionRemaining = limits.technicianExtensionMaxMinutes() - currentExtensionMinutes;
     int serviceRemaining = limits.serviceDurationMaxMinutes() - totalMinutes;
-    return Math.max(0, Math.min(extensionRemaining, serviceRemaining));
+    return Math.max(0, serviceRemaining);
   }
 
   public void recordChange(UUID tenantId, UUID storeId, UUID sessionId, UUID technicianId, UUID extensionId,

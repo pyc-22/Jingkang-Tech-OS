@@ -52,9 +52,7 @@ public class ServiceRoomTransferController {
   @Transactional
   TransferRequest requestFromTechnician(@Valid @RequestBody TransferInput input,
                                         @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
-    UUID userId = mobileSessions.requireUserId(authorization);
-    Technician technician = technicianForUser(userId);
-    return createRequest(input, authorization, technician.storeId(), technician.id(), userId, technician.name());
+    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Technician room transfer is disabled");
   }
 
   @PostMapping("/service-room-transfers")

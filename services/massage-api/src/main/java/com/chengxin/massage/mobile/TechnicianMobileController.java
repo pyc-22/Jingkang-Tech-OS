@@ -349,6 +349,8 @@ public class TechnicianMobileController {
   @Transactional
   DispatchDecline rejectDispatchNotification(@Valid @RequestBody DispatchDeclineInput input,
                                              @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+    throw forbidden("Technician dispatch rejection is disabled");
+    /*
     Technician technician = currentTechnician(authorization);
     schedulePolicy.requireClockedIn(technician.storeId(), technician.id());
     PendingDispatch dispatch = jdbc.sql("select participant.id participant_id,ss.id session_id,ss.room_id,ss.service_name_snapshot,r.code room_code,ss.planned_duration_minutes,ss.created_at started_at,participant.acceptance_deadline_at from service_session ss join service_session_participant participant on participant.service_session_id=ss.id join room r on r.id=ss.room_id where ss.store_id=:store and participant.technician_id=:technician and participant.status='PENDING_ACCEPTANCE' and (participant.acceptance_deadline_at is null or participant.acceptance_deadline_at>now()) and ss.status in ('PENDING_ACCEPTANCE','REASSIGNMENT_REQUIRED') order by ss.created_at asc limit 1 for update")
@@ -364,20 +366,24 @@ public class TechnicianMobileController {
       null, input.reason().trim(), sessions.requireUserId(authorization), technician.name());
     audits.record(authorization, technician.storeId(), "SERVICE", "MOBILE_DISPATCH_REJECTED", "service_session", dispatch.sessionId(),
       input.reason().trim(), dispatch, result);
-    return result;
+    return result; */
   }
 
   @GetMapping("/dispatch-notification/transfer-candidates")
   List<TransferCandidate> transferCandidates(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+    throw forbidden("Technician transfer is disabled");
+    /*
     Technician technician = currentTechnician(authorization);
     return jdbc.sql("select t.id,t.code,t.name from technician t where t.store_id=:store and t.active=true and t.queue_enabled=true and t.id<>:current and not exists(select 1 from service_session_participant busy where busy.store_id=:store and busy.technician_id=t.id and busy.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')) order by t.queue_order,t.name")
-      .param("store", technician.storeId()).param("current", technician.id()).query(TransferCandidate.class).list();
+      .param("store", technician.storeId()).param("current", technician.id()).query(TransferCandidate.class).list(); */
   }
 
   @PostMapping("/dispatch-notification/transfer")
   @Transactional
   TransferRequestResult requestTransfer(@Valid @RequestBody TransferRequestInput input,
                                         @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+    throw forbidden("Technician transfer is disabled");
+    /*
     Technician technician = currentTechnician(authorization);
     schedulePolicy.requireClockedIn(technician.storeId(), technician.id());
     PendingTransferSource source = jdbc.sql("select participant.id participant_id,ss.id session_id,ss.status,participant.status participant_status from service_session ss join service_session_participant participant on participant.service_session_id=ss.id where ss.store_id=:store and participant.technician_id=:technician and participant.status in ('PENDING_ACCEPTANCE','ACCEPTED') and ss.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED') order by ss.created_at asc limit 1 for update of ss")
@@ -396,7 +402,7 @@ public class TechnicianMobileController {
       .param("id", requestId).param("tenant", TENANT_ID).param("store", technician.storeId()).param("session", source.sessionId()).param("participant", source.participantId()).param("from", technician.id()).param("to", input.toTechnicianId()).param("reason", reason).update();
     dispatchEvents.record(technician.storeId(), source.sessionId(), source.participantId(), "TRANSFER_REQUESTED", technician.id(), input.toTechnicianId(), null, reason, sessions.requireUserId(authorization), technician.name());
     audits.record(authorization, technician.storeId(), "SERVICE", "MOBILE_TRANSFER_REQUESTED", "service_transfer_request", requestId, reason, source, input.toTechnicianId());
-    return new TransferRequestResult(requestId, source.sessionId(), input.toTechnicianId(), "REQUESTED");
+    return new TransferRequestResult(requestId, source.sessionId(), input.toTechnicianId(), "REQUESTED"); */
   }
 
   @PostMapping("/start-service")
@@ -430,6 +436,8 @@ public class TechnicianMobileController {
 
   @GetMapping("/extension-options")
   ExtensionOptions extensionOptions(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+    throw forbidden("Technician extensions are disabled");
+    /*
     Technician technician = currentTechnician(authorization);
     ServiceSession active = activeSession(technician);
     int currentExtensionMinutes = durationPolicies.extensionMinutes(technician.storeId(), active.id());
@@ -442,13 +450,15 @@ public class TechnicianMobileController {
       .toList();
     return new ExtensionOptions(active.id(), active.roomCode(), active.expectedEndAt(), active.plannedDurationMinutes(),
       currentExtensionMinutes, remainingExtensionMinutes, limits.serviceDurationMaxMinutes(),
-      limits.technicianExtensionMaxMinutes(), services);
+      limits.technicianExtensionMaxMinutes(), services); */
   }
 
   @PostMapping("/extensions")
   @Transactional
   ServiceSession addExtension(@Valid @RequestBody ExtensionInput input,
                               @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+    throw forbidden("Technician extensions are disabled");
+    /*
     Technician technician = currentTechnician(authorization);
     schedulePolicy.requireClockedIn(technician.storeId(), technician.id());
     ServiceSession active = activeSession(technician);
@@ -476,7 +486,7 @@ public class TechnicianMobileController {
       "Technician added extension: " + service.name());
     ServiceSession extended = session(technician.storeId(), technician.id(), active.id());
     audits.record(authorization, technician.storeId(), "SERVICE", "MOBILE_SERVICE_EXTENDED", "service_session", active.id(), "技师添加服务加钟", active, extended);
-    return extended;
+    return extended; */
   }
 
   private Technician currentTechnician(String authorization) {
@@ -525,6 +535,7 @@ public class TechnicianMobileController {
 
   private ResponseStatusException badRequest(String message) { return new ResponseStatusException(HttpStatus.BAD_REQUEST, message); }
   private ResponseStatusException conflict(String message) { return new ResponseStatusException(HttpStatus.CONFLICT, message); }
+  private ResponseStatusException forbidden(String message) { return new ResponseStatusException(HttpStatus.FORBIDDEN, message); }
 
   record Technician(UUID id, String code, String name, UUID storeId, String storeName) {}
   record PerformanceSummary(Long todayCompletedCount, Long todayAmountCents, Long monthCompletedCount, Long monthAmountCents) {}
