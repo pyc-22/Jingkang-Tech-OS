@@ -22,5 +22,5 @@ test('technician options expose and apply the authoritative remaining allowance'
 });
 
 test('both clients replace raw 400 responses with a clear limit message', () => {
-  assert.match(app, /response\.status === 400[\s\S]*门店总时长上限/);
+  assert.match(app, /response\.status === 400[\s\S]*总服务时长超限/);
 });
