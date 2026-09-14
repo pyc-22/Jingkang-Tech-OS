@@ -345,7 +345,8 @@ async function loadFoundationData({ silent = false } = {}) {
       const serviceCount = services.length;
       const bedText = `${serviceCount}/${capacity} 床已用 · 余 ${Math.max(0, capacity - serviceCount)} 床`;
       const details = roomList.length ? bedText : `${bedText}${current?.reason ? ` · ${current.reason}` : ''}`;
-      return { id: room.code, apiId: room.id, sessionId: session?.id || null, status, label, detail: details, services, expectedEndAt: session?.expectedEndAt, bedCount: capacity, occupiedBedCount: serviceCount, availableBedCount: Math.max(0, capacity - serviceCount) };
+      const exceptionSession = roomList.find(item => ['REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED'].includes(item.status));
+      return { id: room.code, apiId: room.id, sessionId: session?.id || null, exceptionSessionId: exceptionSession?.id || null, exceptionStatus: exceptionSession?.status || null, status, label, detail: details, services, expectedEndAt: session?.expectedEndAt, bedCount: capacity, occupiedBedCount: serviceCount, availableBedCount: Math.max(0, capacity - serviceCount) };
     });
     state.serviceCategories = serviceCategories || [];
     state.services = services.map(service => ({ id: service.id, code: service.code, name: service.name, category: service.category || '未分类', categoryId: service.categoryId || null, duration: `${service.defaultDurationMinutes} 分钟`, durationMinutes:service.defaultDurationMinutes, price: service.priceCents / 100, dispatchType: service.dispatchType || 'QUEUE', allowsExtension:service.allowsExtension !== false }));
@@ -526,7 +527,8 @@ function renderRooms() {
       const extension = service.extensionSummary ? ` · 加钟：${service.extensionSummary}` : '';
       return `<span class="room-service-row"><span class="room-service-main"><b>${roomTransferEscape(service.technicianName)}</b><small>${roomTransferEscape(service.serviceName)}${roomTransferEscape(extension)} · ${Number(service.plannedDurationMinutes || 0)} 分钟</small></span>${timer}</span>`;
     }).join('');
-    return `<article class="room ${room.status}"><button class="room-card" data-room="${room.id}" type="button"><span class="room-top"><span class="dot ${room.status}"></span><span>${room.label}</span></span><strong>${room.id}</strong><small>${room.detail || '可立即安排服务'}</small>${pendingSummary}${serviceRows ? `<span class="room-services">${serviceRows}</span>` : ''}</button><div class="room-actions">${room.status === 'serving' && room.apiId ? `<button class="room-transfer-tech-action" data-transfer-technician="${room.id}" type="button">换技师</button>` : ''}${room.status === 'pending-payment' && room.apiId ? `<button class="room-paid-action" data-confirm-payment="${room.id}" type="button">已付款</button>` : ''}${room.status === 'cleaning' && room.apiId ? `<button class="room-clean-action" data-complete-cleaning="${room.id}" type="button">完成清洁</button>` : ''}${room.apiId ? `<button class="room-status-action" data-room-status="${room.id}" type="button">状态</button>` : ''}</div></article>`;
+    const exceptionActions = room.exceptionSessionId && room.apiId ? `<button class="room-dispatch-action" data-dispatch-reassignment="${room.exceptionSessionId}" type="button">重新派单</button>${room.exceptionStatus === 'REASSIGNMENT_REQUIRED' ? `<button class="room-dispatch-action danger" data-dispatch-cancellation="${room.exceptionSessionId}" type="button">取消派单</button>` : ''}` : '';
+    return `<article class="room ${room.status}"><button class="room-card" data-room="${room.id}" type="button"><span class="room-top"><span class="dot ${room.status}"></span><span>${room.label}</span></span><strong>${room.id}</strong><small>${room.detail || '可立即安排服务'}</small>${pendingSummary}${serviceRows ? `<span class="room-services">${serviceRows}</span>` : ''}</button><div class="room-actions">${exceptionActions}${room.status === 'serving' && room.apiId ? `<button class="room-transfer-tech-action" data-transfer-technician="${room.id}" type="button">换技师</button>` : ''}${room.status === 'pending-payment' && room.apiId ? `<button class="room-paid-action" data-confirm-payment="${room.id}" type="button">已付款</button>` : ''}${room.status === 'cleaning' && room.apiId ? `<button class="room-clean-action" data-complete-cleaning="${room.id}" type="button">完成清洁</button>` : ''}${room.apiId ? `<button class="room-status-action" data-room-status="${room.id}" type="button">状态</button>` : ''}</div></article>`;
   }).join('');
   document.querySelector('#available-room-count').textContent = state.rooms.reduce((total, room) => total + Number(room.availableBedCount || 0), 0);
 }
@@ -4415,6 +4417,10 @@ async function confirmRoomPayment(room) {
   toast(`${room.id} 房已确认付款，等待清洁`);
 }
 document.querySelector('#room-grid').addEventListener('click', async event => {
+  const reassignment = event.target.closest('[data-dispatch-reassignment]');
+  if (reassignment) { await openDispatchReassignment(reassignment.dataset.dispatchReassignment); return; }
+  const cancellation = event.target.closest('[data-dispatch-cancellation]');
+  if (cancellation) { dispatchReassignmentSessionId = cancellation.dataset.dispatchCancellation; openDispatchCancellation(); return; }
   const transferTechnician = event.target.closest('[data-transfer-technician]');
   if (transferTechnician) {
     const room = state.rooms.find(item => item.id === transferTechnician.dataset.transferTechnician);

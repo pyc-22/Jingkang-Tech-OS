@@ -220,5 +220,5 @@ test('updated idempotency assets use the P0 release cache version', () => {
 });
 
 test('release health endpoint reports the complete mobile and daily report release', () => {
-  assert.match(home, /20260913-next-optimization-v2/);
+  assert.match(home, /20260914-next-optimization-v4/);
 });

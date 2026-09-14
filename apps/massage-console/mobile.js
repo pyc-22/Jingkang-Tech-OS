@@ -317,7 +317,7 @@ function renderCurrentService(session, acceptedSession, pendingSession, clockInE
   if (acceptedSession) {
     stopMobileServiceReminders();
     const waitingForOthers=acceptedSession.status==='PENDING_ACCEPTANCE';
-    target.innerHTML = `<div class="section-title"><h2>当前服务</h2><span class="status-chip neutral">${waitingForOthers?'等待同单技师':'已接单'}</span></div><div class="active-service"><div><b>${acceptedSession.serviceNameSnapshot}</b><small>${acceptedSession.roomCode} 房 · ${acceptedSession.plannedDurationMinutes} 分钟</small></div><time>${waitingForOthers?'本人已接单，等待其他参与技师确认':'已接单，等待前台开始服务'}</time></div>`;
+    target.innerHTML = `<div class="section-title"><h2>当前服务</h2><span class="status-chip neutral">${waitingForOthers?'等待同单技师':'已接单'}</span></div><div class="active-service"><div><b>${acceptedSession.serviceNameSnapshot}</b><small>${acceptedSession.roomCode} 房 · ${acceptedSession.plannedDurationMinutes} 分钟</small></div><time>${waitingForOthers?'本人已接单，等待其他参与技师确认':'已接单，可开始服务'}</time></div>${waitingForOthers?'':'<div class="mobile-service-actions"><button class="mobile-action" type="button" id="mobile-start-service">开始服务</button></div>'}`;
     return;
   }
   if (!session) {
@@ -336,6 +336,20 @@ async function mobileClockOut() {
   if(!response.ok){mobileToast('下钟失败，请刷新后重试');return;}
   await loadMobileDashboard();
   mobileToast('已下钟，房间等待付款');
+}
+
+let mobileStartingService=false;
+async function mobileStartService() {
+  if (mobileStartingService) return;
+  mobileStartingService=true;
+  const button=document.querySelector('#mobile-start-service');
+  if(button) button.disabled=true;
+  try {
+    const response=await fetch(`${mobileApi}/technician/start-service`,{method:'POST',headers:mobileAuthHeaders()});
+    if(!response.ok){mobileToast(response.status===409?'服务状态已变化，请刷新':'开始服务失败，请稍后重试');return;}
+    await loadMobileDashboard();
+    mobileToast('服务已开始');
+  } finally { mobileStartingService=false; }
 }
 
 async function loadMobilePerformanceRange() {
@@ -450,6 +464,7 @@ document.querySelector('#confirm-mobile-dispatch').addEventListener('click',asyn
 });
 document.querySelector('#current-service').addEventListener('click',async event=>{
   if(event.target.closest('#mobile-confirm-pending')){document.querySelector('#confirm-mobile-dispatch').click();return;}
+  if(event.target.closest('#mobile-start-service')){await mobileStartService();return;}
   if(event.target.closest('#mobile-clock-out'))await mobileClockOut();
 });
 document.querySelector('#open-mobile-leave').addEventListener('click',openMobileLeaveDialog);
