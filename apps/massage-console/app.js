@@ -531,6 +531,12 @@ function renderRooms() {
     return `<article class="room ${room.status}"><div class="room-card" data-room="${room.id}" role="button" tabindex="0"><span class="room-top"><span class="dot ${room.status}"></span><span>${room.label}</span></span><strong>${room.id}</strong><small>${room.detail || '可立即安排服务'}</small>${pendingSummary}${serviceRows ? `<span class="room-services">${serviceRows}</span>` : ''}</div><div class="room-actions">${exceptionActions}${room.status === 'serving' && room.apiId ? `<button class="room-transfer-tech-action" data-transfer-technician="${room.id}" type="button">换技师</button>` : ''}${room.status === 'pending-payment' && room.apiId ? `<button class="room-paid-action" data-confirm-payment="${room.id}" type="button">已付款</button>` : ''}${room.status === 'cleaning' && room.apiId ? `<button class="room-clean-action" data-complete-cleaning="${room.id}" type="button">完成清洁</button>` : ''}${room.apiId ? `<button class="room-status-action" data-room-status="${room.id}" type="button">状态</button>` : ''}</div></article>`;
   }).join('');
   document.querySelector('#available-room-count').textContent = state.rooms.reduce((total, room) => total + Number(room.availableBedCount || 0), 0);
+  document.querySelectorAll('#room-grid [data-dispatch-reassignment]').forEach(button => {
+    button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); openDispatchReassignment(button.dataset.dispatchReassignment); });
+  });
+  document.querySelectorAll('#room-grid [data-dispatch-cancellation]').forEach(button => {
+    button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); dispatchReassignmentSessionId = button.dataset.dispatchCancellation; openDispatchCancellation(); });
+  });
 }
 
 const dispatchEscape = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[character]));
@@ -4417,6 +4423,7 @@ async function confirmRoomPayment(room) {
   toast(`${room.id} 房已确认付款，等待清洁`);
 }
 document.querySelector('#room-grid').addEventListener('click', async event => {
+  console.debug('[room-grid] click', event.target, event.target?.closest?.('[data-dispatch-reassignment]'), event.target?.closest?.('[data-dispatch-cancellation]'));
   const reassignment = event.target.closest('[data-dispatch-reassignment]');
   if (reassignment) { await openDispatchReassignment(reassignment.dataset.dispatchReassignment); return; }
   const cancellation = event.target.closest('[data-dispatch-cancellation]');
