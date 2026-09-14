@@ -508,6 +508,7 @@ window.setInterval(refreshRoomServiceTimers, 1000);
 document.addEventListener('visibilitychange', syncFrontdeskWhenVisible);
 
 function renderRooms() {
+  console.log('renderRooms called', state.rooms.length);
   document.querySelector('#room-grid').innerHTML = state.rooms.map(room => {
     const pendingSessions = room.status === 'pending-payment'
       ? state.pendingServiceSessions.filter(session => String(session.roomId) === String(room.apiId))
@@ -531,27 +532,20 @@ function renderRooms() {
     return `<article class="room ${room.status}"><div class="room-card" data-room="${room.id}" role="button" tabindex="0"><span class="room-top"><span class="dot ${room.status}"></span><span>${room.label}</span></span><strong>${room.id}</strong><small>${room.detail || '可立即安排服务'}</small>${pendingSummary}${serviceRows ? `<span class="room-services">${serviceRows}</span>` : ''}</div><div class="room-actions">${exceptionActions}${room.status === 'serving' && room.apiId ? `<button class="room-transfer-tech-action" data-transfer-technician="${room.id}" type="button">换技师</button>` : ''}${room.status === 'pending-payment' && room.apiId ? `<button class="room-paid-action" data-confirm-payment="${room.id}" type="button">已付款</button>` : ''}${room.status === 'cleaning' && room.apiId ? `<button class="room-clean-action" data-complete-cleaning="${room.id}" type="button">完成清洁</button>` : ''}${room.apiId ? `<button class="room-status-action" data-room-status="${room.id}" type="button">状态</button>` : ''}</div></article>`;
   }).join('');
   document.querySelector('#available-room-count').textContent = state.rooms.reduce((total, room) => total + Number(room.availableBedCount || 0), 0);
-  document.querySelectorAll('#room-grid [data-dispatch-reassignment]').forEach(button => {
-    button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); openDispatchReassignment(button.dataset.dispatchReassignment); });
+  const reassignmentButtons = document.querySelectorAll('#room-grid [data-dispatch-reassignment]');
+  console.log('found buttons', reassignmentButtons.length);
+  reassignmentButtons.forEach(button => {
+    button.addEventListener('click', event => { console.log('dispatch button clicked', event.target); event.preventDefault(); event.stopPropagation(); openDispatchReassignment(button.dataset.dispatchReassignment); });
   });
   document.querySelectorAll('#room-grid [data-dispatch-cancellation]').forEach(button => {
-    button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); dispatchReassignmentSessionId = button.dataset.dispatchCancellation; openDispatchCancellation(); });
+    button.addEventListener('click', event => { console.log('dispatch button clicked', event.target); event.preventDefault(); event.stopPropagation(); dispatchReassignmentSessionId = button.dataset.dispatchCancellation; openDispatchCancellation(); });
   });
 }
 
 const dispatchEscape = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[character]));
 const dispatchEventLabel = { ASSIGNED:'已派单', ACCEPTED:'已接单', REJECTED:'已拒单', EXPIRED:'接单超时', REASSIGNED:'已重新派单', DISPATCH_CANCELLED:'已取消派单' };
 
-function ensureDispatchReassignmentPanel() {
-  if (!frontdeskPendingPanelsEnabled) return;
-  const frontdeskLayout = document.querySelector('#frontdesk-view .frontdesk-layout');
-  const existingPanel = document.querySelector('#dispatch-reassignment-panel');
-  if (existingPanel && existingPanel.closest('#order-panel')) {
-    frontdeskLayout?.insertAdjacentElement('afterend', existingPanel);
-  }
-  if (!document.querySelector('#dispatch-reassignment-panel')) {
-    frontdeskLayout?.insertAdjacentHTML('afterend', '<section class="panel room-transfer-panel dispatch-reassignment-panel" id="dispatch-reassignment-panel"><div class="panel-heading"><div><h2>待处理事件</h2><p>拒单、超时、待沟通和技师转单统一在这里处理</p></div><button class="text-button" id="refresh-dispatch-reassignments" type="button" title="刷新待处理事件">刷新</button></div><div class="pending-event-group"><h3>重新派单</h3><div class="room-transfer-list" id="dispatch-reassignment-list"><p class="table-empty">正在加载</p></div></div><div class="pending-event-group"><h3>待与客沟通</h3><div class="room-transfer-list" id="dispatch-cancelled-list"><p class="table-empty">正在加载</p></div></div><div class="pending-event-group"><h3>技师转单申请</h3><div class="room-transfer-list" id="dispatch-transfer-list"><p class="table-empty">正在加载</p></div></div></section>');
-  }
+function ensureDispatchReassignmentDialogs() {
   if (!document.querySelector('#dispatch-reassignment-dialog')) {
     document.body.insertAdjacentHTML('beforeend', '<dialog id="dispatch-reassignment-dialog"><form id="dispatch-reassignment-form" class="dialog-card compact dispatch-reassignment-dialog"><div class="dialog-heading"><div><p class="eyebrow">派单异常处理</p><h2>人工重新派单</h2></div><button class="icon-button" id="close-dispatch-reassignment" type="button" aria-label="关闭">×</button></div><div class="dispatch-reassignment-summary" id="dispatch-reassignment-summary"></div><div class="form-grid"><label class="form-full">待替换技师位<select id="dispatch-reassignment-slot" name="slotNo" required></select></label><label class="form-full">重新安排技师<select id="dispatch-reassignment-technician" name="technicianId" required></select></label><label class="form-full">重新派单说明<textarea name="reason" rows="3" maxlength="240" required placeholder="例如：技师临时有事，改由其他技师服务"></textarea></label></div><section class="dispatch-event-history"><h3>派单记录</h3><div id="dispatch-event-history-list"></div></section><div class="dialog-actions"><button class="button secondary" id="cancel-dispatch-reassignment" type="button">关闭</button><button class="button danger" id="open-dispatch-cancellation" type="button">取消派单</button><button class="button primary" type="submit">确认重新派单</button></div></form></dialog>');
     const close = () => document.querySelector('#dispatch-reassignment-dialog').close();
@@ -567,6 +561,19 @@ function ensureDispatchReassignmentPanel() {
     document.querySelector('#back-dispatch-cancellation').addEventListener('click', closeCancellation);
     document.querySelector('#dispatch-cancellation-form').addEventListener('submit', submitDispatchCancellation);
   }
+}
+
+function ensureDispatchReassignmentPanel() {
+  if (!frontdeskPendingPanelsEnabled) return;
+  const frontdeskLayout = document.querySelector('#frontdesk-view .frontdesk-layout');
+  const existingPanel = document.querySelector('#dispatch-reassignment-panel');
+  if (existingPanel && existingPanel.closest('#order-panel')) {
+    frontdeskLayout?.insertAdjacentElement('afterend', existingPanel);
+  }
+  if (!document.querySelector('#dispatch-reassignment-panel')) {
+    frontdeskLayout?.insertAdjacentHTML('afterend', '<section class="panel room-transfer-panel dispatch-reassignment-panel" id="dispatch-reassignment-panel"><div class="panel-heading"><div><h2>待处理事件</h2><p>拒单、超时、待沟通和技师转单统一在这里处理</p></div><button class="text-button" id="refresh-dispatch-reassignments" type="button" title="刷新待处理事件">刷新</button></div><div class="pending-event-group"><h3>重新派单</h3><div class="room-transfer-list" id="dispatch-reassignment-list"><p class="table-empty">正在加载</p></div></div><div class="pending-event-group"><h3>待与客沟通</h3><div class="room-transfer-list" id="dispatch-cancelled-list"><p class="table-empty">正在加载</p></div></div><div class="pending-event-group"><h3>技师转单申请</h3><div class="room-transfer-list" id="dispatch-transfer-list"><p class="table-empty">正在加载</p></div></div></section>');
+  }
+  ensureDispatchReassignmentDialogs();
   const panel = document.querySelector('#dispatch-reassignment-panel');
   if (panel && panel.dataset.bound !== 'true') {
     panel.dataset.bound = 'true';
@@ -658,6 +665,7 @@ async function submitDispatchTransferReview(action) {
 }
 
 async function openDispatchReassignment(sessionId) {
+  ensureDispatchReassignmentDialogs();
   const [participantsResponse, eventsResponse] = await Promise.all([
     fetch(`http://localhost:8080/api/v1/service-sessions/${sessionId}/participants`, { headers:storeContextHeaders() }),
     fetch(`http://localhost:8080/api/v1/service-sessions/${sessionId}/dispatch-events`, { headers:storeContextHeaders() })
@@ -672,6 +680,8 @@ async function openDispatchReassignment(sessionId) {
   const allowedIds = new Set([...state.technicians.filter(item => item.state === 'available').map(item => String(item.id)), ...unresolved.map(item => String(item.technicianId))]);
   const candidates = state.technicians.filter(item => allowedIds.has(String(item.id)));
   const form = document.querySelector('#dispatch-reassignment-form');
+  const dialog = document.querySelector('#dispatch-reassignment-dialog');
+  if (!form || !dialog) { toast('重新派单窗口初始化失败，请刷新后重试'); return; }
   form.reset();
   document.querySelector('#dispatch-reassignment-summary').innerHTML = `<b>${dispatchEscape(session?.roomCode)} 房 · ${dispatchEscape(session?.serviceNameSnapshot)}</b><small>${session?.status === 'DISPATCH_CANCELLED' ? '当前处于待与客沟通状态，可在确认继续服务后重新派单。' : '仅替换被拒单或超时的技师位，已接单技师和业绩分配保持不变。'}</small>`;
   document.querySelector('#dispatch-reassignment-slot').innerHTML = unresolved.map(item => `<option value="${item.slotNo}">${dispatchEscape(item.technicianName)} · ${item.status === 'REJECTED' ? '已拒单' : '接单超时'} · 技师位 ${item.slotNo}</option>`).join('');
@@ -683,10 +693,15 @@ async function openDispatchReassignment(sessionId) {
 }
 
 function openDispatchCancellation() {
+  ensureDispatchReassignmentDialogs();
   if (!dispatchReassignmentSessionId) return;
-  document.querySelector('#dispatch-cancellation-form').reset();
-  document.querySelector('#dispatch-reassignment-dialog').close();
-  document.querySelector('#dispatch-cancellation-dialog').showModal();
+  const cancelForm = document.querySelector('#dispatch-cancellation-form');
+  const reassignmentDialog = document.querySelector('#dispatch-reassignment-dialog');
+  const cancellationDialog = document.querySelector('#dispatch-cancellation-dialog');
+  if (!cancelForm || !reassignmentDialog || !cancellationDialog) { toast('取消派单窗口初始化失败，请刷新后重试'); return; }
+  cancelForm.reset();
+  if (reassignmentDialog.open) reassignmentDialog.close();
+  cancellationDialog.showModal();
 }
 
 async function submitDispatchCancellation(event) {
@@ -4423,7 +4438,7 @@ async function confirmRoomPayment(room) {
   toast(`${room.id} 房已确认付款，等待清洁`);
 }
 document.querySelector('#room-grid').addEventListener('click', async event => {
-  console.debug('[room-grid] click', event.target, event.target?.closest?.('[data-dispatch-reassignment]'), event.target?.closest?.('[data-dispatch-cancellation]'));
+  console.log('[room-grid] click', event.target, event.target?.closest?.('[data-dispatch-reassignment]'), event.target?.closest?.('[data-dispatch-cancellation]'));
   const reassignment = event.target.closest('[data-dispatch-reassignment]');
   if (reassignment) { await openDispatchReassignment(reassignment.dataset.dispatchReassignment); return; }
   const cancellation = event.target.closest('[data-dispatch-cancellation]');

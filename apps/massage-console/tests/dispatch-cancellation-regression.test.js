@@ -19,3 +19,10 @@ test('dispatch cancellation has a dedicated pre-service state and remains room-e
   assert.match(migration, /status IN \('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'\)/);
   assert.match(migration, /DISPATCH_CANCELLED','TRANSFER_REQUESTED/);
 });
+
+test('room dispatch dialogs initialize independently from the disabled pending panel', () => {
+  assert.match(app, /function ensureDispatchReassignmentDialogs\(\)/);
+  assert.match(app, /async function openDispatchReassignment\(sessionId\) \{\s*ensureDispatchReassignmentDialogs\(\)/);
+  assert.match(app, /function openDispatchCancellation\(\) \{\s*ensureDispatchReassignmentDialogs\(\)/);
+  assert.match(app, /if \(!form \|\| !dialog\)/);
+});
