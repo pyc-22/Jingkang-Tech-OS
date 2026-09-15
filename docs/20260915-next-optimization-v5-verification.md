@@ -33,3 +33,9 @@
 ## 覆盖说明
 
 本轮没有新增独立浏览器人工点击结果。补单字段和提交契约由 151 项前端回归覆盖，完整数据链路由上述真实 PostgreSQL 事务烟测覆盖。
+
+## 本机运行限制
+
+- 静态前端服务在 `http://127.0.0.1:5174/` 返回 HTTP 200，并确认首页引用 `app.js?v=20260915-next-optimization-v5`。
+- 独立启动 JAR 时，Spring、Hikari 和 Flyway 均初始化成功，数据库确认处于 V94；嵌入式 Tomcat 随后在本机创建 JDK NIO Selector 回环连接时出现 `Unable to establish loopback connection`，因此未取得独立进程的 `/api/health` 响应。
+- 该运行环境问题不计入业务通过项；后端业务行为由 JDK 21 全量测试和连接真实 PostgreSQL 的 Spring 事务烟测验证。
