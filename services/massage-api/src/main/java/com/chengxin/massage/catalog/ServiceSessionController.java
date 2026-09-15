@@ -563,7 +563,7 @@ public class ServiceSessionController {
                         where commission.service_session_id=ss.id), 0) commission_cents
         from service_session ss
         join technician t on t.id=ss.technician_id
-        join room r on r.id=ss.room_id
+        left join room r on r.id=ss.room_id
         left join lateral (
           select linked_order.id,
                  linked_order.order_no,

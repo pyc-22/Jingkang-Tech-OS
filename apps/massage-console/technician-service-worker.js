@@ -1,5 +1,5 @@
-const CACHE_NAME = 'jingkang-technician-20260913-next-optimization-v2';
-const ASSET_VERSION = '20260913-next-optimization-v2';
+const CACHE_NAME = 'jingkang-technician-20260914-next-optimization-v4';
+const ASSET_VERSION = '20260914-next-optimization-v4';
 const APP_SHELL = [
   `./mobile.html?v=${ASSET_VERSION}`,
   `./technician.webmanifest?v=${ASSET_VERSION}`,

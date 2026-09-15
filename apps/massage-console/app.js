@@ -72,6 +72,8 @@ let includeInactiveServices = false;
 let selectedManagedServiceCategoryId = 'ALL';
 let orderServiceCategoryId = 'ALL';
 let orderServiceSearch = '';
+let manualServiceTarget = null;
+let manualServiceDraft = null;
 let activeDispatchTransferRequestId = null;
 // 20260912 P0: keep the pending-workflow APIs available, but do not surface
 // their unstable front-desk panels in the settlement workspace.
@@ -1971,7 +1973,7 @@ function openTechnicianDialog(technician) {
 function renderOrder() {
   const list = document.querySelector('#order-lines');
   const correctionBanner = orderCorrectionContext ? `<div class="order-line order-correction-banner"><span><b>正在修正 ${memberBusinessEscape(orderCorrectionContext.originalOrderNo)}</b><small>${memberBusinessEscape(orderCorrectionContext.reason)}</small></span><button type="button" data-cancel-order-correction>取消修正</button></div>` : '';
-  list.innerHTML = correctionBanner + (state.orderItems.length ? state.orderItems.map(item => `<div class="order-line"><span><b>${item.name}</b><small>${item.duration}</small></span><span><b>${money(item.price)}</b><button data-remove="${item.lineId}">移除</button></span></div>`).join('') : '<p class="empty-state">请选择服务项目</p>');
+  list.innerHTML = correctionBanner + (state.orderItems.length ? state.orderItems.map(item => `<div class="order-line"><span><b>${memberBusinessEscape(item.name)}</b><small>${memberBusinessEscape(item.duration)}${item.manualService ? ` · ${clockTypeLabels[item.manualService.clockType] || item.manualService.clockType} · ${item.manualService.technicians.length} 位技师` : ''}</small></span><span><b>${money(item.price)}</b><button data-remove="${item.lineId}">移除</button></span></div>`).join('') : '<p class="empty-state">请选择服务项目</p>');
   const review = document.querySelector('#settlement-order-review-list');
   if (review) review.innerHTML = state.orderItems.length ? state.orderItems.map(item => `<article><span><b>${memberBusinessEscape(item.name)}</b><small>${memberBusinessEscape(item.roomCode ? `${item.roomCode} 房 · ${item.serviceNo || ''}` : item.duration)}</small></span><strong>${money(item.price)}</strong></article>`).join('') : '<p class="empty-state">尚未选择待结算服务</p>';
   const total = state.orderItems.reduce((sum, item) => sum + item.price, 0);
@@ -3241,6 +3243,47 @@ function renderOrderServiceCatalog() {
   document.querySelector('#service-options').innerHTML = rows.map((service, index) => `<button type="button" class="service-option ${index === 0 ? 'selected' : ''}" data-service="${service.id}"><b>${roomTransferEscape(service.name)}</b><small>${roomTransferEscape(serviceCategoryPath(service.categoryId))} · ${service.duration}</small><strong>${money(service.price)}</strong></button>`).join('') || '<p class="table-empty">没有匹配的项目</p>';
 }
 
+function renderManualServiceTechnicians() {
+  const target = document.querySelector('#manual-service-technician-list');
+  if (!target || !manualServiceDraft) return;
+  const rows = manualServiceDraft.technicians || [];
+  const options = state.technicians.filter(item => item.state !== 'off').map(item => `<option value="${memberBusinessEscape(item.id)}">${memberBusinessEscape(item.name)} · 工号 ${memberBusinessEscape(item.code || '未设置')} · ${historicalBackfillTechnicianStates[item.state] || '可用'}</option>`).join('');
+  target.innerHTML = rows.map((row, index) => `<div class="manual-service-technician-row" data-manual-technician-row="${index}"><label>技师<select data-manual-technician required>${options}</select></label><label>分配比例<div class="manual-service-percent"><input data-manual-allocation type="number" min="0.01" max="100" step="0.01" value="${(Number(row.allocationBp || 0) / 100).toFixed(2)}" required><em>%</em></div></label><button type="button" class="manual-service-technician-remove" data-manual-remove="${index}" aria-label="移除技师" ${rows.length === 1 ? 'disabled' : ''}>×</button></div>`).join('');
+  target.querySelectorAll('[data-manual-technician]').forEach((select, index) => { select.value = String(rows[index].technicianId || ''); });
+}
+
+function openManualServiceConfig(service) {
+  manualServiceTarget = service;
+  manualServiceDraft = {
+    clockType: 'QUEUE', duration: Number(service.durationMinutes || 60), roomId: '',
+    technicians: state.technicians.filter(item => item.state !== 'off').slice(0, 1).map(item => ({ technicianId: item.id, allocationBp: 10000 }))
+  };
+  const form = document.querySelector('#manual-service-config-form');
+  form.reset(); form.elements.clockType.value = manualServiceDraft.clockType; form.elements.duration.value = manualServiceDraft.duration;
+  document.querySelector('#manual-service-config-title').textContent = service.name;
+  document.querySelector('#manual-service-config-summary').innerHTML = `<b>${memberBusinessEscape(service.name)}</b><small>${money(service.price)} · 请补充技师、钟类和时长</small>`;
+  const rooms = state.rooms.filter(room => room.apiId && room.status === 'idle' && Number(room.availableBedCount || 0) > 0);
+  form.elements.roomId.innerHTML = '<option value="">不关联房间</option>' + rooms.map(room => `<option value="${memberBusinessEscape(room.apiId)}">${memberBusinessEscape(room.id)} 房 · ${Number(room.availableBedCount || 0)} 床可用</option>`).join('');
+  renderManualServiceTechnicians();
+  document.querySelector('#manual-service-config-dialog').showModal();
+}
+
+function closeManualServiceConfig() {
+  manualServiceTarget = null; manualServiceDraft = null; document.querySelector('#manual-service-config-dialog').close();
+}
+
+function syncManualServiceDraftFromForm() {
+  if (!manualServiceDraft) return;
+  const form = document.querySelector('#manual-service-config-form');
+  manualServiceDraft.clockType = form.elements.clockType.value;
+  manualServiceDraft.duration = Number(form.elements.duration.value);
+  manualServiceDraft.roomId = form.elements.roomId.value || '';
+  manualServiceDraft.technicians = [...document.querySelectorAll('[data-manual-technician-row]')].map(row => ({
+    technicianId: row.querySelector('[data-manual-technician]').value,
+    allocationBp: Math.round(Number(row.querySelector('[data-manual-allocation]').value || 0) * 100)
+  }));
+}
+
 function renderDispatchServiceCatalog() {
   const search = dispatchServiceSearch.trim().toLowerCase();
   const rows = state.services.filter(service => serviceMatchesCategory(service, dispatchServiceCategoryId) && (!search || `${service.code || ''} ${service.name} ${service.category} ${serviceCategoryPath(service.categoryId)}`.toLowerCase().includes(search)));
@@ -4504,7 +4547,40 @@ document.querySelector('#order-service-search').addEventListener('input', event 
   orderServiceSearch = event.target.value;
   renderOrderServiceCatalog();
 });
-document.querySelector('#confirm-service').addEventListener('click', event => { event.preventDefault(); const selected = document.querySelector('.service-option.selected'); if (!selected) return toast('请先选择服务项目'); const service = state.services.find(item => String(item.id) === String(selected.dataset.service)); if (!service) return toast('项目数据已变化，请刷新后重试'); state.orderItems.push({ ...service, lineId: `${service.id}-${Date.now()}` }); document.querySelector('#order-dialog').close(); renderOrder(); toast(`${service.name} 已加入订单`); });
+document.querySelector('#confirm-service').addEventListener('click', event => { event.preventDefault(); const selected = document.querySelector('.service-option.selected'); if (!selected) return toast('请先选择服务项目'); const service = state.services.find(item => String(item.id) === String(selected.dataset.service)); if (!service) return toast('项目数据已变化，请刷新后重试'); document.querySelector('#order-dialog').close(); openManualServiceConfig(service); });
+document.querySelector('#close-manual-service-config').addEventListener('click', closeManualServiceConfig);
+document.querySelector('#cancel-manual-service-config').addEventListener('click', closeManualServiceConfig);
+document.querySelector('#manual-service-add-technician').addEventListener('click', () => {
+  if (!manualServiceDraft) return;
+  if (manualServiceDraft.technicians.length >= 4) return toast('一个项目最多选择 4 位技师');
+  syncManualServiceDraftFromForm();
+  const selected = new Set(manualServiceDraft.technicians.map(item => String(item.technicianId)));
+  const next = state.technicians.find(item => item.state !== 'off' && !selected.has(String(item.id)));
+  if (!next) return toast('没有更多可选择的技师');
+  manualServiceDraft.technicians.push({ technicianId: next.id, allocationBp: Math.floor(10000 / (manualServiceDraft.technicians.length + 1)) });
+  const base = Math.floor(10000 / manualServiceDraft.technicians.length);
+  manualServiceDraft.technicians.forEach((item, index) => { item.allocationBp = base + (index === manualServiceDraft.technicians.length - 1 ? 10000 - base * manualServiceDraft.technicians.length : 0); });
+  renderManualServiceTechnicians();
+});
+document.querySelector('#manual-service-technician-list').addEventListener('change', syncManualServiceDraftFromForm);
+document.querySelector('#manual-service-technician-list').addEventListener('input', syncManualServiceDraftFromForm);
+document.querySelector('#manual-service-technician-list').addEventListener('click', event => {
+  const remove = event.target.closest('[data-manual-remove]');
+  if (!remove || !manualServiceDraft || manualServiceDraft.technicians.length <= 1) return;
+  syncManualServiceDraftFromForm(); manualServiceDraft.technicians.splice(Number(remove.dataset.manualRemove), 1);
+  const base = Math.floor(10000 / manualServiceDraft.technicians.length);
+  manualServiceDraft.technicians.forEach((item, index) => { item.allocationBp = base + (index === manualServiceDraft.technicians.length - 1 ? 10000 - base * manualServiceDraft.technicians.length : 0); });
+  renderManualServiceTechnicians();
+});
+document.querySelector('#manual-service-config-form').addEventListener('submit', event => {
+  event.preventDefault(); syncManualServiceDraftFromForm();
+  if (!manualServiceTarget || !manualServiceDraft) return;
+  if (!Number.isInteger(manualServiceDraft.duration) || manualServiceDraft.duration < 15 || manualServiceDraft.duration > 360) return toast('服务时长必须在 15 到 360 分钟之间');
+  if (manualServiceDraft.technicians.some(item => !item.technicianId) || manualServiceDraft.technicians.reduce((sum, item) => sum + item.allocationBp, 0) !== 10000) return toast('请选择技师，并确保业绩分配合计为 100%');
+  if (new Set(manualServiceDraft.technicians.map(item => item.technicianId)).size !== manualServiceDraft.technicians.length) return toast('同一项目不能重复选择技师');
+  state.orderItems.push({ ...manualServiceTarget, duration: `${manualServiceDraft.duration} 分钟`, durationMinutes: manualServiceDraft.duration, lineId: `${manualServiceTarget.id}-${Date.now()}`, manualService: { clockType: manualServiceDraft.clockType, roomId: manualServiceDraft.roomId || null, technicians: manualServiceDraft.technicians } });
+  const name = manualServiceTarget.name; closeManualServiceConfig(); renderOrder(); toast(`${name} 已加入订单`);
+});
 document.querySelector('#order-lines').addEventListener('click', event => { const cancel=event.target.closest('[data-cancel-order-correction]');if(cancel){if(window.confirm('取消本次订单修正并清空工作台？')){orderCorrectionContext=null;state.orderItems=[];state.selectedMemberId=null;renderMemberCard();renderOrder();}return;}const button = event.target.closest('[data-remove]'); if (!button) return; state.orderItems = state.orderItems.filter(item => item.lineId !== button.dataset.remove); renderOrder(); });
 document.querySelector('#pending-service-list').addEventListener('click', event => { const voidButton = event.target.closest('[data-void-service]'); if (voidButton) { openPendingServiceVoid(voidButton.dataset.voidService); return; } const button = event.target.closest('[data-pending-service]'); if (button) addPendingServiceToOrder(button.dataset.pendingService); });
 document.querySelector('#pending-service-list').addEventListener('wheel', event => {
@@ -4552,7 +4628,7 @@ document.querySelector('#settlement-dialog form').addEventListener('submit', asy
   submitButton.textContent = '正在收款...';
   const printWindow = storePrintSetting?.autoPrint && !localPrintBridgeOnline ? window.open('', 'massage-receipt', 'popup,width=480,height=720') : null;
   try {
-    const response = await fetch('http://localhost:8080/api/v1/sales-orders/settle',{method:'POST',headers:storeContextHeaders(true),body:JSON.stringify({memberId:state.selectedMemberId || null,settlementAmountCents:totalCents,waiveReason:waived ? waiveReason : null,correctedFromOrderId:orderCorrectionContext?.originalOrderId||null,correctionReason:orderCorrectionContext?.reason||null,lines:state.orderItems.map(item=>({serviceItemId:item.id,serviceSessionId:item.serviceSessionId||null,durationMinutes:Number.parseInt(item.duration,10)})),payments})});
+    const response = await fetch('http://localhost:8080/api/v1/sales-orders/settle',{method:'POST',headers:storeContextHeaders(true),body:JSON.stringify({memberId:state.selectedMemberId || null,settlementAmountCents:totalCents,waiveReason:waived ? waiveReason : null,correctedFromOrderId:orderCorrectionContext?.originalOrderId||null,correctionReason:orderCorrectionContext?.reason||null,lines:state.orderItems.map(item=>({serviceItemId:item.id,serviceSessionId:item.serviceSessionId||null,durationMinutes:Number(item.durationMinutes || Number.parseInt(item.duration,10)),clockType:item.manualService?.clockType||null,roomId:item.manualService?.roomId||null,technicians:item.manualService?.technicians||null})),payments})});
     if(!response.ok){ if (printWindow) printWindow.close(); toast(await responseMessage(response, memberPayment?'结算失败：会员余额或收款明细有误':'结算失败，请检查当前订单')); return; }
     const settledOrder = await response.json();
     state.orderItems=[]; state.selectedMemberId=null; orderCorrectionContext=null; singleRoomSettlementRoomId=null; singleRoomSettlementRoom=null; singleRoomSettlementSessions=[]; singleRoomSettlementSelection=new Set(); document.querySelector('#settlement-dialog').close(); renderMemberCard(); renderOrder(); await Promise.all([loadPendingServiceSessions({ silent:true }),loadFoundationData({ silent:true })]);

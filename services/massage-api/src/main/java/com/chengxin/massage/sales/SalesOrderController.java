@@ -133,7 +133,7 @@ public class SalesOrderController {
                                                      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                                                      @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
-    String sql = "select ss.id,upper('FW-' || substr(replace(ss.id::text,'-',''),1,12)) service_no,ss.service_item_id,ss.service_name_snapshot,ss.service_price_cents + coalesce((select sum(extension.service_price_cents) from service_session_extension extension where extension.service_session_id=ss.id),0) service_price_cents,ss.planned_duration_minutes,ss.ended_at,ss.business_date,coalesce((select string_agg(technician.name,'、' order by participant.slot_no,participant.sequence_no) from service_session_participant participant join technician technician on technician.id=participant.technician_id where participant.service_session_id=ss.id and participant.status='COMPLETED'),t.name) technician_name,ss.room_id,r.code room_code,ss.clock_type,coalesce((select string_agg(extension.service_name_snapshot || ' ' || extension.planned_duration_minutes || '分钟', '、' order by extension.added_at) from service_session_extension extension where extension.service_session_id=ss.id),'') extension_summary from service_session ss join technician t on t.id=ss.technician_id join room r on r.id=ss.room_id where ss.store_id=:store";
+    String sql = "select ss.id,upper('FW-' || substr(replace(ss.id::text,'-',''),1,12)) service_no,ss.service_item_id,ss.service_name_snapshot,ss.service_price_cents + coalesce((select sum(extension.service_price_cents) from service_session_extension extension where extension.service_session_id=ss.id),0) service_price_cents,ss.planned_duration_minutes,ss.ended_at,ss.business_date,coalesce((select string_agg(technician.name,'、' order by participant.slot_no,participant.sequence_no) from service_session_participant participant join technician technician on technician.id=participant.technician_id where participant.service_session_id=ss.id and participant.status='COMPLETED'),t.name) technician_name,ss.room_id,r.code room_code,ss.clock_type,coalesce((select string_agg(extension.service_name_snapshot || ' ' || extension.planned_duration_minutes || '分钟', '、' order by extension.added_at) from service_session_extension extension where extension.service_session_id=ss.id),'') extension_summary from service_session ss join technician t on t.id=ss.technician_id left join room r on r.id=ss.room_id where ss.store_id=:store";
     if (roomId != null) sql += " and ss.room_id=:roomId";
     sql += " and ss.status='COMPLETED' and not exists(select 1 from sales_order_service_session link join sales_order linked_order on linked_order.id=link.order_id where link.service_session_id=ss.id and linked_order.status <> 'CANCELLED' and linked_order.refund_status <> 'FULL') order by ss.ended_at desc limit 100";
     JdbcClient.StatementSpec statement = jdbc.sql(sql).param("store", storeId);
@@ -424,13 +424,18 @@ public class SalesOrderController {
     String cashierName = adminSessions.authenticatedIdentity(authorization).displayName();
     jdbc.sql("insert into sales_order(id,tenant_id,store_id,member_id,order_no,settlement_no,cashier_name_snapshot,status,receivable_cents,paid_cents,settled_at,business_date,corrected_from_order_id,correction_reason) values(:id,:tenant,:store,:member,:no,:settlement,:cashier,'SETTLED',:total,:paid,:settled,:businessDate,:correctedFrom,:correctionReason)")
       .param("id", orderId).param("tenant", TENANT_ID).param("store", storeId).param("member", input.memberId()).param("no", orderNo).param("settlement", settlementNo).param("cashier", cashierName).param("total", total).param("paid", paid).param("settled", settledAt).param("businessDate", businessDate).param("correctedFrom", input.correctedFromOrderId()).param("correctionReason", correctionReason.isBlank() ? null : correctionReason).update();
+    List<Line> materializedLines = new ArrayList<>(lines.size());
     for (Line line : lines) {
+      Line materialized = line.serviceSessionId() == null
+        ? materializeManualLine(storeId, line, settledAt, businessDate)
+        : line;
+      materializedLines.add(materialized);
       UUID orderLineId = UUID.randomUUID();
       jdbc.sql("insert into sales_order_line(id,order_id,service_item_id,item_name_snapshot,unit_price_cents,duration_minutes,line_amount_cents) values(:id,:order,:service,:name,:price,:duration,:amount)")
-        .param("id", orderLineId).param("order", orderId).param("service", line.serviceItemId()).param("name", line.name()).param("price", line.priceCents()).param("duration", line.durationMinutes()).param("amount", line.priceCents()).update();
-      if (line.serviceSessionId() != null) {
-        linkServiceSession(storeId, orderId, orderLineId, line.serviceSessionId());
-        createCommissionRecords(storeId, orderId, orderLineId, orderNo, settlementNo, line.serviceSessionId(), settledAt, businessDate);
+        .param("id", orderLineId).param("order", orderId).param("service", materialized.serviceItemId()).param("name", materialized.name()).param("price", materialized.priceCents()).param("duration", materialized.durationMinutes()).param("amount", materialized.priceCents()).update();
+      if (materialized.serviceSessionId() != null) {
+        linkServiceSession(storeId, orderId, orderLineId, materialized.serviceSessionId());
+        createCommissionRecords(storeId, orderId, orderLineId, orderNo, settlementNo, materialized.serviceSessionId(), settledAt, businessDate);
       }
     }
     for (PaymentInput payment : input.payments()) {
@@ -439,7 +444,7 @@ public class SalesOrderController {
       jdbc.sql("insert into payment_record(id,tenant_id,store_id,order_id,payment_method,payment_method_name_snapshot,amount_cents) values(:id,:tenant,:store,:order,:method,:name,:amount)")
         .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("order", orderId).param("method", method.code()).param("name", method.name()).param("amount", payment.amountCents()).update();
     }
-    if (correctionSource == null) updateLinkedServiceRoomStates(storeId, lines, orderNo);
+    if (correctionSource == null) updateLinkedServiceRoomStates(storeId, materializedLines, orderNo);
     Order settled = new Order(orderId, orderNo, total, paid, "SETTLED", settledAt);
     audits.record(authorization, storeId, "SALES", "ORDER_SETTLED", "sales_order", orderId,
       "Sales order settled; original=" + originalTotal + "; settlement=" + total + (waived ? "; waiveReason=" + waiveReason : "")
@@ -782,7 +787,8 @@ public class SalesOrderController {
     for (Line line : lines) {
       if (line.serviceSessionId() == null) continue;
       UUID roomId = jdbc.sql("select room_id from service_session where id=:session and store_id=:store")
-        .param("session", line.serviceSessionId()).param("store", storeId).query(UUID.class).single();
+        .param("session", line.serviceSessionId()).param("store", storeId).query(UUID.class).optional().orElse(null);
+      if (roomId == null) continue;
       roomIds.add(roomId);
     }
     List<UUID> orderedRoomIds = roomIds.stream().sorted().toList();
@@ -836,12 +842,93 @@ public class SalesOrderController {
         .param("session", session.id()).param("store", storeId).query(SettlementParticipant.class).list();
       validateSettlementParticipants(participants);
       String name = session.extensionSummary().isBlank() ? session.serviceNameSnapshot() : session.serviceNameSnapshot() + "（加钟：" + session.extensionSummary() + "）";
-      return new Line(session.serviceItemId(), name, session.servicePriceCents(), session.plannedDurationMinutes(), session.id(), session.businessDate());
+      return new Line(session.serviceItemId(), name, session.servicePriceCents(), session.plannedDurationMinutes(), session.id(), session.businessDate(), null, null, List.of(), null, null, null);
     }
     if (input.serviceItemId() == null) throw bad("请选择服务项目");
     ResolvedServiceItem item = itemVersions.activeItem(storeId, input.serviceItemId(), businessClock.currentBusinessDate(storeId))
       .orElseThrow(() -> bad("该服务项目已删除、停用或尚未生效"));
-    return new Line(item.id(), item.name(), item.priceCents(), input.durationMinutes() == null ? item.defaultDurationMinutes() : input.durationMinutes(), null, null);
+    short duration = input.durationMinutes() == null ? item.defaultDurationMinutes() : input.durationMinutes();
+    if (duration < 15 || duration > 360) throw bad("服务时长必须在 15 到 360 分钟之间");
+
+    // Keep the legacy three-field manual line contract working.  New clients
+    // send technician/clock metadata, which is materialized into a completed
+    // service session below so all reports use the normal service-session path.
+    boolean attributed = input.clockType() != null || input.roomId() != null
+      || (input.technicians() != null && !input.technicians().isEmpty());
+    if (!attributed) {
+      return new Line(item.id(), item.name(), item.priceCents(), duration, null, null, null, null, List.of(), item.priceVersionId(), null, item.countsAsClock());
+    }
+    List<ManualTechnicianAllocation> allocations = normalizeManualAllocations(storeId, input.technicians());
+    String clockType = normalizeClockType(input.clockType());
+    if (input.roomId() != null) {
+      boolean roomExists = jdbc.sql("""
+        select exists(
+          select 1 from room room
+          where room.id=:room and room.store_id=:store and room.active=true
+            and not exists(
+              select 1 from service_session active_session
+              where active_session.store_id=:store and active_session.room_id=room.id
+                and active_session.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'))
+            and coalesce((select event.status from room_status_event event
+                          where event.store_id=:store and event.room_id=room.id
+                          order by event.occurred_at desc,event.id desc limit 1),'IDLE')='IDLE')
+        """)
+        .param("room", input.roomId()).param("store", storeId).query(Boolean.class).single();
+      if (!roomExists) throw bad("所选房间不可用、非空闲或不属于当前门店");
+    }
+    UUID commissionRuleVersionId = itemVersions.commissionRule(storeId, item.id(), businessClock.currentBusinessDate(storeId)).id();
+    return new Line(item.id(), item.name(), item.priceCents(), duration, null, null, clockType, input.roomId(), allocations,
+      item.priceVersionId(), commissionRuleVersionId, item.countsAsClock());
+  }
+
+  private List<ManualTechnicianAllocation> normalizeManualAllocations(UUID storeId, List<ManualTechnicianAllocation> requested) {
+    if (requested == null || requested.isEmpty()) throw bad("手工项目必须选择至少一名技师");
+    if (requested.size() > 4) throw bad("一个项目最多选择 4 位技师");
+    Set<UUID> unique = new HashSet<>();
+    List<ManualTechnicianAllocation> resolved = new ArrayList<>();
+    boolean missingAllocation = requested.stream().anyMatch(item -> item == null || item.allocationBp() == null);
+    int defaultBp = requested.isEmpty() ? 0 : 10000 / requested.size();
+    int remainder = requested.isEmpty() ? 0 : 10000 - defaultBp * requested.size();
+    for (int index = 0; index < requested.size(); index++) {
+      ManualTechnicianAllocation allocation = requested.get(index);
+      if (allocation == null || allocation.technicianId() == null || !unique.add(allocation.technicianId())) {
+        throw bad("手工项目技师必须有效且不能重复");
+      }
+      int bp = missingAllocation ? defaultBp + (index == 0 ? remainder : 0) : allocation.allocationBp();
+      if (bp < 1 || bp > 10000) throw bad("技师分配比例必须在 1% 到 100% 之间");
+      jdbc.sql("select id from technician where id=:id and store_id=:store and active=true")
+        .param("id", allocation.technicianId()).param("store", storeId).query(UUID.class).optional()
+        .orElseThrow(() -> bad("所选技师已停用或不属于当前门店"));
+      resolved.add(new ManualTechnicianAllocation(allocation.technicianId(), bp));
+    }
+    if (resolved.stream().mapToInt(ManualTechnicianAllocation::allocationBp).sum() != 10000) {
+      throw bad("同一项目的技师分配比例必须合计 100%");
+    }
+    return resolved;
+  }
+
+  private Line materializeManualLine(UUID storeId, Line line, OffsetDateTime settledAt, LocalDate businessDate) {
+    if (line.technicians() == null || line.technicians().isEmpty()) return line;
+    UUID sessionId = UUID.randomUUID();
+    OffsetDateTime startedAt = settledAt.minusMinutes(line.durationMinutes());
+    jdbc.sql("insert into service_session(id,tenant_id,store_id,technician_id,room_id,bed_id,service_item_id,service_name_snapshot,service_price_cents,planned_duration_minutes,started_at,expected_end_at,ended_at,status,note,clock_type,price_version_id,commission_rule_version_id,counts_as_clock_snapshot,business_date) values(:id,:tenant,:store,:technician,:room,null,:service,:name,:price,:duration,:started,:expected,:ended,'COMPLETED',:note,:clockType,:priceVersion,:commissionVersion,:countsAsClock,:businessDate)")
+      .param("id", sessionId).param("tenant", TENANT_ID).param("store", storeId)
+      .param("technician", line.technicians().getFirst().technicianId()).param("room", line.roomId())
+      .param("service", line.serviceItemId()).param("name", line.name()).param("price", line.priceCents())
+      .param("duration", line.durationMinutes()).param("started", startedAt).param("expected", settledAt)
+      .param("ended", settledAt).param("note", "手工添加项目").param("clockType", line.clockType())
+      .param("priceVersion", line.priceVersionId()).param("commissionVersion", line.commissionRuleVersionId())
+      .param("countsAsClock", line.countsAsClock()).param("businessDate", businessDate).update();
+    for (int index = 0; index < line.technicians().size(); index++) {
+      ManualTechnicianAllocation allocation = line.technicians().get(index);
+      jdbc.sql("insert into service_session_participant(id,tenant_id,store_id,service_session_id,technician_id,slot_no,sequence_no,participation_type,allocation_bp,status,joined_at,accepted_at,service_started_at,service_ended_at) values(:id,:tenant,:store,:session,:technician,:slot,1,:type,:allocation,'COMPLETED',:started,:started,:started,:ended)")
+        .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("session", sessionId)
+        .param("technician", allocation.technicianId()).param("slot", index + 1)
+        .param("type", index == 0 ? "PRIMARY" : "ADDITIONAL").param("allocation", allocation.allocationBp())
+        .param("started", startedAt).param("ended", settledAt).update();
+    }
+    return new Line(line.serviceItemId(), line.name(), line.priceCents(), line.durationMinutes(), sessionId, businessDate,
+      line.clockType(), line.roomId(), line.technicians(), line.priceVersionId(), line.commissionRuleVersionId(), line.countsAsClock());
   }
 
   void validateSettlementParticipants(List<SettlementParticipant> participants) {
@@ -997,8 +1084,20 @@ public class SalesOrderController {
   private ResponseStatusException bad(String message) { return new ResponseStatusException(HttpStatus.BAD_REQUEST, message); }
   private ResponseStatusException conflict(String message) { return new ResponseStatusException(HttpStatus.CONFLICT, message); }
 
+  private String normalizeClockType(String value) {
+    String normalized = value == null || value.isBlank() ? "QUEUE" : value.trim().toUpperCase(java.util.Locale.ROOT);
+    if (Set.of("QUEUE", "CALL", "SELECTED", "BOOKED_QUEUE", "BOOKED_CALL").contains(normalized)) return normalized;
+    throw bad("钟类不受支持");
+  }
+
   record Item(UUID id, String name, Integer priceCents, Short defaultDurationMinutes) {}
-  record Line(UUID serviceItemId, String name, Integer priceCents, Short durationMinutes, UUID serviceSessionId, LocalDate businessDate) {}
+  record Line(UUID serviceItemId, String name, Integer priceCents, Short durationMinutes, UUID serviceSessionId, LocalDate businessDate,
+              String clockType, UUID roomId, List<ManualTechnicianAllocation> technicians, UUID priceVersionId,
+              UUID commissionRuleVersionId, Boolean countsAsClock) {
+    Line(UUID serviceItemId, String name, Integer priceCents, Short durationMinutes, UUID serviceSessionId, LocalDate businessDate) {
+      this(serviceItemId, name, priceCents, durationMinutes, serviceSessionId, businessDate, null, null, List.of(), null, null, null);
+    }
+  }
   record ServiceSessionForSettlement(UUID id, UUID serviceItemId, String serviceNameSnapshot, Integer servicePriceCents, Short plannedDurationMinutes, String extensionSummary, LocalDate businessDate) {}
   record Wallet(UUID id, Long balanceCents) {}
   record Order(UUID id, String orderNo, Long receivableCents, Long paidCents, String status, OffsetDateTime settledAt) {}
@@ -1044,7 +1143,13 @@ public class SalesOrderController {
   record CorrectionSource(UUID id, String orderNo, String status, String refundStatus) {}
   record VoidCommission(UUID id, UUID tenantId, UUID storeId, UUID orderId, UUID orderLineId, UUID serviceSessionId, UUID serviceSessionExtensionId, UUID serviceItemId, UUID technicianId, String sourceType, String clockType, String orderNoSnapshot, String technicianNameSnapshot, String serviceNameSnapshot, String ruleType, Integer ruleRateBp, Long ruleFixedCents, Long baseAmountCents, Long commissionCents, Short clockCountAdjustment, Short durationMinutesAdjustment, UUID serviceParticipantId, Integer allocationBpSnapshot, Integer servedSecondsSnapshot, UUID commissionTierPolicyVersionId, UUID commissionTierId, String commissionTierNameSnapshot, Integer commissionTierMinimumClockCountSnapshot, Integer commissionMultiplierBpSnapshot, Integer monthlyClockCountSnapshot) {}
   record VoidInput(@NotBlank String reason) {}
-  record LineInput(UUID serviceItemId, UUID serviceSessionId, Short durationMinutes) {}
+  record LineInput(UUID serviceItemId, UUID serviceSessionId, Short durationMinutes, String clockType, UUID roomId,
+                   List<@Valid ManualTechnicianAllocation> technicians) {
+    LineInput(UUID serviceItemId, UUID serviceSessionId, Short durationMinutes) {
+      this(serviceItemId, serviceSessionId, durationMinutes, null, null, null);
+    }
+  }
+  record ManualTechnicianAllocation(@NotNull UUID technicianId, @Min(1) @Max(10000) Integer allocationBp) {}
   record PaymentInput(@NotBlank String method, @NotNull @Min(1) Long amountCents) {}
   record HistoricalBackfillInput(@NotNull LocalDate backfillDate, UUID memberId,
                                  @NotEmpty List<@Valid HistoricalBackfillLineInput> lines,

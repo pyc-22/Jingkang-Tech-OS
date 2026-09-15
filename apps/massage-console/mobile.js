@@ -512,7 +512,7 @@ selectMobilePage('current-service');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./technician-service-worker.js?v=20260913-next-optimization-v2').catch(() => {
+    navigator.serviceWorker.register('./technician-service-worker.js?v=20260914-next-optimization-v4').catch(() => {
       // The technician page remains fully available when offline caching is unavailable.
     });
   });

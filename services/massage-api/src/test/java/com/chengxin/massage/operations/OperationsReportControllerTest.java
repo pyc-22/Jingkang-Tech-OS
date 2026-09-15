@@ -78,6 +78,13 @@ class OperationsReportControllerTest {
   }
 
   @Test
+  void transactionServiceTraceKeepsManualServicesWithoutRooms() throws Exception {
+    String source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/java/com/chengxin/massage/operations/OperationsReportController.java"));
+    assertThat(source).contains("left join room on room.id=session.room_id where link.order_id=o.id");
+    assertThat(source).contains("left join room on room.id=session.room_id where link.order_id=refund.order_id");
+  }
+
+  @Test
   void dailyReportExposesGrossAndNetSalesSeparately() {
     DailyReportService.DailyMetrics metrics = new DailyReportService.DailyMetrics(
       java.time.LocalDate.of(2026, 9, 10), 2, 2, 2, 10_000,

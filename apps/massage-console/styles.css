@@ -516,6 +516,21 @@ body.frontdesk-auth-locked #close-admin-login { display:none; }
 .service-category-button.selected { border-color:#8eb9ad; background:#e7f3ef; color:#075f59; font-weight:700; }
 .service-category-button small { color:var(--muted); font-size:10px; font-weight:500; }
 #order-dialog { width:min(860px,calc(100vw - 32px)); }
+.manual-service-config-card { width:min(620px,calc(100vw - 32px)); }
+.manual-service-config-summary { display:flex; justify-content:space-between; gap:12px; margin-bottom:14px; padding:11px 12px; border:1px solid #dce9e4; border-radius:6px; background:#f5faf8; color:#28453f; }
+.manual-service-config-summary small { color:var(--muted); }
+.manual-service-technicians { margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+.manual-service-section-heading { display:flex; align-items:center; gap:9px; margin-bottom:9px; }
+.manual-service-section-heading small { flex:1; color:var(--muted); font-size:11px; }
+.manual-service-section-heading .button { min-height:30px; padding:0 9px; font-size:11px; }
+.manual-service-technician-row { display:grid; grid-template-columns:minmax(0,1fr) 110px 30px; align-items:end; gap:9px; padding:9px 0; border-bottom:1px solid #edf1ef; }
+.manual-service-technician-row label { display:grid; gap:5px; color:#52625e; font-size:11px; font-weight:700; }
+.manual-service-technician-row select,.manual-service-technician-row input { width:100%; height:35px; min-width:0; padding:0 8px; border:1px solid var(--line); border-radius:5px; background:#fff; color:var(--ink); font:inherit; font-size:12px; }
+.manual-service-technician-row .manual-service-percent { display:flex; align-items:center; gap:5px; }
+.manual-service-technician-row .manual-service-percent input { text-align:right; }
+.manual-service-technician-row .manual-service-percent em { color:var(--muted); font-style:normal; }
+.manual-service-technician-remove { height:30px; padding:0 7px; border:1px solid #e1c7c2; border-radius:4px; color:#a34d43; background:#fff7f5; font-size:16px; }
+@media (max-width:560px) { .manual-service-technician-row { grid-template-columns:minmax(0,1fr) 84px 30px; } }
 .service-picker-search { width:100%; margin-bottom:12px; }
 .service-picker-layout { display:grid; grid-template-columns:190px minmax(0,1fr); gap:14px; min-height:350px; }
 .service-picker-categories { max-height:440px; padding-right:8px; overflow:auto; border-right:1px solid var(--line); }

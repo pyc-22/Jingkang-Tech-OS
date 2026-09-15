@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>独立账本 · 靖康科技运营</title>
-    <link rel="stylesheet" href="./styles.css?v=20260913-next-optimization-v2" />
+    <link rel="stylesheet" href="./styles.css?v=20260914-next-optimization-v4" />
   </head>
   <body>
     <div class="ledger-page">
@@ -36,6 +36,6 @@
 
     <dialog id="record-dialog"><form id="record-form" class="dialog-card"><div class="dialog-heading"><div><p class="eyebrow">独立账本</p><h2>新增记录</h2></div><button class="icon-button" type="button" id="close-record-dialog" aria-label="关闭">×</button></div><div class="form-grid"><label>记录类型<select name="type"><option value="order">订单金额</option><option value="consumption">消费记录</option></select></label><label>金额<input name="amount" type="number" min="0.01" step="0.01" placeholder="例如 298.00" required /></label><label>会员 / 客户<input name="customer" maxlength="32" placeholder="例如 林女士" required /></label><label>单号<input name="orderNo" maxlength="32" placeholder="可选" /></label><label class="form-full">说明<input name="note" maxlength="80" placeholder="例如 肩颈舒缓 90 分钟" required /></label></div><div class="dialog-actions"><button class="button secondary" type="button" id="cancel-record">取消</button><button class="button primary" type="submit">保存记录</button></div></form></dialog>
     <div class="toast hidden" id="toast"></div>
-    <script src="./ledger.js?v=20260913-next-optimization-v2"></script>
+    <script src="./ledger.js?v=20260914-next-optimization-v4"></script>
   </body>
 </html>

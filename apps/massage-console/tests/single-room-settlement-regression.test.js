@@ -36,7 +36,7 @@ test('single-room settlement refreshes pending services and room status after pa
 });
 
 test('partially settled room remains pending until all completed services are linked', () => {
-  assert.match(controller, /updateLinkedServiceRoomStates\(storeId, lines, orderNo\)/);
+  assert.match(controller, /updateLinkedServiceRoomStates\(storeId, materializedLines, orderNo\)/);
   assert.match(controller, /session\.status='COMPLETED'/);
   assert.match(controller, /linked_order\.status <> 'CANCELLED' and linked_order\.refund_status <> 'FULL'/);
   assert.match(controller, /roomStatusAfterSettlement\(hasUnsettledServices\)/);
