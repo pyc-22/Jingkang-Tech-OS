@@ -121,7 +121,7 @@ let serviceSessionFilter = 'ALL';
 let currentAdminSession = null;
 const money = (value) => `¥${value.toFixed(2)}`;
 const signedMoneyCents = (cents) => `${Number(cents||0)<0?'-':''}${money(Math.abs(Number(cents||0))/100)}`;
-const clockTypeLabels = { QUEUE:'排钟', CALL:'点钟', SELECTED:'选钟', BOOKED_QUEUE:'预定排钟', BOOKED_CALL:'预定点钟' };
+const clockTypeLabels = { QUEUE:'排钟', CALL:'点钟', SELECTED:'选钟', BOOKED_QUEUE:'预定排钟', BOOKED_CALL:'预定点钟', EXTENSION:'加钟' };
 const receiptClockTypeLabel = value => clockTypeLabels[value] || value || '—';
 const dispatchTypeLabel = (value) => clockTypeLabels[value] || '排钟';
 const isCallClockType = (value) => value === 'CALL' || value === 'BOOKED_CALL';
@@ -2172,7 +2172,8 @@ function renderHistoricalBackfillLines() {
     const technicians = state.technicians.map(technician => {
       const allocation = allocations.get(String(technician.id));
       const checked = allocation != null;
-      return `<label class="historical-backfill-technician ${checked ? 'selected' : ''}"><input type="checkbox" data-historical-technician="${memberBusinessEscape(technician.id)}" ${checked ? 'checked' : ''}><span class="historical-backfill-technician-info"><b>${memberBusinessEscape(technician.name)}</b><small>工号 ${memberBusinessEscape(technician.code || '未设置')} · ${historicalBackfillTechnicianStates[technician.state] || '状态未知'}</small></span><span class="historical-backfill-allocation"><input type="number" min="0.01" max="100" step="0.01" value="${checked ? (allocation / 100).toFixed(2) : '0.00'}" data-historical-allocation="${memberBusinessEscape(technician.id)}" ${checked ? '' : 'disabled'}><em>%</em></span></label>`;
+      const capped = !checked && line.technicians.length >= 4;
+      return `<label class="historical-backfill-technician ${checked ? 'selected' : ''}"><input type="checkbox" data-historical-technician="${memberBusinessEscape(technician.id)}" ${checked ? 'checked' : ''} ${capped ? 'disabled' : ''}><span class="historical-backfill-technician-info"><b>${memberBusinessEscape(technician.name)}</b><small>工号 ${memberBusinessEscape(technician.code || '未设置')} · ${historicalBackfillTechnicianStates[technician.state] || '状态未知'}</small></span><span class="historical-backfill-allocation"><input type="number" min="0.01" max="100" step="0.01" value="${checked ? (allocation / 100).toFixed(2) : '0.00'}" data-historical-allocation="${memberBusinessEscape(technician.id)}" ${checked ? '' : 'disabled'}><em>%</em></span></label>`;
     }).join('');
     const service = state.services.find(item => String(item.id) === String(line.serviceItemId));
     return `<article class="historical-backfill-line" data-historical-line="${line.id}"><div class="historical-backfill-line-heading"><b>项目 ${index + 1}</b><button class="icon-button" type="button" data-historical-remove-line="${line.id}" title="移除项目" aria-label="移除项目" ${historicalBackfillLines.length === 1 ? 'disabled' : ''}>×</button></div><div class="historical-backfill-line-fields"><label class="historical-backfill-field historical-backfill-service-field">服务项目<select data-historical-service required>${services}</select></label><label class="historical-backfill-field historical-backfill-clock-field">钟类<select data-historical-clock-type>${clockTypes}</select></label><label class="historical-backfill-field historical-backfill-duration-field">服务时长（分钟）<input data-historical-duration type="number" min="15" max="360" step="5" value="${line.durationMinutes}" required></label><label class="historical-backfill-field historical-backfill-room-field">房间状态<select data-historical-room><option value="">不关联房间</option>${rooms}</select></label><div class="historical-backfill-field historical-backfill-line-total"><span>项目金额</span><strong>${money(Number(service?.price || 0))}</strong></div></div><div class="historical-backfill-technicians"><div class="historical-backfill-technicians-heading"><b>技师业绩分配</b><small>合计必须为 100%</small></div><div class="historical-backfill-technician-list">${technicians || '<p class="table-empty">当前门店没有可用技师</p>'}</div></div></article>`;
@@ -2305,7 +2306,7 @@ async function submitHistoricalBackfill(event) {
   event.preventDefault();
   const date = document.querySelector('#historical-backfill-date').value;
   if (!date || date > historicalBackfillDateValue(new Date())) return toast('补单日期不能晚于今天');
-  const invalidLine = historicalBackfillLines.find(line => !line.serviceItemId || !Number.isFinite(Number(line.durationMinutes)) || Number(line.durationMinutes) < 15 || Number(line.durationMinutes) > 360 || !line.technicians.length || line.technicians.reduce((sum, item) => sum + Number(item.allocationBp || 0), 0) !== 10000);
+  const invalidLine = historicalBackfillLines.find(line => !line.serviceItemId || !Number.isFinite(Number(line.durationMinutes)) || Number(line.durationMinutes) < 15 || Number(line.durationMinutes) > 360 || !line.technicians.length || line.technicians.length > 4 || line.technicians.reduce((sum, item) => sum + Number(item.allocationBp || 0), 0) !== 10000);
   if (invalidLine) return toast('请检查每个项目的服务时长及技师分配，比例合计必须为 100%');
   const receivable = historicalBackfillReceivableCents();
   const settlement = Math.round(Number(document.querySelector('#historical-backfill-amount').value || 0) * 100);
@@ -3924,6 +3925,7 @@ document.querySelector('#historical-backfill-line-list')?.addEventListener('chan
   if(event.target.matches('[data-historical-room]'))line.roomId=event.target.value;
   if(event.target.matches('[data-historical-technician]')){
     const technicianId=event.target.dataset.historicalTechnician;
+    if(event.target.checked&&line.technicians.length>=4){event.target.checked=false;return toast('一个项目最多选择 4 位技师');}
     if(event.target.checked&&!line.technicians.some(item=>String(item.technicianId)===String(technicianId)))line.technicians.push({technicianId,allocationBp:0});
     if(!event.target.checked)line.technicians=line.technicians.filter(item=>String(item.technicianId)!==String(technicianId));
     rebalanceHistoricalBackfillTechnicians(line);

@@ -19,6 +19,8 @@ test('front desk historical backfill is permission gated and supports the full o
   assert.match(js, /data-historical-technician/);
   assert.match(js, /data-historical-allocation/);
   assert.match(js, /rebalanceHistoricalBackfillTechnicians/);
+  assert.match(js, /line\.technicians\.length\s*>=\s*4/);
+  assert.match(js, /一个项目最多选择 4 位技师/);
   assert.match(js, /historicalBackfillPaymentMethods/);
   assert.match(js, /api\/v1\/members\?query=/);
 });

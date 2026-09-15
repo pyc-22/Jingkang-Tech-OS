@@ -29,8 +29,8 @@ test('live rooms expose service, technician, clock type, beds and timing', () =>
 });
 
 test('manager mobile assets use the dispatch clock cache version', () => {
-  assert.match(html, /manager-mobile\.css\?v=20260914-next-optimization-v4/);
-  assert.match(html, /manager-mobile\.js\?v=20260914-next-optimization-v4/);
+  assert.match(html, /manager-mobile\.css\?v=20260915-next-optimization-v5/);
+  assert.match(html, /manager-mobile\.js\?v=20260915-next-optimization-v5/);
 });
 
 test('manager home loads and groups independent live technician status', () => {

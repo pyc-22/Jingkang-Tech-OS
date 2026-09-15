@@ -216,11 +216,7 @@ public class SalesOrderController {
     return cancelled;
   }
 
-  /**
-   * Creates a settled order for a prior business date without creating a live
-   * service session.  Commission rows still use the normal versioned rule and
-   * therefore participate in refunds, voids, daily reports, and monthly tiers.
-   */
+  /** Creates a settled order and completed service records for a prior business date. */
   @PostMapping("/historical-backfill")
   @Transactional
   HistoricalBackfillResult historicalBackfill(@Valid @RequestBody HistoricalBackfillInput input,
@@ -309,21 +305,17 @@ public class SalesOrderController {
       jdbc.sql("insert into sales_order_line(id,order_id,service_item_id,item_name_snapshot,unit_price_cents,duration_minutes,line_amount_cents) values(:id,:order,:service,:name,:price,:duration,:amount)")
         .param("id", orderLineId).param("order", orderId).param("service", line.item().id())
         .param("name", line.item().name()).param("price", line.item().priceCents()).param("duration", line.durationMinutes()).param("amount", line.item().priceCents()).update();
-      int allocatedAmount = 0;
-      for (int index = 0; index < line.allocations().size(); index++) {
-        HistoricalTechnicianAllocation allocation = line.allocations().get(index);
-        int share = index == line.allocations().size() - 1
-          ? line.item().priceCents() - allocatedAmount
-          : proportional(line.item().priceCents(), allocation.allocationBp(), 10000);
-        allocatedAmount += share;
-        short clockAdjustment = (short) (index == 0 && Boolean.TRUE.equals(line.item().countsAsClock()) ? 1 : 0);
-        short durationAdjustment = (short) (index == 0 ? line.durationMinutes() : 0);
-        CommissionBase commission = new CommissionBase(null, null, line.item().id(), allocation.technicianId(),
-          allocation.technicianName(), line.item().name(), share, line.clockType(), null, input.backfillDate(),
-          line.item().countsAsClock(), durationAdjustment, null, allocation.allocationBp(), 0,
-          clockAdjustment, allocation.allocationBp());
-        insertCommissionRecord(storeId, orderId, orderLineId, orderNo, settlementNo, commission, "MAIN", operatedAt, input.backfillDate());
-      }
+      List<ManualTechnicianAllocation> technicians = line.allocations().stream()
+        .map(allocation -> new ManualTechnicianAllocation(allocation.technicianId(), allocation.allocationBp()))
+        .toList();
+      UUID commissionRuleVersionId = itemVersions.commissionRule(storeId, line.item().id(), input.backfillDate()).id();
+      Line materialized = materializeManualLine(storeId,
+        new Line(line.item().id(), line.item().name(), line.item().priceCents(), line.durationMinutes(), null,
+          input.backfillDate(), line.clockType(), line.roomId(), technicians, line.item().priceVersionId(),
+          commissionRuleVersionId, line.item().countsAsClock()), operatedAt, input.backfillDate());
+      linkServiceSession(storeId, orderId, orderLineId, materialized.serviceSessionId());
+      createCommissionRecords(storeId, orderId, orderLineId, orderNo, settlementNo,
+        materialized.serviceSessionId(), operatedAt, input.backfillDate());
     }
     for (PaymentInput payment : input.payments()) {
       PaymentMethod method = paymentMethod(storeId, payment.method());
@@ -352,9 +344,13 @@ public class SalesOrderController {
       requested = List.of(new HistoricalTechnicianAllocation(line.technicianId(), line.allocationBp() == null ? 10000 : line.allocationBp()));
     }
     if (requested.isEmpty()) throw bad("每个补单项目必须至少选择一名技师");
+    if (requested.size() > 4) throw bad("一个项目最多选择 4 位技师");
+    Set<UUID> unique = new HashSet<>();
     List<HistoricalTechnicianAllocation> resolved = new ArrayList<>();
     for (HistoricalTechnicianAllocation allocation : requested) {
-      if (allocation == null || allocation.technicianId() == null) throw bad("请选择有效的技师");
+      if (allocation == null || allocation.technicianId() == null || !unique.add(allocation.technicianId())) {
+        throw bad("补单项目技师必须有效且不能重复");
+      }
       int bp = allocation.allocationBp() == null ? 0 : allocation.allocationBp();
       if (bp < 1 || bp > 10000) throw bad("技师分配比例必须在 1% 到 100% 之间");
       TechnicianSnapshot technician = jdbc.sql("select id,name from technician where id=:id and store_id=:store and active=true")
@@ -640,7 +636,8 @@ public class SalesOrderController {
       allocated = allocatedMainCommissions(participants);
       COMMISSION_LOG.info("createCommissionRecords main allocation count={} values={}", allocated.size(), allocated);
       for (CommissionBase main : allocated) {
-        insertCommissionRecord(storeId, orderId, orderLineId, orderNo, settlementNo, main, "MAIN", settledAt, businessDate, recordType, businessCorrectionId);
+        String sourceType = "EXTENSION".equals(main.clockType()) ? "EXTENSION" : "MAIN";
+        insertCommissionRecord(storeId, orderId, orderLineId, orderNo, settlementNo, main, sourceType, settledAt, businessDate, recordType, businessCorrectionId);
       }
       extensions = jdbc.sql("select e.service_session_id,e.id service_session_extension_id,e.service_item_id,e.technician_id,t.name technician_name,e.service_name_snapshot,e.service_price_cents base_amount_cents,'EXTENSION' clock_type,e.commission_rule_version_id,ss.business_date,e.counts_as_clock_snapshot,0::smallint duration_minutes,null::uuid service_participant_id,10000 allocation_bp_snapshot,0 served_seconds_snapshot,0::smallint clock_adjustment,10000 fixed_scale_bp from service_session_extension e join technician t on t.id=e.technician_id join service_session ss on ss.id=e.service_session_id where e.service_session_id=:session and e.store_id=:store order by e.added_at")
         .param("session", serviceSessionId).param("store", storeId).query(CommissionBase.class).list();

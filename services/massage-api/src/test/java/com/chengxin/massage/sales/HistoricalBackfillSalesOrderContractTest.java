@@ -74,6 +74,36 @@ class HistoricalBackfillSalesOrderContractTest {
   }
 
   @Test
+  void materializesBackfillLinesIntoCompletedServicesBeforeCreatingCommissionRecords() throws Exception {
+    String source = Files.readString(Path.of(
+        "src/main/java/com/chengxin/massage/sales/SalesOrderController.java"));
+    int endpoint = source.indexOf("@PostMapping(\"/historical-backfill\")");
+    String method = source.substring(endpoint,
+        Math.min(source.length(), endpoint + 16000));
+
+    assertThat(method)
+        .contains("materializeManualLine(storeId")
+        .contains("linkServiceSession(storeId, orderId, orderLineId")
+        .contains("createCommissionRecords(storeId, orderId, orderLineId")
+        .doesNotContain("new CommissionBase(null, null");
+  }
+
+  @Test
+  void capsHistoricalTechnicianAllocationsAndPersistsTheExtensionClockType() throws Exception {
+    String source = Files.readString(Path.of(
+        "src/main/java/com/chengxin/massage/sales/SalesOrderController.java"));
+    String migration = Files.readString(Path.of(
+        "src/main/resources/db/migration/V94__historical_backfill_service_attribution.sql"));
+
+    assertThat(source)
+        .contains("requested.size() > 4")
+        .contains("!unique.add(allocation.technicianId())");
+    assertThat(migration)
+        .contains("DROP CONSTRAINT IF EXISTS service_session_clock_type_check")
+        .contains("'BOOKED_CALL','EXTENSION'");
+  }
+
+  @Test
   void usesTheTenantSharedMemberAndWalletForHistoricalPayment() throws Exception {
     String source = Files.readString(Path.of(
         "src/main/java/com/chengxin/massage/sales/SalesOrderController.java"));
