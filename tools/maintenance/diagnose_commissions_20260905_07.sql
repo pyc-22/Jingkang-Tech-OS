@@ -1,6 +1,7 @@
 -- PostgreSQL 16 / psql. Run in a NEW session, before the cleanup transaction.
 -- Read-only diagnostics: no business data or schema changes, always ROLLBACK.
 -- Order scope uses sales_order.business_date, not timestamps or commission dates.
+-- Same-store target-order commissions are deleted even when their dates differ.
 \pset pager off
 \set ON_ERROR_STOP off
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
@@ -50,7 +51,7 @@ SELECT c.id AS commission_id,c.order_id,
             WHEN NOT o.in_scope THEN 'KEEP_OTHER_ORDER'
             WHEN o.member_balance THEN 'KEEP_MEMBER_BALANCE'
             WHEN c.store_id IS DISTINCT FROM o.store_id THEN 'BLOCK_STORE_MISMATCH'
-            WHEN c.business_date IS DISTINCT FROM o.business_date THEN 'REVIEW_DATE_MISMATCH'
+            WHEN c.business_date IS DISTINCT FROM o.business_date THEN 'DELETE_BY_ORDER_ID_DATE_MISMATCH'
             ELSE 'DELETE_BY_ORDER_ID' END AS disposition
 FROM public.technician_commission_record c
 LEFT JOIN orders o ON o.id=c.order_id

@@ -154,24 +154,40 @@ test('an error after earlier DELETE statements automatically rolls back the enti
   assert.match(output, /commissions=73/);
 });
 
-test('commission date anomalies require review and list exact IDs before rolling back', () => {
-  const output = execute("UPDATE technician_commission_record SET business_date='2026-09-08' WHERE id=md5('order3')::uuid;",
-    "SELECT 'commissions='||count(*) FROM technician_commission_record; SELECT 'orders='||count(*) FROM sales_order;");
+test('four next-day commissions on one September 7 target order are reported and deleted without review IDs', () => {
+  const output = execute(`UPDATE technician_commission_record SET business_date='2026-09-08' WHERE order_id=md5('order52')::uuid;
+    INSERT INTO technician_commission_record(id,order_id,order_line_id,store_id,business_date)
+    SELECT md5('next-day-commission'||n)::uuid,md5('order52')::uuid,md5('order52')::uuid,'${store}','2026-09-08'
+    FROM generate_series(1,3) n;`, `
+    SELECT 'target_commissions='||count(*) FROM technician_commission_record WHERE order_id=md5('order52')::uuid;
+    SELECT 'reported_dates='||count(*) FROM pg_temp._clear_commission_review
+      WHERE order_id=md5('order52')::uuid AND date_mismatch AND NOT store_mismatch;
+    SELECT 'commissions='||count(*) FROM technician_commission_record;
+    SELECT 'orders='||count(*) FROM sales_order;
+    ROLLBACK;
+    SELECT 'restored_commissions='||count(*) FROM technician_commission_record;
+    SELECT 'restored_orders='||count(*) FROM sales_order;`);
   assert.match(output, /COMMISSION_REVIEW id=/);
-  assert.match(output, /commission_date=2026-09-08, order_date=2026-09-05/);
-  assert.match(output, /Unreviewed commission date mismatch/);
-  assert.match(output, /FAILED: transaction rolled back/);
-  assert.match(output, /commissions=73/);
-  assert.match(output, /orders=72/);
+  assert.equal((output.match(/commission_date=2026-09-08, order_date=2026-09-07/g) || []).length, 4);
+  assert.match(output, /CHECKS PASSED/);
+  assert.match(output, /target_commissions=0/);
+  assert.match(output, /reported_dates=4/);
+  assert.match(output, /commissions=4/);
+  assert.match(output, /orders=4/);
+  assert.match(output, /restored_commissions=76/);
+  assert.match(output, /restored_orders=72/);
+  assert.doesNotMatch(output, /ERROR:/);
+  assert.doesNotMatch(script, /reviewed_commission_date_ids/);
 });
 
-test('reviewed same-store date anomalies delete by order ID, preserving other-order commissions even with matching dates', () => {
-  const reviewed = sql.replace('reviewed_commission_date_ids constant uuid[] := ARRAY[]::uuid[];',
-    "reviewed_commission_date_ids constant uuid[] := ARRAY[md5('order3')::uuid];");
+test('same-store date anomalies delete by order ID, preserving member and other-order commissions regardless of dates', () => {
   const output = query(`UPDATE technician_commission_record SET business_date='2026-09-08' WHERE id=md5('order3')::uuid;
+    UPDATE technician_commission_record SET business_date='2026-09-04' WHERE id=md5('order4')::uuid;
+    UPDATE technician_commission_record SET business_date='2026-09-06' WHERE id=md5('order5')::uuid;
+    UPDATE technician_commission_record SET business_date='2026-09-08' WHERE order_id IN (md5('order1')::uuid,md5('order2')::uuid);
     UPDATE technician_commission_record SET store_id='${store}',business_date='2026-09-05'
       WHERE order_id IN (md5('order71')::uuid,md5('order72')::uuid);
-    ${reviewed}
+    ${sql}
     SELECT 'remaining_commissions='||count(*) FROM technician_commission_record;
     SELECT 'protected_commissions='||count(*) FROM technician_commission_record WHERE order_id IN (md5('order1')::uuid,md5('order2')::uuid);
     SELECT 'other_commissions='||count(*) FROM technician_commission_record WHERE order_id IN (md5('order71')::uuid,md5('order72')::uuid);
@@ -186,7 +202,7 @@ test('reviewed same-store date anomalies delete by order ID, preserving other-or
 
 for (const [name, setup, expected] of [
   ['commission store mismatch', `UPDATE technician_commission_record SET store_id='${other}' WHERE id=md5('order3')::uuid;`, /Commission store mismatch/],
-  ['commission date mismatch inside target range', "UPDATE technician_commission_record SET business_date='2026-09-06' WHERE id=md5('order3')::uuid;", /Unreviewed commission date mismatch/],
+  ['commission store and date mismatch', `UPDATE technician_commission_record SET store_id='${other}',business_date='2026-09-08' WHERE id=md5('order3')::uuid;`, /Commission store mismatch/],
   ['protected commission linked to target service', "UPDATE technician_commission_record SET service_session_id=md5('order3')::uuid WHERE order_id=md5('order1')::uuid;", /Protected\/unknown dependent rows via technician_commission_record/],
   ['protected commission linked to target original commission', "UPDATE technician_commission_record SET original_commission_record_id=md5('order3')::uuid WHERE order_id=md5('order1')::uuid;", /Protected\/unknown dependent rows via technician_commission_record/],
   ['other-date commission linked to target participant', "UPDATE technician_commission_record SET service_participant_id=md5('order3')::uuid WHERE order_id=md5('order72')::uuid;", /Protected\/unknown dependent rows via technician_commission_record/]
@@ -200,23 +216,6 @@ for (const [name, setup, expected] of [
     assert.doesNotMatch(output, /CHECKS PASSED/);
   });
 }
-
-test('date review IDs do not authorize deleting retained orders or cross-store commissions', () => {
-  for (const order of ['order1', 'order71', 'order72', 'nonexistent']) {
-    const reviewed = sql.replace('reviewed_commission_date_ids constant uuid[] := ARRAY[]::uuid[];',
-      `reviewed_commission_date_ids constant uuid[] := ARRAY[md5('${order}')::uuid];`);
-    const output = query(`${reviewed}\nSELECT 'commissions='||count(*) FROM technician_commission_record;`);
-    assert.match(output, /Reviewed commission ID is not a same-store date anomaly on a target order/);
-    assert.match(output, /FAILED: transaction rolled back/);
-    assert.match(output, /commissions=73/);
-  }
-  const reviewed = sql.replace('reviewed_commission_date_ids constant uuid[] := ARRAY[]::uuid[];',
-    "reviewed_commission_date_ids constant uuid[] := ARRAY[md5('order3')::uuid];");
-  const output = query(`UPDATE technician_commission_record SET store_id='${other}',business_date='2026-09-08' WHERE id=md5('order3')::uuid;
-    ${reviewed}\nSELECT 'commissions='||count(*) FROM technician_commission_record;`);
-  assert.match(output, /Commission store mismatch/);
-  assert.match(output, /commissions=73/);
-});
 
 test('diagnosis reports real columns, date/store anomalies and protected dependency conflicts without changing data', () => {
   query(`UPDATE technician_commission_record SET business_date='2026-09-08' WHERE id=md5('order3')::uuid;
@@ -234,7 +233,7 @@ test('diagnosis reports real columns, date/store anomalies and protected depende
   assert.match(output, /business_date\|date/);
   assert.match(output, /FOREIGN KEY \(original_commission_record_id\)/);
   assert.match(output, /2026-09-05\|40\|2\|38/);
-  assert.match(output, /REVIEW_DATE_MISMATCH/);
+  assert.match(output, /DELETE_BY_ORDER_ID_DATE_MISMATCH/);
   assert.match(output, /BLOCK_STORE_MISMATCH/);
   assert.match(output, /KEEP_MEMBER_BALANCE/);
   assert.match(output, /KEEP_OTHER_ORDER/);
@@ -273,13 +272,8 @@ test('schema checks and delete planning also work against every repository migra
   assert.match(output, /restored=70/);
   assert.doesNotMatch(output, /ERROR:/);
   query("UPDATE technician_commission_record SET business_date='2026-09-08' WHERE id=md5('order3')::uuid;");
-  const blocked = execute();
-  assert.match(blocked, /Unreviewed commission date mismatch/);
-  assert.match(blocked, /FAILED: transaction rolled back/);
-  const reviewed = sql.replace('reviewed_commission_date_ids constant uuid[] := ARRAY[]::uuid[];',
-    "reviewed_commission_date_ids constant uuid[] := ARRAY[md5('order3')::uuid];");
-  const afterReview = query(`${reviewed}\nSELECT 'commissions='||count(*) FROM technician_commission_record; ROLLBACK;`);
-  assert.match(afterReview, /CHECKS PASSED/);
-  assert.match(afterReview, /commissions=2/);
-  assert.doesNotMatch(afterReview, /ERROR:/);
+  const withDateMismatch = execute('', "SELECT 'commissions='||count(*) FROM technician_commission_record; ROLLBACK;");
+  assert.match(withDateMismatch, /CHECKS PASSED/);
+  assert.match(withDateMismatch, /commissions=2/);
+  assert.doesNotMatch(withDateMismatch, /ERROR:/);
 });

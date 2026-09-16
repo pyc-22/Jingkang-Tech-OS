@@ -9,7 +9,8 @@
 -- No password is stored here. No permanent schema objects are created.
 -- First run diagnose_commissions_20260905_07.sql. Commission candidates come ONLY
 -- from the 68 target order IDs. Retained-order commissions are never added via FKs.
--- Same-store date anomalies need individual review below; store mismatches abort.
+-- Same-store commissions are deleted regardless of their recorded business date.
+-- Date differences are reported before manual COMMIT; store mismatches abort.
 
 \pset pager off
 \set ON_ERROR_STOP off
@@ -19,10 +20,6 @@ DECLARE
   target_store constant uuid := 'f3448132-92a9-4263-af9f-f34acf5c310e';
   first_day constant date := DATE '2026-09-05';
   last_day constant date := DATE '2026-09-07';
-  -- After diagnosis, add ONLY reviewed commission UUIDs with date mismatches.
-  -- This acknowledges deleting those rows despite their recorded business dates;
-  -- it does not change dates, expand the order set, or approve other-store rows.
-  reviewed_commission_date_ids constant uuid[] := ARRAY[]::uuid[];
   backup_file constant text := 'C:/wwwroot/jingkang-platform/backup/massage_platform_before_clear_20260916_144857.dump';
   table_names constant text[] := ARRAY[
     'sales_order', 'sales_order_line', 'payment_record',
@@ -169,15 +166,6 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_temp._clear_commission_review WHERE store_mismatch) THEN
     RAISE EXCEPTION 'Commission store mismatch; all data retained. Resolve the listed ownership conflicts separately.';
   END IF;
-  IF EXISTS (SELECT 1 FROM unnest(reviewed_commission_date_ids) AS approved(id)
-             WHERE NOT EXISTS (SELECT 1 FROM pg_temp._clear_commission_review c
-                               WHERE c.id=approved.id AND c.date_mismatch AND NOT c.store_mismatch)) THEN
-    RAISE EXCEPTION 'Reviewed commission ID is not a same-store date anomaly on a target order';
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_temp._clear_commission_review
-             WHERE date_mismatch AND NOT (id=ANY(reviewed_commission_date_ids))) THEN
-    RAISE EXCEPTION 'Unreviewed commission date mismatch; all data retained. Inspect diagnosis and explicitly review individual IDs before retrying.';
-  END IF;
   INSERT INTO pg_temp._clear_rows
     SELECT DISTINCT 'public.service_session'::regclass, l.service_session_id
     FROM public.sales_order_service_session l JOIN pg_temp._clear_rows r
@@ -204,7 +192,7 @@ BEGIN
   END LOOP;
 
   -- Abort instead of removing records belonging to another store/date/order.
-  -- Commission ownership/date anomalies were checked individually above.
+  -- Commissions use order ownership and store checks above, not their own date.
   FOR item IN SELECT * FROM pg_temp._clear_tables t WHERE t.name<>'technician_commission_record' LOOP
     EXECUTE format('SELECT EXISTS(SELECT 1 FROM %s c JOIN pg_temp._clear_rows r ON r.rel=$1 AND r.id=c.id WHERE (to_jsonb(c)->>''store_id'' IS NOT NULL AND (to_jsonb(c)->>''store_id'')::uuid<>$2) OR (to_jsonb(c)->>''business_date'' IS NOT NULL AND (to_jsonb(c)->>''business_date'')::date NOT BETWEEN $3 AND $4))', item.rel::regclass)
       INTO bad USING item.rel,target_store,first_day,last_day;
