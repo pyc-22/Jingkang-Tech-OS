@@ -52,8 +52,8 @@ test('main item changes remain available when a session has no extensions', () =
   assert.match(app, /extensionSelect\.disabled = serviceItemChangeExtensions\.length === 0/);
   assert.match(app, /kindWrap\.hidden = !hasExtensions/);
   assert.match(app, /extensionWrap\.style\.display = 'none'/);
-  assert.match(index, /app\.js\?v=20260915-next-optimization-v5/);
-  assert.match(index, /styles\.css\?v=20260915-next-optimization-v5/);
+  assert.match(index, /app\.js\?v=20260916-technician-code-first/);
+  assert.match(index, /styles\.css\?v=20260916-technician-code-first/);
   assert.match(fs.readFileSync(path.join(root, 'styles.css'), 'utf8'), /\.form-grid label\[hidden\] \{ display:none !important; \}/);
 });
 

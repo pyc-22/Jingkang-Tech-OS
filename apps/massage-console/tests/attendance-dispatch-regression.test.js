@@ -36,7 +36,7 @@ test('on-duty dispatch choices show employee code separately from queue position
   context.state.rooms = [{ id:'101', apiId:'room1', availableBedCount:1, bedCount:1 }];
   context.openClockDialog();
   const html = elements.get('#dispatch-tech-list').innerHTML;
-  assert.match(html, /工号 007/);
+  assert.match(html, /<b>工号 007<\/b><span class="technician-full-name">同名技师<\/span>/);
   assert.match(html, /轮钟 03/);
   assert.match(html, /工号 &lt;008&gt;/);
   assert.doesNotMatch(html, /<008>/);
@@ -48,7 +48,7 @@ test('queue cards label technician codes explicitly and never use queue position
   context.renderTechnicians();
   const html = elements.get('#technician-list').innerHTML;
   assert.match(html, /工号 007/);
-  assert.match(html, /工号 未设置/);
+  assert.match(html, /未设置工号/);
   assert.match(html, /轮排 03/);
 });
 
@@ -59,8 +59,8 @@ test('selected dispatch participants show code in both summary and service confi
   });
   context.state.technicians = [technician];
   context.renderDispatchSelection();
-  assert.match(elements.get('#clock-tech-name').textContent, /007/);
-  assert.match(elements.get('#dispatch-allocation-list').innerHTML, /工号 007/);
+  assert.equal(elements.get('#clock-tech-name').textContent, '工号 007 · 同名技师');
+  assert.match(elements.get('#dispatch-allocation-list').innerHTML, /<legend>工号 007 · 同名技师<\/legend>/);
 });
 
 test('attendance date selection fetches and renders historical clock-in and clock-out records', async () => {
@@ -80,4 +80,47 @@ test('attendance date selection fetches and renders historical clock-in and cloc
   assert.match(elements.get('#employee-attendance-records').innerHTML, /同名技师/);
   assert.match(elements.get('#employee-attendance-records').innerHTML, /已下班/);
   assert.doesNotMatch(elements.get('#employee-attendance-records').innerHTML, /data-attendance-clock-(in|out)/);
+});
+
+
+test('dispatch choices keep full long codes and names, with an explicit missing-code label', () => {
+  const { context, elements } = harness(['roomTransferEscape', 'openClockDialog'], {
+    renderDispatchServiceCatalog() {}, renderDispatchSelection() {}, toast() {}
+  });
+  context.state.technicians = [
+    { ...technician, code:'A001234567890123456789', name:'王小明完整姓名展示' },
+    { ...technician, id:'t2', code:null, state:'serving' }
+  ];
+  context.state.rooms = [{ id:'101', apiId:'room1', availableBedCount:1, bedCount:1 }];
+  context.openClockDialog();
+  const html = elements.get('#dispatch-tech-list').innerHTML;
+  assert.match(html, /<b>工号 A001234567890123456789<\/b><span class="technician-full-name">王小明完整姓名展示<\/span>/);
+  assert.match(html, /<b>未设置工号<\/b>/);
+  assert.match(html, /class="tech-avatar"/);
+  assert.match(html, /轮钟 03/);
+  assert.match(html, /<em>可派<\/em>/);
+  assert.match(html, /<em>服务中<\/em>/);
+});
+
+test('clicking a dispatch card still selects and deselects by technician id', () => {
+  const { context } = harness([], {
+    clockingTechIds:[], dispatchSelections:new Map(), dispatchFocusTechId:null,
+    renderDispatchSelection() {}, toast() {}
+  });
+  context.state.technicians = [technician, { ...technician, id:'t2', state:'serving' }];
+  context.document.querySelector('#clock-type').value = 'QUEUE';
+  let click;
+  context.document.querySelector('#dispatch-tech-list').addEventListener = (type, handler) => { click = handler; };
+  const start = app.indexOf("document.querySelector('#dispatch-tech-list').addEventListener('click'");
+  vm.runInContext(app.slice(start, app.indexOf('\n});', start) + 4), context);
+  const event = id => ({ target:{ closest:() => ({ dataset:{ dispatchTech:id } }) } });
+  click(event('t1'));
+  assert.equal(context.clockingTechIds.join(','), 't1');
+  click(event('t1'));
+  assert.equal(context.clockingTechIds.length, 0);
+  click(event('t2'));
+  assert.equal(context.clockingTechIds.length, 0);
+  context.document.querySelector('#clock-type').value = 'BOOKED_QUEUE';
+  click(event('t2'));
+  assert.equal(context.clockingTechIds.join(','), 't2');
 });
