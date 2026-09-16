@@ -6,29 +6,51 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+import org.springframework.web.util.ServletRequestPathUtils;
+import org.springframework.web.util.UrlPathHelper;
 import com.chengxin.massage.audit.AuditOutcomeFilter;
 
 /** Centralizes endpoint permission checks while controllers retain store-scope validation. */
 @Component
 public class BusinessPermissionFilter extends OncePerRequestFilter {
   private final AdminSessionService adminSessions;
+  private RequestMappingHandlerMapping handlerMapping;
 
   BusinessPermissionFilter(AdminSessionService adminSessions) { this.adminSessions = adminSessions; }
+
+  @Autowired
+  void setHandlerMapping(@Lazy @Qualifier("requestMappingHandlerMapping") RequestMappingHandlerMapping handlerMapping) {
+    this.handlerMapping = handlerMapping;
+  }
 
   @Override
   protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
       throws ServletException, IOException {
-    String path = request.getRequestURI();
+    String path = UrlPathHelper.defaultInstance.getPathWithinApplication(request);
     if (!path.startsWith("/api/v1/") || HttpMethod.OPTIONS.matches(request.getMethod())) {
       chain.doFilter(request, response);
       return;
     }
+    ServletRequestPathUtils.parseAndCache(request);
+    if (handlerMapping != null && handlerMapping.getHandlerMethods().keySet().stream().noneMatch(mapping ->
+        mapping.getPathPatternsCondition() != null && mapping.getPathPatternsCondition().getMatchingCondition(request) != null)) {
+      response.sendError(HttpServletResponse.SC_FORBIDDEN, "Unknown API path");
+      return;
+    }
     List<String> permissions = requiredPermissionsFor(path, request.getMethod());
+    if (permissions.contains("DENY_UNMAPPED_API")) {
+      response.sendError(HttpServletResponse.SC_FORBIDDEN, "Unmapped API permission");
+      return;
+    }
     if (permissions.isEmpty()) {
       chain.doFilter(request, response);
       return;
@@ -50,13 +72,19 @@ public class BusinessPermissionFilter extends OncePerRequestFilter {
   }
 
   private boolean isAuthenticationPath(String path) {
-    return path.startsWith("/api/v1/admin/auth/") || path.startsWith("/api/v1/mobile/auth/") || path.startsWith("/api/v1/mobile/technician/");
+    // These registered controllers enforce their own session/role/permission checks.
+    return path.startsWith("/api/v1/admin/auth/") || path.startsWith("/api/v1/mobile/auth/")
+      || path.startsWith("/api/v1/mobile/technician/") || path.startsWith("/api/v1/admin/access/")
+      || path.startsWith("/api/v1/technicians/") || path.equals("/api/v1/employee-attendance")
+      || path.startsWith("/api/v1/employee-attendance/") || path.equals("/api/v1/expense-claims")
+      || path.startsWith("/api/v1/expense-claims/") || path.startsWith("/api/v1/finance/expense-categories")
+      || path.startsWith("/api/v1/finance/expense-reports");
   }
 
   List<String> requiredPermissionsFor(String path, String method) {
     if (isAuthenticationPath(path)) return List.of();
     Requirement requirement = requirement(path, method);
-    return requirement == null ? List.of() : requirement.permissions();
+    return requirement == null ? List.of("DENY_UNMAPPED_API") : requirement.permissions();
   }
 
   private Requirement requirement(String path, String method) {
@@ -98,6 +126,7 @@ public class BusinessPermissionFilter extends OncePerRequestFilter {
     if (path.startsWith("/api/v1/technician-queue")) return isRead(method) ? any("FRONTDESK_SETTLE", "FOUNDATION_MANAGE") : required("FOUNDATION_MANAGE");
     if (path.startsWith("/api/v1/service-categories")) return isRead(method) ? any("FRONTDESK_SETTLE", "FOUNDATION_MANAGE") : required("FOUNDATION_MANAGE");
     if (path.startsWith("/api/v1/service-reservations")) return isRead(method) ? any("FRONTDESK_SETTLE", "FOUNDATION_MANAGE") : required("FRONTDESK_SETTLE");
+    if (path.startsWith("/api/v1/service-extension-intents")) return required("FRONTDESK_SETTLE");
     if (path.startsWith("/api/v1/service-transfer-requests")) return isRead(method) ? required("FRONTDESK_SETTLE") : required("FRONTDESK_SETTLE");
     if (path.startsWith("/api/v1/service-room-transfers")) return roomTransferRequirement(path, method);
     if (path.startsWith("/api/v1/technician-performance")) return required("REPORT_VIEW");

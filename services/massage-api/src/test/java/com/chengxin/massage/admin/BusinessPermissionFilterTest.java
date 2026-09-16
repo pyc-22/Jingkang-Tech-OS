@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.mock.web.MockFilterChain;
@@ -114,6 +115,30 @@ class BusinessPermissionFilterTest {
 
     permissionFilter.doFilter(request, response, chain);
 
+    assertThat(response.getStatus()).isEqualTo(403);
+    assertThat(chain.getRequest()).isNull();
+  }
+
+  @Test
+  void normalizesEveryPathSegmentBeforeCheckingPermissions() throws Exception {
+    AdminSessionService sessions = mock(AdminSessionService.class);
+    for (String path : List.of("/api/v1;x=1/members", "/api/v1/members;x=1", "/api/v1/%6dembers")) {
+      MockHttpServletRequest request = new MockHttpServletRequest("POST", path);
+      MockHttpServletResponse response = new MockHttpServletResponse();
+      MockFilterChain chain = new MockFilterChain();
+      new BusinessPermissionFilter(sessions).doFilter(request, response, chain);
+      assertThat(response.getStatus()).as(path).isEqualTo(403);
+      assertThat(chain.getRequest()).isNull();
+    }
+  }
+
+  @Test
+  void unknownPermissionMappingFailsClosedEvenForAnAdministrator() throws Exception {
+    AdminSessionService sessions = mock(AdminSessionService.class);
+    when(sessions.hasPermission(null, "DENY_UNMAPPED_API")).thenReturn(true);
+    MockHttpServletResponse response = new MockHttpServletResponse();
+    MockFilterChain chain = new MockFilterChain();
+    new BusinessPermissionFilter(sessions).doFilter(new MockHttpServletRequest("POST", "/api/v1/unknown"), response, chain);
     assertThat(response.getStatus()).isEqualTo(403);
     assertThat(chain.getRequest()).isNull();
   }

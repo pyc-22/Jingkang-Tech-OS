@@ -155,8 +155,8 @@ public class MemberController {
     long balance = wallet.balanceCents() + input.amountCents() + input.bonusCents();
     if (input.amountCents() > 0) {
       long rechargeBalance = wallet.balanceCents() + input.amountCents();
-      transaction(storeId, wallet, memberId, "RECHARGE", input.amountCents(), wallet.balanceCents(), rechargeBalance, paymentMethod, technician, employee, input.note());
-      if (input.bonusCents() > 0) transaction(storeId, wallet, memberId, "BONUS", input.bonusCents(), rechargeBalance, balance, paymentMethod, technician, employee, input.note());
+      UUID rechargeId = transaction(storeId, wallet, memberId, "RECHARGE", input.amountCents(), wallet.balanceCents(), rechargeBalance, paymentMethod, technician, employee, input.note(), null);
+      if (input.bonusCents() > 0) transaction(storeId, wallet, memberId, "BONUS", input.bonusCents(), rechargeBalance, balance, paymentMethod, technician, employee, input.note(), rechargeId);
       jdbc.sql("update member_wallet set balance_cents=:balance,updated_at=now(),version=version+1 where id=:id")
         .param("balance", balance).param("id", wallet.id()).update();
     }
@@ -186,8 +186,8 @@ public class MemberController {
     Employee employee = input.employeeId() == null ? null : employee(transactionStoreId, input.employeeId());
     long before = wallet.balanceCents();
     long after = before + input.amountCents() + input.bonusCents();
-    transaction(transactionStoreId, wallet, id, "RECHARGE", input.amountCents(), before, before + input.amountCents(), paymentMethod, technician, employee, input.note());
-    if (input.bonusCents() > 0) transaction(transactionStoreId, wallet, id, "BONUS", input.bonusCents(), before + input.amountCents(), after, paymentMethod, technician, employee, input.note());
+    UUID rechargeId = transaction(transactionStoreId, wallet, id, "RECHARGE", input.amountCents(), before, before + input.amountCents(), paymentMethod, technician, employee, input.note(), null);
+    if (input.bonusCents() > 0) transaction(transactionStoreId, wallet, id, "BONUS", input.bonusCents(), before + input.amountCents(), after, paymentMethod, technician, employee, input.note(), rechargeId);
     jdbc.sql("update member_wallet set balance_cents=:balance,updated_at=now(),version=version+1 where id=:id")
       .param("balance", after).param("id", wallet.id()).update();
     Member recharged = member(id);
@@ -327,10 +327,12 @@ public class MemberController {
       .param("id", employeeId).param("store", storeId).query(Employee.class).optional().orElseThrow(() -> bad("Employee not found"));
   }
 
-  private void transaction(UUID transactionStoreId, Wallet wallet, UUID member, String type, long amount, long before, long after, PaymentMethod paymentMethod, Technician technician, Employee employee, String note) {
-    jdbc.sql("insert into wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,payment_method,payment_method_name_snapshot,technician_id,technician_name_snapshot,employee_id,employee_name_snapshot,source,note,business_date) values(:id,:tenant,:store,:wallet,:member,:type,:amount,:before,:after,:payment,:paymentName,:technician,:technicianName,:employee,:employeeName,'FRONTDESK',:note,:businessDate)")
-      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", transactionStoreId).param("wallet", wallet.id()).param("member", member)
+  private UUID transaction(UUID transactionStoreId, Wallet wallet, UUID member, String type, long amount, long before, long after, PaymentMethod paymentMethod, Technician technician, Employee employee, String note, UUID rechargeId) {
+    UUID id = UUID.randomUUID();
+    jdbc.sql("insert into wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,payment_method,payment_method_name_snapshot,technician_id,technician_name_snapshot,employee_id,employee_name_snapshot,source,note,business_date,recharge_id) values(:id,:tenant,:store,:wallet,:member,:type,:amount,:before,:after,:payment,:paymentName,:technician,:technicianName,:employee,:employeeName,'FRONTDESK',:note,:businessDate,:recharge)")
+      .param("id", id).param("recharge", "RECHARGE".equals(type) ? id : rechargeId).param("tenant", TENANT_ID).param("store", transactionStoreId).param("wallet", wallet.id()).param("member", member)
       .param("type", type).param("amount", amount).param("before", before).param("after", after).param("payment", paymentMethod.code()).param("paymentName", paymentMethod.name()).param("technician", technician == null ? null : technician.id()).param("technicianName", technician == null ? null : technician.name()).param("employee", employee == null ? null : employee.id()).param("employeeName", employee == null ? null : employee.fullName()).param("note", note).param("businessDate", businessClock.currentBusinessDate(transactionStoreId)).update();
+    return id;
   }
 
   private ResponseStatusException bad(String message) { return new ResponseStatusException(HttpStatus.BAD_REQUEST, message); }

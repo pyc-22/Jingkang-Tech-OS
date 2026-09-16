@@ -296,12 +296,17 @@ test('dispatch, accept, start, extend, end, settle and full refund remain consis
 
 // These assert the required behavior, not the defective behavior. TODO failures
 // are review evidence and must not be counted as passing business regressions.
-test('R02: matrix path must enforce the same member write permission', { todo: 'Unfixed permission canonicalization' }, async () => {
-  const response = await api('/api/v1;x=fixture/members', { name: 'Path fixture', phone: randomUUID().slice(0, 20) }, reader);
-  assert.equal(response.status, 403);
+test('R02: matrix paths enforce member permissions and unknown API paths fail closed', async () => {
+  const before = sql('SELECT count(*) FROM member;');
+  for (const url of ['/api/v1;x=fixture/members', '/api/v1/members;x=fixture', '/api/v1/%6dembers', '/api/v1/not-a-route']) {
+    assert.equal((await api(url, { name: 'Path fixture', phone: randomUUID().slice(0, 20) }, reader)).status, 403, url);
+  }
+  assert.equal((await api('/api/v1/admin/auth/not-a-route', {}, admin)).status, 403);
+  assert.equal(sql('SELECT count(*) FROM member;'), before);
+  ok(await api('/api/v1;x=fixture/members', { name: 'Permitted fixture', phone: randomUUID().slice(0, 20) }));
 });
 
-test('R04: every bonus refund ledger row conserves balance', { todo: 'Unfixed refund intermediate balance' }, async () => {
+test('R04: every bonus refund ledger row conserves balance', async () => {
   const member = await newMember(10000, 2000);
   const row = ok(await refund(member, 10000));
   ok(await api(`/api/v1/member-recharge-refunds/${row.id}/complete`, {}));
@@ -309,7 +314,7 @@ test('R04: every bonus refund ledger row conserves balance', { todo: 'Unfixed re
   assert.equal(sql(`SELECT count(*) FROM wallet_transaction WHERE member_id='${member.id}' AND balance_before_cents+amount_cents<>balance_after_cents;`), '0');
 });
 
-test('R05: later recharge bonus must not be reclaimed by an earlier recharge', { todo: 'Unfixed timestamp-based bonus association' }, async () => {
+test('R05: later recharge bonus must not be reclaimed by an earlier recharge', async () => {
   const member = await newMember(10000, 0);
   const first = original(member);
   ok(await api(`/api/v1/members/${member.id}/recharges`, { amountCents: 10000, bonusCents: 2000, paymentMethod: 'CASH' }));
@@ -327,7 +332,7 @@ test('R06: reusing an operation key with changed content must conflict', { todo:
   assert.equal((await api(`/api/v1/members/${member.id}/recharges`, { amountCents: 900, bonusCents: 0, paymentMethod: 'CASH' }, admin, headers)).status, 409);
 });
 
-test('R03: concurrent refund reservations must not exceed the original principal', { todo: 'Unfixed original recharge lock' }, async () => {
+test('R03: concurrent refund reservations must not exceed the original principal', async () => {
   const member = await newMember(10000);
   sql(`CREATE FUNCTION review_refund_barrier() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
     IF NEW.member_id='${member.id}'::uuid THEN PERFORM pg_sleep(1); END IF; RETURN NEW; END $$;
@@ -338,6 +343,24 @@ test('R03: concurrent refund reservations must not exceed the original principal
   } finally {
     sql('DROP TRIGGER review_refund_barrier ON member_recharge_refund; DROP FUNCTION review_refund_barrier();');
   }
+});
+
+test('R05: unreviewed legacy recharges require manual reconciliation before refund', async () => {
+  const member = await newMember();
+  sql(`UPDATE wallet_transaction SET recharge_id=NULL WHERE id='${original(member)}';`);
+  const result = await refund(member, 1000);
+  assert.equal(result.status, 409);
+  assert.match(result.data.message, /人工核对/);
+  assert.equal(sql(`SELECT count(*) FROM member_recharge_refund WHERE member_id='${member.id}';`), '0');
+});
+
+test('R03: completion rejects legacy over-reservations without debiting the wallet', async () => {
+  const member = await newMember();
+  const row = ok(await refund(member, 8000));
+  sql(`INSERT INTO member_recharge_refund(id,tenant_id,store_id,member_id,original_transaction_id,refund_no,request_key,status,amount_cents,reason,requested_by_name_snapshot)
+    SELECT gen_random_uuid(),tenant_id,store_id,member_id,original_transaction_id,'legacy-'||refund_no,gen_random_uuid()::text,'PENDING',8000,reason,requested_by_name_snapshot FROM member_recharge_refund WHERE id='${row.id}';`);
+  assert.equal((await api(`/api/v1/member-recharge-refunds/${row.id}/complete`, {})).status, 409);
+  assert.equal(sql(`SELECT balance_cents FROM member_wallet WHERE member_id='${member.id}';`), '10000');
 });
 
 test('R15: mobile clock-out preserves another active service room state', { todo: 'Unfixed multi-bed room aggregation' }, async () => {
