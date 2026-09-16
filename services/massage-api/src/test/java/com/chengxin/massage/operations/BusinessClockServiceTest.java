@@ -44,4 +44,31 @@ class BusinessClockServiceTest {
     assertThat(BusinessClockService.resolveBusinessDate(event, SHANGHAI, LocalTime.of(5, 0)))
       .isEqualTo(LocalDate.of(2026, 8, 8));
   }
+
+  @Test
+  void rollsBackAcrossYearAndLeapDayBoundaries() {
+    assertThat(BusinessClockService.resolveBusinessDate(
+      OffsetDateTime.parse("2026-01-01T04:59:59+08:00"), SHANGHAI, LocalTime.of(5, 0)))
+      .isEqualTo(LocalDate.of(2025, 12, 31));
+    assertThat(BusinessClockService.resolveBusinessDate(
+      OffsetDateTime.parse("2028-03-01T04:59:59+08:00"), SHANGHAI, LocalTime.of(5, 0)))
+      .isEqualTo(LocalDate.of(2028, 2, 29));
+  }
+
+  @Test
+  void midnightCutoffNeverMovesLocalMidnightToPreviousDay() {
+    assertThat(BusinessClockService.resolveBusinessDate(
+      OffsetDateTime.parse("2026-09-16T00:00:00+08:00"), SHANGHAI, LocalTime.MIDNIGHT))
+      .isEqualTo(LocalDate.of(2026, 9, 16));
+  }
+
+  @Test
+  void repeatedDstHourUsesStoreLocalDate() {
+    ZoneId newYork = ZoneId.of("America/New_York");
+    for (String instant : new String[] {"2026-11-01T05:30:00Z", "2026-11-01T06:30:00Z"}) {
+      assertThat(BusinessClockService.resolveBusinessDate(
+        OffsetDateTime.parse(instant), newYork, LocalTime.of(5, 0)))
+        .isEqualTo(LocalDate.of(2026, 10, 31));
+    }
+  }
 }

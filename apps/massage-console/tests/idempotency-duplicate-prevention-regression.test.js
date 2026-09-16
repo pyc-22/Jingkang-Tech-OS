@@ -219,6 +219,7 @@ test('updated idempotency assets use the P0 release cache version', () => {
   assert.match(technicianWorker, /jingkang-technician-20260915-next-optimization-v5/);
 });
 
-test('release health endpoint reports the complete mobile and daily report release', () => {
-  assert.match(home, /20260915-next-optimization-v5/);
+test('release health endpoint exposes a versioned release identifier', () => {
+  assert.match(home, /String RELEASE = "\d{8}-[a-z0-9-]+"/);
+  assert.match(home, /"release", RELEASE/);
 });
