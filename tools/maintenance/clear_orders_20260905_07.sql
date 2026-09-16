@@ -7,6 +7,9 @@
 -- Running with psql -f exits without committing and rolls everything back.
 -- Never use --single-transaction, disable triggers, or run only selected lines.
 -- No password is stored here. No permanent schema objects are created.
+-- First run diagnose_commissions_20260905_07.sql. Commission candidates come ONLY
+-- from the 68 target order IDs. Retained-order commissions are never added via FKs.
+-- Same-store date anomalies need individual review below; store mismatches abort.
 
 \pset pager off
 \set ON_ERROR_STOP off
@@ -16,6 +19,10 @@ DECLARE
   target_store constant uuid := 'f3448132-92a9-4263-af9f-f34acf5c310e';
   first_day constant date := DATE '2026-09-05';
   last_day constant date := DATE '2026-09-07';
+  -- After diagnosis, add ONLY reviewed commission UUIDs with date mismatches.
+  -- This acknowledges deleting those rows despite their recorded business dates;
+  -- it does not change dates, expand the order set, or approve other-store rows.
+  reviewed_commission_date_ids constant uuid[] := ARRAY[]::uuid[];
   backup_file constant text := 'C:/wwwroot/jingkang-platform/backup/massage_platform_before_clear_20260916_144857.dump';
   table_names constant text[] := ARRAY[
     'sales_order', 'sales_order_line', 'payment_record',
@@ -69,7 +76,7 @@ BEGIN
   -- These core tables must exist; optional history tables are discovered above.
   FOREACH name IN ARRAY ARRAY['sales_order','payment_record','sales_order_line',
     'sales_order_service_session','service_session','daily_operating_report',
-    'cashier_shift','member_wallet','wallet_transaction'] LOOP
+    'cashier_shift','member_wallet','wallet_transaction','technician_commission_record'] LOOP
     IF to_regclass(format('public.%I',name)) IS NULL THEN
       RAISE EXCEPTION 'Required table missing: %', name;
     END IF;
@@ -141,6 +148,36 @@ BEGIN
   IF (SELECT count(*) FROM pg_temp._clear_rows) <> 68 THEN
     RAISE EXCEPTION 'Expected exactly 68 target orders';
   END IF;
+
+  -- Fix the commission set by order ownership, never by its store/date or other FKs.
+  CREATE TEMP TABLE _clear_commission_review ON COMMIT DROP AS
+    SELECT c.id,c.order_id,c.store_id AS commission_store_id,o.store_id AS order_store_id,
+           c.business_date AS commission_business_date,o.business_date AS order_business_date,
+           c.store_id IS DISTINCT FROM o.store_id AS store_mismatch,
+           c.business_date IS DISTINCT FROM o.business_date AS date_mismatch
+    FROM public.technician_commission_record c
+    JOIN pg_temp._clear_rows r ON r.rel='public.sales_order'::regclass AND r.id=c.order_id
+    JOIN public.sales_order o ON o.id=c.order_id;
+  INSERT INTO pg_temp._clear_rows
+    SELECT 'public.technician_commission_record'::regclass,id FROM pg_temp._clear_commission_review;
+  FOR item IN SELECT * FROM pg_temp._clear_commission_review
+              WHERE store_mismatch OR date_mismatch ORDER BY order_id,id LOOP
+    RAISE NOTICE 'COMMISSION_REVIEW id=%, order_id=%, commission_store=%, order_store=%, commission_date=%, order_date=%',
+      item.id,item.order_id,item.commission_store_id,item.order_store_id,
+      item.commission_business_date,item.order_business_date;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_temp._clear_commission_review WHERE store_mismatch) THEN
+    RAISE EXCEPTION 'Commission store mismatch; all data retained. Resolve the listed ownership conflicts separately.';
+  END IF;
+  IF EXISTS (SELECT 1 FROM unnest(reviewed_commission_date_ids) AS approved(id)
+             WHERE NOT EXISTS (SELECT 1 FROM pg_temp._clear_commission_review c
+                               WHERE c.id=approved.id AND c.date_mismatch AND NOT c.store_mismatch)) THEN
+    RAISE EXCEPTION 'Reviewed commission ID is not a same-store date anomaly on a target order';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_temp._clear_commission_review
+             WHERE date_mismatch AND NOT (id=ANY(reviewed_commission_date_ids))) THEN
+    RAISE EXCEPTION 'Unreviewed commission date mismatch; all data retained. Inspect diagnosis and explicitly review individual IDs before retrying.';
+  END IF;
   INSERT INTO pg_temp._clear_rows
     SELECT DISTINCT 'public.service_session'::regclass, l.service_session_id
     FROM public.sales_order_service_session l JOIN pg_temp._clear_rows r
@@ -153,11 +190,11 @@ BEGIN
     WHERE store_id=target_store AND business_date BETWEEN first_day AND last_day;
 
   -- Only follow incoming references into the explicit child-table allowlist.
-  -- Never enlarge the four root sets, even through an order-correction FK.
+  -- Never enlarge the four root sets or the order-owned commission set.
   LOOP
     added := 0;
     FOR fk IN SELECT f.* FROM pg_temp._clear_fk f JOIN pg_temp._clear_tables t ON t.rel=f.child
-      WHERE t.name NOT IN ('sales_order','service_session','daily_operating_report','cashier_shift') LOOP
+      WHERE t.name NOT IN ('sales_order','service_session','daily_operating_report','cashier_shift','technician_commission_record') LOOP
       EXECUTE format('INSERT INTO pg_temp._clear_rows SELECT %s,c.id FROM %s c JOIN pg_temp._clear_rows r ON r.rel=%s AND r.id=c.%I ON CONFLICT DO NOTHING',
                      fk.child,fk.child::regclass,fk.parent,fk.child_column);
       GET DIAGNOSTICS n = ROW_COUNT;
@@ -167,7 +204,8 @@ BEGIN
   END LOOP;
 
   -- Abort instead of removing records belonging to another store/date/order.
-  FOR item IN SELECT * FROM pg_temp._clear_tables LOOP
+  -- Commission ownership/date anomalies were checked individually above.
+  FOR item IN SELECT * FROM pg_temp._clear_tables t WHERE t.name<>'technician_commission_record' LOOP
     EXECUTE format('SELECT EXISTS(SELECT 1 FROM %s c JOIN pg_temp._clear_rows r ON r.rel=$1 AND r.id=c.id WHERE (to_jsonb(c)->>''store_id'' IS NOT NULL AND (to_jsonb(c)->>''store_id'')::uuid<>$2) OR (to_jsonb(c)->>''business_date'' IS NOT NULL AND (to_jsonb(c)->>''business_date'')::date NOT BETWEEN $3 AND $4))', item.rel::regclass)
       INTO bad USING item.rel,target_store,first_day,last_day;
     IF bad THEN RAISE EXCEPTION 'Cross-store/date dependency in %', item.name; END IF;
@@ -252,6 +290,7 @@ $clear_orders$;
 \else
   SELECT business_date,before_count,kept_count,after_count FROM pg_temp._clear_counts ORDER BY business_date;
   SELECT step,table_name,deleted_count FROM pg_temp._clear_log ORDER BY step;
+  SELECT * FROM pg_temp._clear_commission_review WHERE date_mismatch ORDER BY order_id,id;
   SELECT rel::regclass AS wallet_table,count(*) AS unchanged_rows
     FROM pg_temp._clear_snapshot
     WHERE rel IN ('public.member_wallet'::regclass,'public.wallet_transaction'::regclass) GROUP BY rel;
