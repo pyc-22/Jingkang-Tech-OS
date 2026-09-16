@@ -12,13 +12,13 @@ test('double rooms render one independent countdown row per technician participa
   assert.match(app, /const participantIds = sessionParticipantIds\(item\)/);
   assert.match(app, /technicianName: technician\?\.name \|\| fallbackNames\[index\]/);
   assert.match(app, /service\.expectedEndAt/);
-  assert.match(app, /data-room-countdown="\$\{service\.expectedEndAt\}"/);
+  assert.match(app, /data-room-countdown="\$\{roomTransferEscape\(service\.expectedEndAt\)\}"/);
   assert.match(app, /class="room-services"/);
   assert.match(styles, /\.room-service-row/);
 });
 
 test('receipt duration remains sourced from the settled order line', () => {
-  assert.match(app, /line\.durationMinutes\}分/);
-  assert.match(app, /line\.durationMinutes \|\| 0\}分/);
+  assert.match(app, /roomTransferEscape\(line\.durationMinutes\)\}分/);
+  assert.match(app, /roomTransferEscape\(line\.durationMinutes \|\| 0\)\}分/);
   assert.match(app, /duration: `\$\{session\.plannedDurationMinutes\} 分钟`/);
 });

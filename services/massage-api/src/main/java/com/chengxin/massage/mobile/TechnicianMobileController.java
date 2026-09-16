@@ -33,6 +33,7 @@ import com.chengxin.massage.catalog.ServiceDispatchLifecycle;
 import com.chengxin.massage.catalog.TechnicianQueueService;
 import com.chengxin.massage.catalog.ServiceItemVersionService.ResolvedServiceItem;
 import com.chengxin.massage.catalog.ServiceDurationPolicyService;
+import com.chengxin.massage.catalog.RoomStateService;
 
 @RestController
 @RequestMapping("/api/v1/mobile/technician")
@@ -69,11 +70,12 @@ public class TechnicianMobileController {
   private final ServiceDispatchEventService dispatchEvents;
   private final TechnicianQueueService technicianQueue;
   private final ServiceDurationPolicyService durationPolicies;
+  private final RoomStateService roomStates;
 
   @Value("${massage.dispatch.acceptance-timeout-seconds:300}")
   private int acceptanceTimeoutSeconds;
 
-  TechnicianMobileController(JdbcClient jdbc, MobileSessionService sessions, TechnicianSchedulePolicy schedulePolicy, AuditService audits, BusinessClockService businessClock, ServiceItemVersionService itemVersions, ServiceDispatchEventService dispatchEvents, TechnicianQueueService technicianQueue, ServiceDurationPolicyService durationPolicies) {
+  TechnicianMobileController(JdbcClient jdbc, MobileSessionService sessions, TechnicianSchedulePolicy schedulePolicy, AuditService audits, BusinessClockService businessClock, ServiceItemVersionService itemVersions, ServiceDispatchEventService dispatchEvents, TechnicianQueueService technicianQueue, ServiceDurationPolicyService durationPolicies, RoomStateService roomStates) {
     this.jdbc = jdbc;
     this.sessions = sessions;
     this.schedulePolicy = schedulePolicy;
@@ -83,6 +85,7 @@ public class TechnicianMobileController {
     this.dispatchEvents = dispatchEvents;
     this.technicianQueue = technicianQueue;
     this.durationPolicies = durationPolicies;
+    this.roomStates = roomStates;
   }
 
   @GetMapping("/me")
@@ -517,16 +520,7 @@ public class TechnicianMobileController {
   }
 
   private void recordRoomStatus(UUID storeId, UUID roomId, String status, String reason) {
-    lockRoom(storeId, roomId);
-    jdbc.sql("insert into room_status_event(id,tenant_id,store_id,room_id,status,reason,source,occurred_at) values(:id,:tenant,:store,:room,:status,:reason,'SERVICE_SESSION',clock_timestamp())")
-      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("room", roomId)
-      .param("status", status).param("reason", reason).update();
-  }
-
-  private void lockRoom(UUID storeId, UUID roomId) {
-    jdbc.sql("select id from room where id=:room and store_id=:store for update")
-      .param("room", roomId).param("store", storeId).query(UUID.class).optional()
-      .orElseThrow(() -> badRequest("Room is unavailable"));
+    roomStates.record(storeId, roomId, status, reason, "SERVICE_SESSION");
   }
 
   private String sessionSql(String statusClause, String limitClause) {

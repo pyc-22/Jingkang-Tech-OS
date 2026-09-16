@@ -213,10 +213,10 @@ test('historical backfill uses the same idempotent write and offline queue path'
 
 test('updated idempotency assets use the P0 release cache version', () => {
   assert.match(index, /offline-sync\.js\?v=20260915-next-optimization-v5/);
-  assert.match(mobileHtml, /mobile\.js\?v=20260915-next-optimization-v5/);
+  assert.match(mobileHtml, /mobile\.js\?v=20260916-quality-batch2-v9/);
   assert.match(mobileHtml, /offline-sync\.js\?v=20260915-next-optimization-v5/);
-  assert.match(mobile, /technician-service-worker\.js\?v=20260915-next-optimization-v5/);
-  assert.match(technicianWorker, /jingkang-technician-20260915-next-optimization-v5/);
+  assert.match(mobile, /technician-service-worker\.js\?v=20260916-quality-batch2-v9/);
+  assert.match(technicianWorker, /jingkang-technician-20260916-quality-batch2-v9/);
 });
 
 test('release health endpoint exposes a versioned release identifier', () => {

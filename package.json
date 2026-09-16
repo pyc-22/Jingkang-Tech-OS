@@ -17,5 +17,9 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "devDependencies": {
+    "acorn": "^8.18.0",
+    "jsdom": "^30.0.1"
   }
 }

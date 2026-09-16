@@ -325,11 +325,48 @@ test('R05: later recharge bonus must not be reclaimed by an earlier recharge', a
   assert.equal(row.bonusReclaimCents, 0);
 });
 
-test('R06: reusing an operation key with changed content must conflict', { todo: 'Unfixed request digest binding' }, async () => {
+test('R06: operation receipts bind content, actor and store and replay identical requests', async () => {
   const member = await newMember(0);
   const headers = { 'X-Offline-Operation-Id': randomUUID() };
   ok(await api(`/api/v1/members/${member.id}/recharges`, { amountCents: 100, bonusCents: 0, paymentMethod: 'CASH' }, admin, headers));
   assert.equal((await api(`/api/v1/members/${member.id}/recharges`, { amountCents: 900, bonusCents: 0, paymentMethod: 'CASH' }, admin, headers)).status, 409);
+  const body = { amountCents: 100, bonusCents: 0, paymentMethod: 'CASH' };
+  assert.equal((await api(`/api/v1/members/${member.id}/recharges`, body, admin, headers)).status, 204);
+  assert.equal((await api(`/api/v1/members/${member.id}/recharges`, body, cashier, headers)).status, 409);
+  const otherStore = sql(`SELECT id FROM store WHERE id<>'${store}' LIMIT 1;`);
+  assert.ok(otherStore);
+  assert.equal((await api(`/api/v1/members/${member.id}/recharges`, body, admin, { ...headers, 'X-Store-Id': otherStore })).status, 409);
+  assert.equal(sql(`SELECT balance_cents FROM member_wallet WHERE member_id='${member.id}';`), '100');
+});
+
+test('R06: receipt completion failure rolls back wallet, ledger and claim together', async () => {
+  const member = await newMember(0), key = randomUUID();
+  const body = { amountCents: 100, bonusCents: 0, paymentMethod: 'CASH' };
+  const headers = { 'X-Offline-Operation-Id': key };
+  sql(`CREATE FUNCTION review_receipt_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF NEW.operation_id='${key}'::uuid THEN RAISE EXCEPTION 'fixture receipt failure'; END IF; RETURN NEW; END $$;
+    CREATE TRIGGER review_receipt_failure BEFORE UPDATE ON offline_operation_receipt FOR EACH ROW EXECUTE FUNCTION review_receipt_failure();`);
+  try {
+    assert.equal((await api(`/api/v1/members/${member.id}/recharges`, body, admin, headers)).status, 500);
+    assert.equal(sql(`SELECT balance_cents FROM member_wallet WHERE member_id='${member.id}';`), '0');
+    assert.equal(sql(`SELECT count(*) FROM wallet_transaction WHERE member_id='${member.id}';`), '0');
+    assert.equal(sql(`SELECT count(*) FROM offline_operation_receipt WHERE operation_id='${key}';`), '0');
+  } finally {
+    sql('DROP TRIGGER review_receipt_failure ON offline_operation_receipt; DROP FUNCTION review_receipt_failure();');
+  }
+  const results = await Promise.all([api(`/api/v1/members/${member.id}/recharges`, body, admin, headers),
+    api(`/api/v1/members/${member.id}/recharges`, body, admin, headers)]);
+  assert.deepEqual(results.map(row => row.status).sort(), [200, 204]);
+  assert.equal(sql(`SELECT balance_cents FROM member_wallet WHERE member_id='${member.id}';`), '100');
+});
+
+test('R06: legacy processing receipts require reconciliation instead of another debit', async () => {
+  const member = await newMember(0), key = randomUUID();
+  const url = `/api/v1/members/${member.id}/recharges`;
+  sql(`INSERT INTO offline_operation_receipt(operation_id,request_method,request_path,status,created_at)
+    VALUES('${key}','POST','${url}','PROCESSING',now()-interval '3 days');`);
+  assert.equal((await api(url, { amountCents: 100, bonusCents: 0, paymentMethod: 'CASH' }, admin, { 'X-Offline-Operation-Id': key })).status, 409);
+  assert.equal(sql(`SELECT balance_cents FROM member_wallet WHERE member_id='${member.id}';`), '0');
 });
 
 test('R03: concurrent refund reservations must not exceed the original principal', async () => {
@@ -363,7 +400,7 @@ test('R03: completion rejects legacy over-reservations without debiting the wall
   assert.equal(sql(`SELECT balance_cents FROM member_wallet WHERE member_id='${member.id}';`), '10000');
 });
 
-test('R15: mobile clock-out preserves another active service room state', { todo: 'Unfixed multi-bed room aggregation' }, async () => {
+test('R15: mobile clock-out preserves another active service room state', async () => {
   const room = roomFixture();
   const own = activeService(room, '30000000-0000-0000-0000-000000000002');
   const other = activeService(room, technician);
@@ -377,12 +414,20 @@ test('R15: mobile clock-out preserves another active service room state', { todo
   }
 });
 
-test('R16: approving room transfer reassigns a bed in the destination room', { todo: 'Unfixed transfer bed ownership' }, async () => {
+test('R16: approving room transfer reassigns a bed in the destination room', async () => {
   const from = roomFixture(), to = roomFixture();
   const session = activeService(from, technician);
+  const other = activeService(from, '30000000-0000-0000-0000-000000000002');
+  const oldBed = sql(`SELECT bed_id FROM service_session WHERE id='${session}';`);
   const request = ok(await api('/api/v1/service-room-transfers', { serviceSessionId: session, toRoomId: to, reason: 'Review fixture' }));
   ok(await api(`/api/v1/service-room-transfers/${request.id}/approve`, {}));
   assert.equal(sql(`SELECT count(*) FROM service_session s JOIN room_bed b ON b.id=s.bed_id WHERE s.id='${session}' AND s.room_id=b.room_id;`), '1');
+  assert.equal(sql(`SELECT count(*) FROM service_session WHERE bed_id='${oldBed}' AND status='IN_SERVICE';`), '0');
+  assert.equal(sql(`SELECT count(*) FROM service_session WHERE room_id='${to}' AND status='IN_SERVICE';`), '1');
+  assert.equal(sql(`SELECT status FROM room_status_event WHERE room_id='${from}' ORDER BY occurred_at DESC,id DESC LIMIT 1;`), 'IN_SERVICE');
+  assert.throws(() => sql(`UPDATE service_session SET bed_id='${oldBed}' WHERE id='${session}';`), /service_bed_room_ownership/);
+  sql(`UPDATE service_session SET status='COMPLETED',ended_at=now() WHERE id IN ('${session}','${other}');
+    UPDATE service_session_participant SET status='COMPLETED',service_ended_at=now() WHERE service_session_id IN ('${session}','${other}');`);
 });
 
 test('inspection detects injected equation, quota and orphan anomalies and preserves data', async () => {

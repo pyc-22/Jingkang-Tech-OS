@@ -53,12 +53,14 @@ class P0ConflictRegressionTest {
     String sales = Files.readString(Path.of("src/main/java/com/chengxin/massage/sales/SalesOrderController.java"));
 
     assertThat(session).contains("select id from room where id=:room and store_id=:store for update");
-    assertThat(mobile).contains("select id from room where id=:room and store_id=:store for update");
+    assertThat(mobile).contains("roomStates.record(");
     assertThat(reservation).contains("select id from room where id=:room and store_id=:store for update");
-    assertThat(transfer).contains("source,occurred_at").contains("clock_timestamp()");
+    assertThat(transfer).contains("roomStates.record(");
     assertThat(sales).contains("order by id for update").contains("source,occurred_at").contains("clock_timestamp()");
-    assertThat(session).contains("source,occurred_at").contains("clock_timestamp()");
-    assertThat(mobile).contains("source,occurred_at").contains("clock_timestamp()");
+    assertThat(session).contains("roomStates.record(");
+    assertThat(mobile).contains("roomStates.record(");
+    assertThat(Files.readString(Path.of("src/main/java/com/chengxin/massage/catalog/RoomStateService.java")))
+      .contains("for update").contains("source,occurred_at").contains("clock_timestamp()");
     assertThat(reservation).contains("source,occurred_at").contains("clock_timestamp()");
   }
 
@@ -74,12 +76,11 @@ class P0ConflictRegressionTest {
   void duplicateOfflineOperationWaitsForTheFirstReceiptInsteadOfImmediatelyConflicting() throws Exception {
     String source = Files.readString(Path.of("src/main/java/com/chengxin/massage/admin/OfflineOperationIdempotencyFilter.java"));
 
-    assertThat(source).contains("PROCESSING_WAIT_ATTEMPTS");
-    assertThat(source).contains("Thread.sleep(PROCESSING_WAIT_MILLIS)");
-    assertThat(source).contains("if (current == null) return false");
+    assertThat(source).contains("transaction.executeWithoutResult");
+    assertThat(source).contains("on conflict do nothing");
+    assertThat(source).contains("status.setRollbackOnly()");
     assertThat(source).contains("X-Offline-Operation-Replayed");
-    assertThat(source).contains("Retry-After");
-    assertThat(source).contains("SC_SERVICE_UNAVAILABLE");
+    assertThat(source).contains("existing.requestHash()").contains("existing.userId()").contains("existing.storeId()");
   }
 
   @Test

@@ -43,7 +43,7 @@ test('front desk assigns daily extension counts to the extension technician', ()
   assert.match(sessionController, /extension_technician_ids/);
   assert.match(app, /extensionCount:0/);
   assert.match(app, /String\(session\.extensionTechnicianIds \|\| ''\)\.split\(','\)/);
-  assert.match(app, /加钟 <b>\$\{tech\.extensionCount\}<\/b>/);
+  assert.match(app, /加钟 <b>\$\{roomTransferEscape\(tech\.extensionCount\)\}<\/b>/);
 });
 
 test('main item changes remain available when a session has no extensions', () => {
@@ -52,7 +52,7 @@ test('main item changes remain available when a session has no extensions', () =
   assert.match(app, /extensionSelect\.disabled = serviceItemChangeExtensions\.length === 0/);
   assert.match(app, /kindWrap\.hidden = !hasExtensions/);
   assert.match(app, /extensionWrap\.style\.display = 'none'/);
-  assert.match(index, /app\.js\?v=20260916-technician-code-first/);
+  assert.match(index, /app\.js\?v=20260916-quality-batch2-v9/);
   assert.match(index, /styles\.css\?v=20260916-technician-code-first/);
   assert.match(fs.readFileSync(path.join(root, 'styles.css'), 'utf8'), /\.form-grid label\[hidden\] \{ display:none !important; \}/);
 });

@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.ResponseBody;
 
 @Controller
 public class HomeController {
-  private static final String RELEASE = "20260916-quality-batch1-v8";
+  private static final String RELEASE = "20260916-quality-batch2-v9";
   private final JdbcClient jdbc;
 
   HomeController(JdbcClient jdbc) {

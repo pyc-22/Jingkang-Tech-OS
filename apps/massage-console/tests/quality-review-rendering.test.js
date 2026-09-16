@@ -12,7 +12,8 @@ function render(rows) {
   const target = { innerHTML: '' };
   const context = { document: { querySelector: () => target }, managerMoney: value => String(value),
     managerCrossStoreLabel: { ORDER: 'Order' }, rows };
-  vm.runInNewContext(source.slice(start, end) + '\nrenderManagerCrossStoreTransactions(rows);', context);
+  const escape = source.split('\n').find(line => line.startsWith('const managerEscape='));
+  vm.runInNewContext(escape + '\n' + source.slice(start, end) + '\nrenderManagerCrossStoreTransactions(rows);', context);
   return target.innerHTML;
 }
 
@@ -22,7 +23,7 @@ test('manager cross-store renderer produces empty and populated states at runtim
     amountCents: 100, referenceNo: 'Order-1', storeId: 'fixture' }]), /Fixture/);
 });
 
-test('R01: manager member names must be rendered as text', { todo: 'Unfixed HTML output encoding' }, () => {
+test('R01: manager member names must be rendered as text', () => {
   const html = render([{ transactionType: 'ORDER', memberName: '<b data-review-marker="1">Fixture</b>',
     storeName: 'Store', amountCents: 100, referenceNo: 'Order-1', storeId: 'fixture' }]);
   assert.doesNotMatch(html, /<b data-review-marker/);

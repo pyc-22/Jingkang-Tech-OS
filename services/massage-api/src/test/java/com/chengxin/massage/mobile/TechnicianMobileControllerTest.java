@@ -62,7 +62,7 @@ class TechnicianMobileControllerTest {
       new TechnicianMobileController.Technician(technicianId, "T001", "测试技师", storeId, "测试门店")));
     TechnicianMobileController controller = new TechnicianMobileController(
       jdbc, sessions, schedulePolicy, audits, businessClock, itemVersions,
-      dispatchEvents, technicianQueue, durationPolicies);
+      dispatchEvents, technicianQueue, durationPolicies, mock(com.chengxin.massage.catalog.RoomStateService.class));
     MockHttpServletRequest request = new MockHttpServletRequest();
 
     assertThatThrownBy(() -> controller.clockIn("Bearer valid-token", request))
@@ -99,7 +99,7 @@ class TechnicianMobileControllerTest {
     TechnicianMobileController controller = new TechnicianMobileController(
       jdbc, sessions, mock(TechnicianSchedulePolicy.class), audits, mock(BusinessClockService.class),
       mock(ServiceItemVersionService.class), mock(ServiceDispatchEventService.class),
-      mock(TechnicianQueueService.class), mock(ServiceDurationPolicyService.class));
+      mock(TechnicianQueueService.class), mock(ServiceDurationPolicyService.class), mock(com.chengxin.massage.catalog.RoomStateService.class));
     Constructor<AuditOutcomeFilter> constructor = AuditOutcomeFilter.class
       .getDeclaredConstructor(AuditService.class, ObjectMapper.class);
     constructor.setAccessible(true);

@@ -37,15 +37,17 @@ public class ServiceRoomTransferController {
   private final AdminSessionService adminSessions;
   private final MobileSessionService mobileSessions;
   private final AuditService audits;
+  private final RoomStateService roomStates;
 
   ServiceRoomTransferController(JdbcClient jdbc, StoreContextService storeContext,
                                 AdminSessionService adminSessions, MobileSessionService mobileSessions,
-                                AuditService audits) {
+                                AuditService audits, RoomStateService roomStates) {
     this.jdbc = jdbc;
     this.storeContext = storeContext;
     this.adminSessions = adminSessions;
     this.mobileSessions = mobileSessions;
     this.audits = audits;
+    this.roomStates = roomStates;
   }
 
   @PostMapping("/mobile/technician/service-room-transfers")
@@ -92,9 +94,10 @@ public class ServiceRoomTransferController {
     if (!transfer.fromRoomId().equals(service.roomId())) throw conflict("Service room has changed; refresh the request");
     lockRooms(storeId, transfer.fromRoomId(), transfer.toRoomId());
     ensureApprovalTargetAvailable(storeId, transfer.id(), transfer.toRoomId());
+    UUID targetBed = targetBedForUpdate(storeId, transfer.toRoomId());
 
-    int updated = jdbc.sql("update service_session set room_id=:toRoom,updated_at=now(),version=version+1 where id=:id and store_id=:store and status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE') and room_id=:fromRoom and version=:version")
-      .param("id", service.id()).param("store", storeId).param("toRoom", transfer.toRoomId())
+    int updated = jdbc.sql("update service_session set room_id=:toRoom,bed_id=:bed,updated_at=now(),version=version+1 where id=:id and store_id=:store and status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE') and room_id=:fromRoom and version=:version")
+      .param("id", service.id()).param("store", storeId).param("toRoom", transfer.toRoomId()).param("bed", targetBed)
       .param("fromRoom", transfer.fromRoomId()).param("version", service.version()).update();
     if (updated == 0) throw conflict("Service changed while approving transfer");
     boolean inService = "IN_SERVICE".equals(service.status());
@@ -226,16 +229,25 @@ public class ServiceRoomTransferController {
   }
 
   private void recordRoomStatus(UUID storeId, UUID roomId, String status, String reason, String source) {
-    lockRoom(storeId, roomId);
-    jdbc.sql("insert into room_status_event(id,tenant_id,store_id,room_id,status,reason,source,occurred_at) values(:id,:tenant,:store,:room,:status,:reason,:source,clock_timestamp())")
-      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("room", roomId)
-      .param("status", status).param("reason", reason).param("source", source).update();
+    roomStates.record(storeId, roomId, status, reason, source);
   }
 
-  private void lockRoom(UUID storeId, UUID roomId) {
-    jdbc.sql("select id from room where id=:room and store_id=:store for update")
-      .param("room", roomId).param("store", storeId).query(UUID.class).optional()
-      .orElseThrow(() -> badRequest("Room is unavailable"));
+  private UUID targetBedForUpdate(UUID storeId, UUID roomId) {
+    jdbc.sql("""
+      insert into room_bed(id,tenant_id,store_id,room_id,code,name,sort_order)
+      select gen_random_uuid(),r.tenant_id,r.store_id,r.id,left(r.code||'-'||n,40),left(r.name||' bed '||n,80),n
+      from room r cross join lateral generate_series(1,r.bed_count) n
+      where r.id=:room and r.store_id=:store
+        and not exists(select 1 from room_bed b where b.room_id=r.id and b.sort_order=n)
+      on conflict (room_id,code) do nothing
+      """).param("room", roomId).param("store", storeId).update();
+    return jdbc.sql("""
+      select b.id from room_bed b where b.room_id=:room and b.store_id=:store and b.active=true
+        and not exists(select 1 from service_session s where s.bed_id=b.id
+          and s.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'))
+      order by b.sort_order,b.id limit 1 for update of b
+      """).param("room", roomId).param("store", storeId).query(UUID.class).optional()
+      .orElseThrow(() -> conflict("Target room has no available bed"));
   }
 
   private TransferRequest transfer(UUID storeId, UUID id) {

@@ -53,11 +53,12 @@ public class ServiceSessionController {
   private final ServiceItemVersionService itemVersions;
   private final ServiceDispatchEventService dispatchEvents;
   private final TechnicianQueueService technicianQueue;
+  private final RoomStateService roomStates;
 
   @Value("${massage.dispatch.acceptance-timeout-seconds:300}")
   private int acceptanceTimeoutSeconds;
 
-  ServiceSessionController(JdbcClient jdbc, StoreContextService storeContext, AdminSessionService adminSessions, TechnicianSchedulePolicy schedulePolicy, AuditService audits, BusinessClockService businessClock, ServiceItemVersionService itemVersions, ServiceDispatchEventService dispatchEvents, TechnicianQueueService technicianQueue) {
+  ServiceSessionController(JdbcClient jdbc, StoreContextService storeContext, AdminSessionService adminSessions, TechnicianSchedulePolicy schedulePolicy, AuditService audits, BusinessClockService businessClock, ServiceItemVersionService itemVersions, ServiceDispatchEventService dispatchEvents, TechnicianQueueService technicianQueue, RoomStateService roomStates) {
     this.jdbc = jdbc;
     this.storeContext = storeContext;
     this.adminSessions = adminSessions;
@@ -67,6 +68,7 @@ public class ServiceSessionController {
     this.itemVersions = itemVersions;
     this.dispatchEvents = dispatchEvents;
     this.technicianQueue = technicianQueue;
+    this.roomStates = roomStates;
   }
 
   @GetMapping
@@ -640,17 +642,7 @@ public class ServiceSessionController {
   }
 
   private void recordRoomStatus(UUID storeId, UUID roomId, String status, String reason) {
-    // Serialize every room-state transition with front desk, mobile, and transfer writes.
-    lockRoom(storeId, roomId);
-    boolean hasInService = jdbc.sql("select exists(select 1 from service_session where store_id=:store and room_id=:room and status='IN_SERVICE')")
-      .param("store", storeId).param("room", roomId).query(Boolean.class).single();
-    boolean hasPending = jdbc.sql("select exists(select 1 from service_session where store_id=:store and room_id=:room and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED'))")
-      .param("store", storeId).param("room", roomId).query(Boolean.class).single();
-    if (hasInService && !"MAINTENANCE".equals(status)) status = "IN_SERVICE";
-    else if (hasPending && Set.of("IDLE", "PENDING_PAYMENT", "CLEANING").contains(status)) status = "RESERVED";
-    jdbc.sql("insert into room_status_event(id,tenant_id,store_id,room_id,status,reason,source,occurred_at) values(:id,:tenant,:store,:room,:status,:reason,'SERVICE_SESSION',clock_timestamp())")
-      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("room", roomId)
-      .param("status", status).param("reason", reason).update();
+    roomStates.record(storeId, roomId, status, reason, "SERVICE_SESSION");
   }
 
   private void lockRoom(UUID storeId, UUID roomId) {

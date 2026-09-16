@@ -45,7 +45,7 @@ function renderMobileLeaveRequests(rows) {
     const [label,style]=mobileLeaveStatus[row.status]||[row.status,'cancelled'];
     const reason=row.reason?` · ${row.reason}`:'';
     const review=row.reviewNote?` · ${row.reviewNote}`:'';
-    return `<article class="mobile-leave-row"><div><b>${row.startDate} 至 ${row.endDate}</b><small>${label}${reason}${review}</small></div><span class="leave-status ${style}">${label}</span></article>`;
+    return `<article class="mobile-leave-row"><div><b>${mobileEscape(row.startDate)} 至 ${mobileEscape(row.endDate)}</b><small>${mobileEscape(label)}${mobileEscape(reason)}${mobileEscape(review)}</small></div><span class="leave-status ${style}">${mobileEscape(label)}</span></article>`;
   }).join('')||'<p class="service-empty">暂无请假申请</p>';
 }
 
@@ -245,14 +245,14 @@ function showDashboard() {
 function renderRecentSessions(sessions) {
   const labels = { COMPLETED:['已完成','completed'], IN_SERVICE:['服务中','serving'], CANCELLED:['已取消','cancelled'] };
   document.querySelector('#recent-count').textContent = `${sessions.length} 条`;
-  document.querySelector('#session-list').innerHTML = sessions.map(session => { const [label, style] = labels[session.status] || [session.status, 'cancelled']; const clockType=mobileClockTypeLabel(session.clockType); const extension=session.extensionSummary?` · 加钟：${session.extensionSummary}`:''; const total=Number(session.servicePriceCents||0)+Number(session.extensionTotalCents||0); return `<article class="session-row"><div><b>${session.serviceNameSnapshot}</b><small>${clockType} · ${mobileTime(session.startedAt)} · ${session.roomCode} 房 · ${session.plannedDurationMinutes} 分钟${extension}</small></div><div class="session-row-right"><strong>${mobileMoney(total)}</strong><span class="session-status ${style}">${label}</span></div></article>`; }).join('') || '<p class="service-empty">暂无服务记录</p>';
+  document.querySelector('#session-list').innerHTML = sessions.map(session => { const [label, style] = labels[session.status] || [session.status, 'cancelled']; const clockType=mobileClockTypeLabel(session.clockType); const extension=session.extensionSummary?` · 加钟：${session.extensionSummary}`:''; const total=Number(session.servicePriceCents||0)+Number(session.extensionTotalCents||0); return `<article class="session-row"><div><b>${mobileEscape(session.serviceNameSnapshot)}</b><small>${mobileEscape(clockType)} · ${mobileTime(session.startedAt)} · ${mobileEscape(session.roomCode)} 房 · ${mobileEscape(session.plannedDurationMinutes)} 分钟${mobileEscape(extension)}</small></div><div class="session-row-right"><strong>${mobileMoney(total)}</strong><span class="session-status ${style}">${mobileEscape(label)}</span></div></article>`; }).join('') || '<p class="service-empty">暂无服务记录</p>';
 }
 
 function renderMobileReservations(reservations) {
   const list = document.querySelector('#mobile-reservation-list');
   const count = document.querySelector('#mobile-reservation-count');
   count.textContent = `${reservations.length} 条`;
-  list.innerHTML = reservations.map(item => `<article class="session-row"><div><b>${mobileClockTypeLabel(item.reservationType)} · ${item.serviceNameSnapshot}</b><small>${item.roomCode} 房 · ${item.plannedDurationMinutes} 分钟 · 等待前台确认派单${item.note ? ` · ${mobileEscape(item.note)}` : ''}</small></div><div class="session-row-right"><strong>已预留</strong><span class="session-status serving">等待派单</span></div></article>`).join('') || '<p class="service-empty">暂无等待派单的预约服务</p>';
+  list.innerHTML = reservations.map(item => `<article class="session-row"><div><b>${mobileEscape(mobileClockTypeLabel(item.reservationType))} · ${mobileEscape(item.serviceNameSnapshot)}</b><small>${mobileEscape(item.roomCode)} 房 · ${mobileEscape(item.plannedDurationMinutes)} 分钟 · 等待前台确认派单${item.note ? ` · ${mobileEscape(item.note)}` : ''}</small></div><div class="session-row-right"><strong>已预留</strong><span class="session-status serving">等待派单</span></div></article>`).join('') || '<p class="service-empty">暂无等待派单的预约服务</p>';
 }
 
 function formatMobileServiceCountdown(expectedEndAt) {
@@ -311,22 +311,22 @@ function renderCurrentService(session, acceptedSession, pendingSession, clockInE
   const target = document.querySelector('#current-service');
   if (pendingSession) {
     stopMobileServiceReminders();
-    target.innerHTML = `<div class="section-title"><h2>当前服务</h2><span class="status-chip neutral">待接单</span></div><div class="active-service"><div><b>${pendingSession.serviceNameSnapshot}</b><small>${pendingSession.roomCode} 房 · ${pendingSession.plannedDurationMinutes} 分钟</small></div><time>上一单完成后，请确认接单</time></div><div class="mobile-service-actions"><button class="mobile-action" type="button" id="mobile-confirm-pending">确认接单</button></div>`;
+    target.innerHTML = `<div class="section-title"><h2>当前服务</h2><span class="status-chip neutral">待接单</span></div><div class="active-service"><div><b>${mobileEscape(pendingSession.serviceNameSnapshot)}</b><small>${mobileEscape(pendingSession.roomCode)} 房 · ${mobileEscape(pendingSession.plannedDurationMinutes)} 分钟</small></div><time>上一单完成后，请确认接单</time></div><div class="mobile-service-actions"><button class="mobile-action" type="button" id="mobile-confirm-pending">确认接单</button></div>`;
     return;
   }
   if (acceptedSession) {
     stopMobileServiceReminders();
     const waitingForOthers=acceptedSession.status==='PENDING_ACCEPTANCE';
-    target.innerHTML = `<div class="section-title"><h2>当前服务</h2><span class="status-chip neutral">${waitingForOthers?'等待同单技师':'已接单'}</span></div><div class="active-service"><div><b>${acceptedSession.serviceNameSnapshot}</b><small>${acceptedSession.roomCode} 房 · ${acceptedSession.plannedDurationMinutes} 分钟</small></div><time>${waitingForOthers?'本人已接单，等待其他参与技师确认':'已接单，可开始服务'}</time></div>${waitingForOthers?'':'<div class="mobile-service-actions"><button class="mobile-action" type="button" id="mobile-start-service">开始服务</button></div>'}`;
+    target.innerHTML = `<div class="section-title"><h2>当前服务</h2><span class="status-chip neutral">${waitingForOthers?'等待同单技师':'已接单'}</span></div><div class="active-service"><div><b>${mobileEscape(acceptedSession.serviceNameSnapshot)}</b><small>${mobileEscape(acceptedSession.roomCode)} 房 · ${mobileEscape(acceptedSession.plannedDurationMinutes)} 分钟</small></div><time>${waitingForOthers?'本人已接单，等待其他参与技师确认':'已接单，可开始服务'}</time></div>${waitingForOthers?'':'<div class="mobile-service-actions"><button class="mobile-action" type="button" id="mobile-start-service">开始服务</button></div>'}`;
     return;
   }
   if (!session) {
     stopMobileServiceReminders();
     const label=mobileScheduleReasonLabel[clockInReason]||'等待安排';
-    target.innerHTML=`<div class="section-title"><h2>当前服务</h2><span class="status-chip ${clockInEligible?'neutral':'blocked'}">${label}</span></div><div class="service-empty">${clockInEligible?'等待前台或店长安排上钟':'请联系门店管理员确认排班或请假状态'}</div>`;
+    target.innerHTML=`<div class="section-title"><h2>当前服务</h2><span class="status-chip ${clockInEligible?'neutral':'blocked'}">${mobileEscape(label)}</span></div><div class="service-empty">${clockInEligible?'等待前台或店长安排上钟':'请联系门店管理员确认排班或请假状态'}</div>`;
     return;
   }
-  target.innerHTML = `<div class="section-title"><h2>当前服务</h2><span class="status-chip serving">服务中</span></div><div class="active-service"><div><b>${session.serviceNameSnapshot}</b><small>${session.roomCode} 房 · 共 ${session.plannedDurationMinutes} 分钟</small></div><time>剩余 <b id="mobile-service-countdown">${formatMobileServiceCountdown(session.expectedEndAt)}</b><small>预计 ${new Intl.DateTimeFormat('zh-CN', { hour:'2-digit', minute:'2-digit', hour12:false }).format(new Date(session.expectedEndAt))} 结束</small></time></div><div class="mobile-service-actions"><button class="mobile-action danger" type="button" id="mobile-clock-out">确认下钟</button></div>`;
+  target.innerHTML = `<div class="section-title"><h2>当前服务</h2><span class="status-chip serving">服务中</span></div><div class="active-service"><div><b>${mobileEscape(session.serviceNameSnapshot)}</b><small>${mobileEscape(session.roomCode)} 房 · 共 ${mobileEscape(session.plannedDurationMinutes)} 分钟</small></div><time>剩余 <b id="mobile-service-countdown">${formatMobileServiceCountdown(session.expectedEndAt)}</b><small>预计 ${new Intl.DateTimeFormat('zh-CN', { hour:'2-digit', minute:'2-digit', hour12:false }).format(new Date(session.expectedEndAt))} 结束</small></time></div><div class="mobile-service-actions"><button class="mobile-action danger" type="button" id="mobile-clock-out">确认下钟</button></div>`;
   startMobileServiceReminders(session);
 }
 
@@ -512,7 +512,7 @@ selectMobilePage('current-service');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./technician-service-worker.js?v=20260915-next-optimization-v5').catch(() => {
+    navigator.serviceWorker.register('./technician-service-worker.js?v=20260916-quality-batch2-v9').catch(() => {
       // The technician page remains fully available when offline caching is unavailable.
     });
   });
