@@ -5,6 +5,7 @@ import com.chengxin.massage.admin.StoreContextService;
 import com.chengxin.massage.audit.AuditService;
 import com.chengxin.massage.catalog.TechnicianSchedulePolicy;
 import com.chengxin.massage.operations.BusinessClockService;
+import com.chengxin.massage.operations.EmployeeAttendanceService;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -37,11 +38,12 @@ public class TechnicianAttendanceController {
   private final TechnicianSchedulePolicy schedulePolicy;
   private final BusinessClockService businessClock;
   private final AuditService audits;
+  private final EmployeeAttendanceService employeeAttendance;
 
   TechnicianAttendanceController(JdbcClient jdbc, MobileSessionService mobileSessions,
                                  AdminSessionService adminSessions, StoreContextService storeContext,
                                  TechnicianSchedulePolicy schedulePolicy, BusinessClockService businessClock,
-                                 AuditService audits) {
+                                 AuditService audits, EmployeeAttendanceService employeeAttendance) {
     this.jdbc = jdbc;
     this.mobileSessions = mobileSessions;
     this.adminSessions = adminSessions;
@@ -49,6 +51,7 @@ public class TechnicianAttendanceController {
     this.schedulePolicy = schedulePolicy;
     this.businessClock = businessClock;
     this.audits = audits;
+    this.employeeAttendance = employeeAttendance;
   }
 
   @PostMapping("/clock-in")
@@ -59,7 +62,10 @@ public class TechnicianAttendanceController {
     Technician technician = currentTechnician(authorization);
     LocalDate date = businessClock.currentBusinessDate(technician.storeId());
     TechnicianSchedulePolicy.ClockInStatus before = schedulePolicy.clockInStatus(technician.storeId(), technician.id());
-    if (before.clockedIn()) return before;
+    if (before.clockedIn()) {
+      employeeAttendance.synchronize(technician.storeId(), date);
+      return before;
+    }
     if (!before.legacyCompatible() && before.clockOutTime() != null) {
       throw new ResponseStatusException(HttpStatus.CONFLICT, "技师今日已下班，请次日重新打卡");
     }
@@ -71,6 +77,7 @@ public class TechnicianAttendanceController {
       .param("store", technician.storeId()).param("clockIn", now).param("date", date).update();
     TechnicianSchedulePolicy.ClockInStatus result = schedulePolicy.clockInStatus(technician.storeId(), technician.id());
     if (!result.clockedIn()) throw new ResponseStatusException(HttpStatus.CONFLICT, "打卡状态已变化，请刷新后重试");
+    employeeAttendance.synchronize(technician.storeId(), date);
     audits.record(authorization, technician.storeId(), "ATTENDANCE", "TECHNICIAN_CLOCKED_IN",
       "technician_clock_in", technician.id(), input == null ? "技师上班打卡" : input.note(), before, result);
     return result;
@@ -92,6 +99,7 @@ public class TechnicianAttendanceController {
       .param("clockOut", now).param("technician", technician.id()).param("store", technician.storeId()).param("date", date).update();
     if (updated == 0) throw new ResponseStatusException(HttpStatus.CONFLICT, "打卡状态已变化，请刷新后重试");
     TechnicianSchedulePolicy.ClockInStatus result = schedulePolicy.clockInStatus(technician.storeId(), technician.id());
+    employeeAttendance.synchronize(technician.storeId(), date);
     audits.record(authorization, technician.storeId(), "ATTENDANCE", "TECHNICIAN_CLOCKED_OUT",
       "technician_clock_in", technician.id(), input == null ? "技师下班打卡" : input.note(), before, result);
     return result;
