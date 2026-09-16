@@ -118,9 +118,29 @@ public class AuditService {
     String path = request.getRequestURI();
     String source = path.startsWith("/api/v1/mobile/technician") ? "TECHNICIAN_MOBILE" : "ADMIN_WEB";
     String forwarded = request.getHeader("X-Forwarded-For");
-    String ipAddress = forwarded == null || forwarded.isBlank() ? request.getRemoteAddr() : forwarded.split(",", 2)[0].trim();
+    String ipAddress = clientAddress(forwarded, request.getRemoteAddr());
     return new RequestDetails(requestId, ipAddress, request.getHeader("User-Agent"), source,
       Map.of("method", request.getMethod(), "path", path));
+  }
+
+  static String clientAddress(String forwarded, String remote) {
+    String candidate = forwarded == null ? "" : forwarded.split(",", 2)[0].trim();
+    if (ipLiteral(candidate)) return candidate;
+    return ipLiteral(remote) ? remote : null;
+  }
+
+  private static boolean ipLiteral(String value) {
+    if (value == null || value.isBlank() || !value.matches("[0-9a-fA-F:.]+")) return false;
+    if (!value.contains(":")) {
+      String[] parts = value.split("\\.", -1);
+      if (parts.length != 4) return false;
+      for (String part : parts) {
+        if (!part.matches("[0-9]{1,3}") || Integer.parseInt(part) > 255) return false;
+      }
+      return true;
+    }
+    try { return java.net.InetAddress.getByName(value) instanceof java.net.Inet6Address; }
+    catch (java.net.UnknownHostException exception) { return false; }
   }
 
   private UUID outcomeStore(HttpServletRequest request, AdminSessionService.AuthenticatedIdentity actor) {

@@ -44,13 +44,15 @@ public class RefundController {
   private final AuditService audits;
   private final BusinessClockService businessClock;
   private final AdminSessionService adminSessions;
+  private final MonthlyCommissionTierService monthlyTiers;
 
-  RefundController(JdbcClient jdbc, StoreContextService storeContext, AuditService audits, BusinessClockService businessClock, AdminSessionService adminSessions) {
+  RefundController(JdbcClient jdbc, StoreContextService storeContext, AuditService audits, BusinessClockService businessClock, AdminSessionService adminSessions, MonthlyCommissionTierService monthlyTiers) {
     this.jdbc = jdbc;
     this.storeContext = storeContext;
     this.audits = audits;
     this.businessClock = businessClock;
     this.adminSessions = adminSessions;
+    this.monthlyTiers = monthlyTiers;
   }
 
   @PostMapping("/api/v1/sales-orders/{orderId}/refunds")
@@ -60,6 +62,7 @@ public class RefundController {
                       @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
+    monthlyTiers.lockStore(storeId);
     Order order = jdbc.sql("select id,member_id,status,paid_cents,order_no,business_date from sales_order where id=:id and store_id=:store for update")
       .param("id", orderId).param("store", storeId).query(Order.class).single();
     if (!"SETTLED".equals(order.status())) throw conflict("Only settled orders can be refunded");
@@ -140,6 +143,7 @@ public class RefundController {
                                        @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
+    monthlyTiers.lockStore(storeId);
     ensureRefundStore(storeId, refundId);
     RefundPayment payment = jdbc.sql("select id,refund_id,payment_method,status from refund_payment_record where id=:id and refund_id=:refund for update")
       .param("id", refundPaymentId).param("refund", refundId).query(RefundPayment.class).single();

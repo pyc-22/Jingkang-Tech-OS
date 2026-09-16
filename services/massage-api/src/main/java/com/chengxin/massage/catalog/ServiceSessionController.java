@@ -470,7 +470,7 @@ public class ServiceSessionController {
        where r.id=:room and r.store_id=:store
          and not exists(
            select 1 from room_bed existing
-            where existing.room_id=r.id and existing.sort_order=n
+            where existing.room_id=r.id
          )
       on conflict (room_id,code) do nothing
       """)

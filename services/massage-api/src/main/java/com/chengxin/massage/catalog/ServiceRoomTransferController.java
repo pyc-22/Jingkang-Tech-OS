@@ -238,7 +238,7 @@ public class ServiceRoomTransferController {
       select gen_random_uuid(),r.tenant_id,r.store_id,r.id,left(r.code||'-'||n,40),left(r.name||' bed '||n,80),n
       from room r cross join lateral generate_series(1,r.bed_count) n
       where r.id=:room and r.store_id=:store
-        and not exists(select 1 from room_bed b where b.room_id=r.id and b.sort_order=n)
+        and not exists(select 1 from room_bed b where b.room_id=r.id)
       on conflict (room_id,code) do nothing
       """).param("room", roomId).param("store", storeId).update();
     return jdbc.sql("""

@@ -104,7 +104,7 @@ public class DailyOperatingReportController {
   }
 
   @PutMapping("/customer-count-override")
-  @Transactional
+  @Transactional(isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
   ReportView saveCustomerCountOverride(@Valid @RequestBody CustomerCountOverrideInput input,
                                        @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                                        @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
@@ -132,7 +132,7 @@ public class DailyOperatingReportController {
   }
 
   @DeleteMapping("/customer-count-override")
-  @Transactional
+  @Transactional(isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
   ReportView clearCustomerCountOverride(@RequestParam(defaultValue = "") String date,
                                         @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                                         @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
@@ -159,7 +159,7 @@ public class DailyOperatingReportController {
   }
 
   @PutMapping("/settings")
-  @Transactional
+  @Transactional(isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
   DailyReportSettings saveSettings(@Valid @RequestBody DailyReportSettingsInput input,
                                    @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                                    @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
@@ -231,7 +231,7 @@ public class DailyOperatingReportController {
   }
 
   @PostMapping
-  @Transactional
+  @Transactional(isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
   ReportView create(@Valid @RequestBody ReportInput input,
                     @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                     @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
@@ -267,7 +267,7 @@ public class DailyOperatingReportController {
   }
 
   @PutMapping("/{id}")
-  @Transactional
+  @Transactional(isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
   ReportView update(@PathVariable UUID id, @Valid @RequestBody ReportInput input,
                     @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                     @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
@@ -278,6 +278,7 @@ public class DailyOperatingReportController {
     UUID actor = adminSessions.requireAuthenticatedUserId(authorization);
     ReportValues values = values(input, autoValues(storeId, current.businessDate()));
     Map<String, Object> params = values.params(); params.put("id", id); params.put("store", storeId); params.put("actor", actor);
+    params.put("version", input.version() == null ? current.version() : input.version());
     int updated = jdbc.sql("""
       update daily_operating_report set daily_target_cents=:dailyTarget,daily_sales_amount_cents=:dailySales,
         daily_cash_flow_cents=:dailyCashFlow,daily_card_sale_cents=:dailyCardSale,daily_card_open_cents=:dailyCardOpen,
@@ -290,9 +291,9 @@ public class DailyOperatingReportController {
         technician_count=:technicianCount,chef_count=:chefCount,cleaner_count=:cleanerCount,incident_note=:incidentNote,
         extended_shift_note=:extendedShiftNote,next_day_rest_count=:nextDayRestCount,customer_loss_count=:customerLossCount,
         next_day_improvement_note=:nextDayImprovement,status='SAVED',updated_by_user_id=:actor,last_saved_at=now(),updated_at=now(),version=version+1
-      where id=:id and store_id=:store
+      where id=:id and store_id=:store and status <> 'PUBLISHED' and version=:version
       """).params(params).update();
-    if (updated == 0) throw notFound("Daily report not found");
+    if (updated == 0) throw conflict("Daily report changed or was published; refresh before saving");
     saveRevision(id, storeId, actor, "SAVE", current, values);
     ReportView saved = view(storeId, current.businessDate(), access(authorization));
     audits.record(authorization, storeId, "DAILY_REPORT", "DAILY_REPORT_SAVED", "daily_operating_report", id,
@@ -301,17 +302,18 @@ public class DailyOperatingReportController {
   }
 
   @PostMapping("/{id}/publish")
-  @Transactional
+  @Transactional(isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
   ReportView publish(@PathVariable UUID id,
+                     @RequestParam(required = false) Long version,
                      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                      @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     adminSessions.requirePermission(authorization, "DAILY_REPORT_PUBLISH");
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     DailyReportRow current = load(id, storeId).orElseThrow(() -> notFound("Daily report not found"));
     UUID actor = adminSessions.requireAuthenticatedUserId(authorization);
-    int updated = jdbc.sql("update daily_operating_report set status='PUBLISHED',published_by_user_id=:actor,published_at=now(),updated_by_user_id=:actor,updated_at=now(),version=version+1 where id=:id and store_id=:store")
-      .param("id", id).param("store", storeId).param("actor", actor).update();
-    if (updated == 0) throw notFound("Daily report not found");
+    int updated = jdbc.sql("update daily_operating_report set status='PUBLISHED',published_by_user_id=:actor,published_at=now(),updated_by_user_id=:actor,updated_at=now(),version=version+1 where id=:id and store_id=:store and status <> 'PUBLISHED' and version=:version")
+      .param("id", id).param("store", storeId).param("actor", actor).param("version", version == null ? current.version() : version).update();
+    if (updated == 0) throw conflict("Daily report changed or was published; refresh before publishing");
     saveRevision(id, storeId, actor, "PUBLISH", current, current.values());
     ReportView published = view(storeId, current.businessDate(), access(authorization));
     audits.record(authorization, storeId, "DAILY_REPORT", "DAILY_REPORT_PUBLISHED", "daily_operating_report", id,
@@ -417,6 +419,11 @@ public class DailyOperatingReportController {
   private String storeName(String authorization, UUID storeId) { return adminSessions.accessibleStores(authorization).stream().filter(store -> store.id().equals(storeId)).map(AdminSessionService.AdminStore::name).findFirst().orElse("门店"); }
 
   private ReportView view(UUID storeId, LocalDate date, DailyReportAccess access) {
+    return dailyReports == null ? viewSnapshot(storeId, date, access)
+      : dailyReports.snapshot(() -> viewSnapshot(storeId, date, access));
+  }
+
+  private ReportView viewSnapshot(UUID storeId, LocalDate date, DailyReportAccess access) {
     DailyReportService.DailyMetrics unifiedMetrics = dailyReports == null ? null : dailyReports.daily(storeId, date);
     DailyReportRow report = loadByDate(storeId, date).orElse(null);
     List<PaymentChannelSummary> paymentChannels = paymentChannels(storeId, date, date);
@@ -769,7 +776,7 @@ public class DailyOperatingReportController {
   private ResponseStatusException conflict(String message) { return new ResponseStatusException(HttpStatus.CONFLICT, message); }
   private ResponseStatusException notFound(String message) { return new ResponseStatusException(HttpStatus.NOT_FOUND, message); }
 
-  public record ReportInput(LocalDate businessDate, Long dailyTargetCents, Long dailySalesAmountCents, Long dailyCashFlowCents, Long dailyCardSaleCents, Long dailyCardOpenCents, Long dailyCardRenewCents, Long dailyCardCancellationCents, Long dailyCardConsumptionCents, Integer dailyCustomerCount, Integer dailyExtensionCount, Integer dailyCallClockCount, Long dailyCashCents, Long dailyAlipayCents, Long dailyDouyinCents, Long dailyMeituanCents, Long dailyFreeOrderCents, Long dailyEntertainmentCents, Integer managerCount, Integer cashierCount, Integer technicianCount, Integer chefCount, Integer cleanerCount, @Size(max=4000) String incidentNote, @Size(max=4000) String extendedShiftNote, Integer nextDayRestCount, Integer customerLossCount, @Size(max=4000) String nextDayImprovementNote) {}
+  public record ReportInput(LocalDate businessDate, Long dailyTargetCents, Long dailySalesAmountCents, Long dailyCashFlowCents, Long dailyCardSaleCents, Long dailyCardOpenCents, Long dailyCardRenewCents, Long dailyCardCancellationCents, Long dailyCardConsumptionCents, Integer dailyCustomerCount, Integer dailyExtensionCount, Integer dailyCallClockCount, Long dailyCashCents, Long dailyAlipayCents, Long dailyDouyinCents, Long dailyMeituanCents, Long dailyFreeOrderCents, Long dailyEntertainmentCents, Integer managerCount, Integer cashierCount, Integer technicianCount, Integer chefCount, Integer cleanerCount, @Size(max=4000) String incidentNote, @Size(max=4000) String extendedShiftNote, Integer nextDayRestCount, Integer customerLossCount, @Size(max=4000) String nextDayImprovementNote, Long version) {}
   public record CustomerCountOverrideInput(LocalDate businessDate, Integer customerCount, @Size(max=500) String reason) {}
   public record DailyReportSettingsInput(LocalDate targetMonth, Long monthlyTargetCents, List<DailyReportFieldInput> fields) {}
   public record DailyReportFieldInput(String fieldCode, String fieldLabel, Boolean visible, Boolean required, Integer sortOrder) {}

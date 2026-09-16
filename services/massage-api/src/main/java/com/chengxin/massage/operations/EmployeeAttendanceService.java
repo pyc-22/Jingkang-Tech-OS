@@ -5,6 +5,8 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.Instant;
+import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
@@ -12,6 +14,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class EmployeeAttendanceService {
@@ -52,10 +56,10 @@ public class EmployeeAttendanceService {
     synchronize(storeId, date);
     AttendanceRow current = row(storeId, employeeId, date);
     if (current == null) throw new IllegalArgumentException("Employee is not active in this store");
-    if (current.clockInAt() != null) throw new IllegalStateException("Employee has already clocked in today");
+    if (current.clockInAt() != null) throw new ResponseStatusException(HttpStatus.CONFLICT, "Employee has already clocked in today");
     OffsetDateTime now = OffsetDateTime.now();
     LocalTime start = current.scheduledStart();
-    int late = start == null ? 0 : Math.max(0, (int) ChronoUnit.MINUTES.between(start, now.toLocalTime()));
+    int late = start == null ? 0 : Math.max(0, (int) ChronoUnit.MINUTES.between(date.atTime(start).atZone(storeZone(storeId)), now));
     String status = late > 0 ? "LATE" : "PRESENT";
     jdbc.sql("update employee_attendance set status=:status,clock_in_at=:clockIn,late_minutes=:late,note=coalesce(:note,note),source='MANUAL',updated_at=now(),version=version+1 where id=:id and clock_in_at is null")
       .param("status", status).param("clockIn", now).param("late", late).param("note", note).param("id", current.id()).update();
@@ -67,10 +71,10 @@ public class EmployeeAttendanceService {
     LocalDate date = businessClock.currentBusinessDate(storeId);
     synchronize(storeId, date);
     AttendanceRow current = row(storeId, employeeId, date);
-    if (current == null || current.clockInAt() == null) throw new IllegalStateException("Employee has not clocked in today");
-    if (current.clockOutAt() != null) throw new IllegalStateException("Employee has already clocked out today");
+    if (current == null || current.clockInAt() == null) throw new ResponseStatusException(HttpStatus.CONFLICT, "Employee has not clocked in today");
+    if (current.clockOutAt() != null) throw new ResponseStatusException(HttpStatus.CONFLICT, "Employee has already clocked out today");
     OffsetDateTime now = OffsetDateTime.now();
-    int early = current.scheduledEnd() == null ? 0 : Math.max(0, (int) ChronoUnit.MINUTES.between(now.toLocalTime(), current.scheduledEnd()));
+    int early = current.scheduledEnd() == null ? 0 : Math.max(0, (int) ChronoUnit.MINUTES.between(now, shiftEnd(date, current.scheduledStart(), current.scheduledEnd(), storeZone(storeId))));
     String status = early > 0 ? "LEFT_EARLY" : "COMPLETED";
     jdbc.sql("update employee_attendance set status=:status,clock_out_at=:clockOut,early_leave_minutes=:early,note=coalesce(:note,note),updated_at=now(),version=version+1 where id=:id and clock_out_at is null")
       .param("status", status).param("clockOut", now).param("early", early).param("note", note).param("id", current.id()).update();
@@ -85,7 +89,7 @@ public class EmployeeAttendanceService {
   }
 
   private void upsertSeed(UUID storeId, LocalDate date, AttendanceSeed seed) {
-    String initial = initialStatus(seed.scheduleStatus(), seed.scheduledStart(), seed.scheduledEnd());
+    String initial = initialStatus(date, ZoneId.of(seed.timezone()), seed.scheduleStatus(), seed.scheduledStart(), seed.scheduledEnd(), Instant.now());
     int late = 0;
     int early = 0;
     if (seed.clockInAt() != null) {
@@ -96,7 +100,7 @@ public class EmployeeAttendanceService {
       initial = late > 0 ? "LATE" : "PRESENT";
       if (seed.clockOutAt() != null) {
         if ("SCHEDULED".equals(seed.scheduleStatus()) && seed.scheduledEnd() != null) {
-          early = Math.max(0, (int) ChronoUnit.MINUTES.between(seed.clockOutAt().atZoneSameInstant(zone), date.atTime(seed.scheduledEnd()).atZone(zone)));
+          early = Math.max(0, (int) ChronoUnit.MINUTES.between(seed.clockOutAt().atZoneSameInstant(zone), shiftEnd(date, seed.scheduledStart(), seed.scheduledEnd(), zone)));
         }
         initial = early > 0 ? "LEFT_EARLY" : "COMPLETED";
       }
@@ -125,21 +129,28 @@ public class EmployeeAttendanceService {
   private void refreshOpenStatuses(UUID storeId, LocalDate date) {
     List<AttendanceRow> open = jdbc.sql("select a.id,a.store_id,a.employee_id,a.attendance_date,a.scheduled_start,a.scheduled_end,a.schedule_status,a.status,a.clock_in_at,a.clock_out_at,a.late_minutes,a.early_leave_minutes,e.full_name employee_name,assignment.position_type,assignment.position_name from employee_attendance a join employee e on e.id=a.employee_id join employee_store_assignment assignment on assignment.employee_id=a.employee_id and assignment.store_id=a.store_id where a.store_id=:store and a.attendance_date=:date and a.clock_in_at is null and a.status in ('NOT_STARTED','LATE')")
       .param("store", storeId).param("date", date).query(AttendanceRow.class).list();
-    LocalTime now = OffsetDateTime.now().toLocalTime();
+    if (open.isEmpty()) return;
+    ZoneId zone = storeZone(storeId);
+    Instant now = Instant.now();
     for (AttendanceRow item : open) {
-      String next = item.status();
-      if ("SCHEDULED".equals(item.scheduleStatus()) && item.scheduledEnd() != null && !now.isBefore(item.scheduledEnd())) next = "ABSENT";
-      else if ("SCHEDULED".equals(item.scheduleStatus()) && item.scheduledStart() != null && !now.isBefore(item.scheduledStart())) next = "LATE";
+      String next = initialStatus(date, zone, item.scheduleStatus(), item.scheduledStart(), item.scheduledEnd(), now);
       if (!next.equals(item.status())) jdbc.sql("update employee_attendance set status=:status,updated_at=now(),version=version+1 where id=:id and clock_in_at is null").param("status", next).param("id", item.id()).update();
     }
   }
 
-  private String initialStatus(String scheduleStatus, LocalTime start, LocalTime end) {
+  static String initialStatus(LocalDate date, ZoneId zone, String scheduleStatus, LocalTime start, LocalTime end, Instant now) {
     if ("REST".equals(scheduleStatus)) return "REST";
     if (!"SCHEDULED".equals(scheduleStatus)) return "NOT_SCHEDULED";
-    LocalTime now = OffsetDateTime.now().toLocalTime();
-    if (end != null && !now.isBefore(end)) return "ABSENT";
-    return start != null && !now.isBefore(start) ? "LATE" : "NOT_STARTED";
+    if (end != null && !now.isBefore(shiftEnd(date, start, end, zone).toInstant())) return "ABSENT";
+    return start != null && !now.isBefore(date.atTime(start).atZone(zone).toInstant()) ? "LATE" : "NOT_STARTED";
+  }
+
+  static ZonedDateTime shiftEnd(LocalDate date, LocalTime start, LocalTime end, ZoneId zone) {
+    return (start != null && !end.isAfter(start) ? date.plusDays(1) : date).atTime(end).atZone(zone);
+  }
+
+  private ZoneId storeZone(UUID storeId) {
+    return ZoneId.of(jdbc.sql("select timezone from store where id=:store").param("store", storeId).query(String.class).single());
   }
 
   private AttendanceRow row(UUID storeId, UUID employeeId, LocalDate date) {

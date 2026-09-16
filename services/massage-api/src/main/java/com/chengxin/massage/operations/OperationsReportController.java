@@ -350,6 +350,10 @@ public class OperationsReportController {
   }
 
   private DailyReport buildReport(UUID storeId, LocalDate businessDate) {
+    return dailyReports.snapshot(() -> buildReportSnapshot(storeId, businessDate));
+  }
+
+  private DailyReport buildReportSnapshot(UUID storeId, LocalDate businessDate) {
     DailyReportService.DailyMetrics metrics = dailyReports.daily(storeId, businessDate);
     String day = businessDate.toString();
     ServiceSummary services = jdbc.sql("""

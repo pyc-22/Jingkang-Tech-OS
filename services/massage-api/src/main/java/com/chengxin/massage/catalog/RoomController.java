@@ -141,6 +141,7 @@ public class RoomController {
     jdbc.sql("insert into room(id,tenant_id,store_id,code,name,room_type,bed_count) values(:id,:tenant,:store,:code,:name,:type,:beds)")
       .param("id",id).param("tenant",TENANT_ID).param("store",storeId).param("code",input.code()).param("name",input.name()).param("type",input.roomType()).param("beds",input.bedCount()).update();
     Room created = room(storeId, id);
+    resizeBeds(storeId, created);
     audits.record(authorization, storeId, "ROOM", "ROOM_CREATED", "room", id, "新增房间", null, created);
     return created;
   }
@@ -149,10 +150,11 @@ public class RoomController {
   @Transactional
   Room updateRoom(@PathVariable UUID id, @Valid @RequestBody RoomInput input, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization, @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
-    Room before = room(storeId, id);
+    Room before = lockRoom(storeId, id);
     jdbc.sql("update room set code=:code,name=:name,room_type=:type,bed_count=:beds,updated_at=now(),version=version+1 where id=:id and store_id=:store")
       .param("id",id).param("store",storeId).param("code",input.code()).param("name",input.name()).param("type",input.roomType()).param("beds",input.bedCount()).update();
     Room updated = room(storeId, id);
+    resizeBeds(storeId, updated);
     audits.record(authorization, storeId, "ROOM", "ROOM_UPDATED", "room", id, "修改房间资料", before, updated);
     return updated;
   }
@@ -161,7 +163,8 @@ public class RoomController {
   @Transactional
   void setRoomActive(@PathVariable UUID id, @RequestBody ActiveInput input, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization, @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
-    Room before = room(storeId, id);
+    Room before = lockRoom(storeId, id);
+    if (!input.active()) requireUnoccupied(storeId, id, null);
     jdbc.sql("update room set active=:active,updated_at=now(),version=version+1 where id=:id and store_id=:store").param("active",input.active()).param("id",id).param("store",storeId).update();
     audits.record(authorization, storeId, "ROOM", input.active() ? "ROOM_ENABLED" : "ROOM_DISABLED", "room", id, input.active() ? "启用房间" : "停用房间", before, room(storeId, id));
   }
@@ -196,12 +199,41 @@ public class RoomController {
   void setBedActive(@PathVariable UUID id, @RequestBody ActiveInput input, @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization, @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     Bed before = bed(storeId, id);
+    lockRoom(storeId, before.roomId());
+    if (!input.active()) requireUnoccupied(storeId, before.roomId(), id);
     jdbc.sql("update room_bed set active=:active,updated_at=now(),version=version+1 where id=:id and store_id=:store").param("active",input.active()).param("id",id).param("store",storeId).update();
     audits.record(authorization, storeId, "ROOM", input.active() ? "BED_ENABLED" : "BED_DISABLED", "room_bed", id, input.active() ? "启用床位" : "停用床位", before, bed(storeId, id));
   }
 
   private Room room(UUID storeId, UUID id) {
     return jdbc.sql("select id,code,name,room_type,bed_count,active from room where id=:id and store_id=:store").param("id",id).param("store",storeId).query(Room.class).single();
+  }
+
+  private void requireUnoccupied(UUID storeId, UUID roomId, UUID bedId) {
+    boolean occupied = jdbc.sql("""
+      select exists(select 1 from service_session where store_id=:store and room_id=:room
+        and (cast(:bed as uuid) is null or bed_id=:bed)
+        and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'))
+      """).param("store", storeId).param("room", roomId).param("bed", bedId).query(Boolean.class).single();
+    if (occupied) throw new ResponseStatusException(HttpStatus.CONFLICT, "Room or bed has an active service");
+  }
+
+  private void resizeBeds(UUID storeId, Room room) {
+    if (room.bedCount() < 1) throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "Room requires at least one bed");
+    List<UUID> active = jdbc.sql("select id from room_bed where store_id=:store and room_id=:room and active=true order by sort_order,id for update")
+      .param("store", storeId).param("room", room.id()).query(UUID.class).list();
+    for (int index = room.bedCount(); index < active.size(); index++) {
+      UUID bedId = active.get(index);
+      requireUnoccupied(storeId, room.id(), bedId);
+      jdbc.sql("update room_bed set active=false,updated_at=now(),version=version+1 where id=:id").param("id", bedId).update();
+    }
+    int next = jdbc.sql("select coalesce(max(sort_order),0)+1 from room_bed where room_id=:room")
+      .param("room", room.id()).query(Integer.class).single();
+    for (int index = active.size(); index < room.bedCount(); index++, next++) {
+      jdbc.sql("insert into room_bed(id,tenant_id,store_id,room_id,code,name,sort_order) values(:id,:tenant,:store,:room,:code,:name,:sort)")
+        .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("room", room.id())
+        .param("code", "BED-" + next).param("name", "Bed " + next).param("sort", next).update();
+    }
   }
 
   private Room lockRoom(UUID storeId, UUID id) {

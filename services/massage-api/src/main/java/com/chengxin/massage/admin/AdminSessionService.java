@@ -28,7 +28,7 @@ public class AdminSessionService {
 
   @Transactional
   AdminLogin login(String loginName, String password) {
-    User user = jdbc.sql("select id,display_name,password_hash from app_user where tenant_id=:tenant and login_name=:login and active=true")
+    User user = jdbc.sql("select id,display_name,password_hash from app_user where tenant_id=:tenant and login_name=:login and active=true for share")
       .param("tenant", TENANT_ID).param("login", loginName).query(User.class).optional().orElseThrow(this::unauthorized);
     if (!matches(password, user.passwordHash())) throw unauthorized();
     List<String> roles = roleCodes(user.id());
@@ -118,12 +118,19 @@ public class AdminSessionService {
 
   @Transactional
   public void changePassword(String authorization, String currentPassword, String newPassword) {
-    UUID user = requireUserId(authorization);
-    String encoded = jdbc.sql("select password_hash from app_user where id=:user and tenant_id=:tenant and active=true")
+    if (authorization == null || !authorization.startsWith("Bearer ")) throw unauthorized();
+    String currentToken = tokenHash(authorization.substring(7));
+    UUID user = jdbc.sql("select user_id from user_login_session where token_hash=:hash and revoked_at is null and expires_at>now()")
+      .param("hash", currentToken).query(UUID.class).optional().orElseThrow(this::unauthorized);
+    String encoded = jdbc.sql("select password_hash from app_user where id=:user and tenant_id=:tenant and active=true for update")
       .param("user", user).param("tenant", TENANT_ID).query(String.class).optional().orElseThrow(this::unauthorized);
+    if (!jdbc.sql("select exists(select 1 from user_login_session where token_hash=:hash and revoked_at is null and expires_at>now())")
+        .param("hash", currentToken).query(Boolean.class).single()) throw unauthorized();
     if (!matches(currentPassword, encoded)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前密码不正确");
     jdbc.sql("update app_user set password_hash=:password,updated_at=now(),version=version+1 where id=:user and tenant_id=:tenant")
       .param("password", encodePassword(newPassword)).param("user", user).param("tenant", TENANT_ID).update();
+    jdbc.sql("update user_login_session set revoked_at=now() where user_id=:user and tenant_id=:tenant and token_hash<>:current and revoked_at is null")
+      .param("user", user).param("tenant", TENANT_ID).param("current", currentToken).update();
   }
 
   public String encodePassword(String password) {

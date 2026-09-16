@@ -192,6 +192,7 @@ public class SalesOrderController {
                           @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                           @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    monthlyTiers.lockStore(storeId);
     OrderVoidState state = jdbc.sql("""
       select o.status,o.paid_cents,o.order_no,
              (select count(*) from payment_record payment where payment.order_id=o.id) payment_count,
@@ -223,6 +224,7 @@ public class SalesOrderController {
                                                @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                                                @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    monthlyTiers.lockStore(storeId);
     AdminSessionService.AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
     boolean manager = actor.roles().contains("STORE_MANAGER");
     boolean cashier = actor.roles().contains("CASHIER") || actor.roles().contains("FRONTDESK");
@@ -375,6 +377,7 @@ public class SalesOrderController {
                @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    monthlyTiers.lockStore(storeId);
     Order existingOrder = input.correctedFromOrderId() == null ? findExistingSettledOrder(storeId, input.lines()) : null;
     if (existingOrder != null) return existingOrder;
     CorrectionSource correctionSource = null;
@@ -547,6 +550,7 @@ public class SalesOrderController {
       @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
       @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    monthlyTiers.lockStore(storeId);
     BusinessCorrectionState state = jdbc.sql("""
       select o.id order_id,o.order_no,o.settlement_no,o.status,o.refund_status,o.business_date,o.business_correction_version,
              line.id order_line_id,link.service_session_id,session.technician_id old_technician_id,technician.name old_technician_name,

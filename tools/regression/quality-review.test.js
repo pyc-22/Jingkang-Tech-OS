@@ -5,9 +5,11 @@ const path = require('node:path');
 const net = require('node:net');
 const { randomBytes, randomUUID, pbkdf2Sync } = require('node:crypto');
 const { spawn, spawnSync } = require('node:child_process');
+const { JSDOM } = require('jsdom');
 
 // Always starts a new localhost cluster. Existing database URLs are never used.
 const root = path.resolve(__dirname, '../..');
+const runtimeRoot = process.env.REVIEW_RELEASE_DIR || root;
 const bin = process.env.PG_BIN || 'C:/Program Files/PostgreSQL/16/bin';
 const java = process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin/java.exe') : 'java';
 const tenant = '11111111-1111-1111-1111-111111111111';
@@ -15,7 +17,11 @@ const store = '22222222-2222-2222-2222-222222222222';
 const item = '50000000-0000-0000-0000-000000000001';
 const technician = '30000000-0000-0000-0000-000000000001';
 const password = randomBytes(24).toString('base64url');
-let dir, connection, base, app, started = false, admin, cashier, reader, mobile;
+let dir, connection, base, app, consoleApp, consoleBase, started = false, admin, cashier, reader, mobile, coveragePort;
+const coverage = process.env.REVIEW_COVERAGE === '1';
+const jacocoRoot = path.join(process.env.USERPROFILE, '.m2/repository/org/jacoco');
+const jacocoAgent = path.join(jacocoRoot, 'org.jacoco.agent/0.8.12/org.jacoco.agent-0.8.12-runtime.jar');
+const jacocoCli = process.env.JACOCO_CLI || path.join(jacocoRoot, 'org.jacoco.cli/0.8.12/org.jacoco.cli-0.8.12-nodeps.jar');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function command(tool, args, options = {}) {
@@ -96,6 +102,7 @@ function activeService(room, tech) {
 test.before(async () => {
   const pgPort = await freePort();
   const apiPort = await freePort();
+  if (coverage) coveragePort = await freePort();
   fs.mkdirSync(path.join(root, '.artifacts'), { recursive: true });
   dir = fs.mkdtempSync(path.join(root, '.artifacts/quality-review-'));
   command('initdb', ['-D', path.join(dir, 'pgdata'), '-U', 'postgres', '--auth=trust', '--encoding=UTF8', '--locale=C']);
@@ -108,7 +115,8 @@ test.before(async () => {
   const log = fs.openSync(path.join(dir, 'api.log'), 'a');
   const socketDir = path.join(process.env.SystemDrive || 'C:', '/tmp/jdsock');
   fs.mkdirSync(socketDir, { recursive: true });
-  app = spawn(java, [`-Djdk.net.unixdomain.tmpdir=${socketDir}`, '-jar', path.join(root, 'services/massage-api/target/massage-api-0.1.0.jar')], {
+  const instrumentation = coverage ? [`-javaagent:${jacocoAgent}=output=tcpserver,address=127.0.0.1,port=${coveragePort},includes=com.chengxin.massage.*`] : [];
+  app = spawn(java, [...instrumentation, `-Djdk.net.unixdomain.tmpdir=${socketDir}`, '-jar', path.join(runtimeRoot, 'services/massage-api/target/massage-api-0.1.0.jar')], {
     cwd: dir, windowsHide: true, stdio: ['ignore', log, log],
     env: { ...process.env, MASSAGE_DB_URL: `jdbc:postgresql://127.0.0.1:${pgPort}/review_fixture`,
       MASSAGE_DB_USER: 'postgres', MASSAGE_DB_PASSWORD: '', MASSAGE_API_PORT: String(apiPort),
@@ -125,6 +133,19 @@ test.before(async () => {
     await delay(500);
   }
   assert.ok(healthy, `App startup failed: ${spawnError || ''}\n${fs.readFileSync(path.join(dir, 'api.log'), 'utf8').slice(-2500)}`);
+  const consolePort = await freePort();
+  consoleBase = `http://127.0.0.1:${consolePort}`;
+  consoleApp = spawn(process.execPath, [path.join(runtimeRoot, 'server.massage.js')], {
+    windowsHide:true, stdio:'ignore', env:{...process.env, MASSAGE_ADDRESS:'127.0.0.1',
+      MASSAGE_PORT:String(consolePort), MASSAGE_API_HOST:'127.0.0.1', MASSAGE_API_PORT:String(apiPort)}
+  });
+  let consoleHealthy = false;
+  for (let n=0; n<60; n++) {
+    try { consoleHealthy = (await (await fetch(consoleBase+'/api/health')).json()).status === 'UP'; } catch {}
+    if (consoleHealthy) break;
+    await delay(100);
+  }
+  assert.ok(consoleHealthy, 'Packaged console proxy must reach the API');
   const salt = randomBytes(16);
   const hash = `PBKDF2$310000$${salt.toString('base64url')}$${pbkdf2Sync(password, salt, 310000, 32, 'sha256').toString('base64url')}`;
   sql(`INSERT INTO role(id,tenant_id,code,name) VALUES(gen_random_uuid(),'${tenant}','REVIEW_READER','Review reader');`);
@@ -148,11 +169,25 @@ test.before(async () => {
 test.after(async () => {
   try {
     if (app && app.exitCode === null && app.pid) {
-      const exited = new Promise(resolve => app.once('exit', resolve));
-      app.kill();
-      await exited;
+      try {
+        if (coverage) {
+          const result = spawnSync(java, ['-jar', jacocoCli, 'dump', '--address', '127.0.0.1', '--port', String(coveragePort),
+            '--destfile', path.join(dir, 'http.exec')], { encoding:'utf8', windowsHide:true, timeout:30000 });
+          assert.equal(result.status, 0, result.stderr || result.stdout);
+          fs.copyFileSync(path.join(dir, 'http.exec'), path.join(root, '.artifacts/quality-http.exec'));
+        }
+      } finally {
+        const exited = new Promise(resolve => app.once('exit', resolve));
+        app.kill();
+        await exited;
+      }
     }
   } finally {
+    if (consoleApp?.pid && consoleApp.exitCode === null) {
+      const exited = new Promise(resolve => consoleApp.once('exit', resolve));
+      consoleApp.kill();
+      await exited;
+    }
     if (started) command('pg_ctl', ['-D', path.join(dir, 'pgdata'), '-m', 'fast', '-w', 'stop'], { stdio: 'ignore' });
   }
 });
@@ -160,6 +195,29 @@ test.after(async () => {
 test('authentication and normal member permission boundary', async () => {
   assert.equal((await api('/api/v1/members', undefined, null)).status, 401);
   assert.equal((await api('/api/v1/members', { name: 'Fixture', phone: 'fixture-denied' }, reader)).status, 403);
+});
+
+test('release health and complete Flyway migrations succeed on an empty database', async () => {
+  const health = ok(await api('/api/health', undefined, null));
+  assert.equal(health.status, 'UP');
+  assert.equal(health.release, '20260916-quality-batch3-v10');
+  assert.equal(sql("SELECT version FROM flyway_schema_history WHERE success=true ORDER BY installed_rank DESC LIMIT 1;"), '98');
+  assert.equal(sql("SELECT convalidated FROM pg_constraint WHERE conname='service_bed_room_ownership';"), 't');
+  assert.equal(sql("SELECT convalidated FROM pg_constraint WHERE conname='service_bed_requires_room';"), 't');
+});
+
+test('all console entry points and referenced scripts and styles load through the release server', async () => {
+  for (const entry of ['index.html','mobile.html','manager-mobile.html','ledger.html']) {
+    const response = await fetch(`${consoleBase}/${entry}`);
+    assert.equal(response.status,200,entry);
+    const dom = new JSDOM(await response.text(), {url:`${consoleBase}/${entry}`});
+    try {
+      for (const element of dom.window.document.querySelectorAll('script[src],link[rel="stylesheet"]')) {
+        const url = element.src || element.href;
+        if (url.startsWith(consoleBase)) assert.equal((await fetch(url)).status,200,url);
+      }
+    } finally { dom.window.close(); }
+  }
 });
 
 test('inspection is read-only and finds no anomalies on the migrated seed', () => {
@@ -416,6 +474,8 @@ test('R15: mobile clock-out preserves another active service room state', async 
 
 test('R16: approving room transfer reassigns a bed in the destination room', async () => {
   const from = roomFixture(), to = roomFixture();
+  sql(`INSERT INTO room_bed(id,tenant_id,store_id,room_id,code,name,sort_order)
+    SELECT gen_random_uuid(),'${tenant}','${store}','${to}','CUSTOM-'||n,'Custom bed',n FROM generate_series(10,20,10) n;`);
   const session = activeService(from, technician);
   const other = activeService(from, '30000000-0000-0000-0000-000000000002');
   const oldBed = sql(`SELECT bed_id FROM service_session WHERE id='${session}';`);
@@ -424,10 +484,174 @@ test('R16: approving room transfer reassigns a bed in the destination room', asy
   assert.equal(sql(`SELECT count(*) FROM service_session s JOIN room_bed b ON b.id=s.bed_id WHERE s.id='${session}' AND s.room_id=b.room_id;`), '1');
   assert.equal(sql(`SELECT count(*) FROM service_session WHERE bed_id='${oldBed}' AND status='IN_SERVICE';`), '0');
   assert.equal(sql(`SELECT count(*) FROM service_session WHERE room_id='${to}' AND status='IN_SERVICE';`), '1');
+  assert.equal(sql(`SELECT count(*) FROM room_bed WHERE room_id='${to}';`), '2');
   assert.equal(sql(`SELECT status FROM room_status_event WHERE room_id='${from}' ORDER BY occurred_at DESC,id DESC LIMIT 1;`), 'IN_SERVICE');
   assert.throws(() => sql(`UPDATE service_session SET bed_id='${oldBed}' WHERE id='${session}';`), /service_bed_room_ownership/);
+  assert.throws(() => sql(`UPDATE service_session SET room_id=null WHERE id='${session}';`), /service_bed_requires_room/);
   sql(`UPDATE service_session SET status='COMPLETED',ended_at=now() WHERE id IN ('${session}','${other}');
     UPDATE service_session_participant SET status='COMPLETED',service_ended_at=now() WHERE service_session_id IN ('${session}','${other}');`);
+});
+
+test('R07: concurrent settlements cross a monthly tier exactly once', async () => {
+  const date = sql('SELECT current_date::text;');
+  const prior = Number(sql(`SELECT coalesce(sum(clock_count_adjustment),0) FROM technician_commission_record
+    WHERE store_id='${store}' AND technician_id='${technician}' AND source_type='MAIN'
+      AND business_date>=date_trunc('month',current_date) AND business_date<date_trunc('month',current_date)+interval '1 month';`));
+  const policy = randomUUID();
+  sql(`INSERT INTO store_commission_tier_policy_version(id,tenant_id,store_id,active,effective_business_date)
+      VALUES('${policy}','${tenant}','${store}',true,current_date);
+    INSERT INTO store_commission_tier(id,tenant_id,store_id,policy_version_id,tier_name,minimum_monthly_clock_count,commission_multiplier_bp,sort_order)
+      VALUES(gen_random_uuid(),'${tenant}','${store}','${policy}','Fixture base',0,10000,1),
+        (gen_random_uuid(),'${tenant}','${store}','${policy}','Fixture next',${prior + 2},12000,2);
+    CREATE FUNCTION review_tier_barrier() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.5); RETURN NEW; END $$;
+    CREATE TRIGGER review_tier_barrier BEFORE INSERT ON technician_commission_record FOR EACH ROW EXECUTE FUNCTION review_tier_barrier();`);
+  const second = ok(await api('/api/v1/admin/auth/login', { loginName:'review-admin', password }, null)).accessToken;
+  try {
+    const results = await Promise.all([api('/api/v1/sales-orders/historical-backfill', backfill(), admin),
+      api('/api/v1/sales-orders/historical-backfill', backfill(), second)]);
+    results.forEach(row => ok(row));
+    assert.equal(sql(`SELECT string_agg(monthly_clock_count_snapshot||':'||commission_multiplier_bp_snapshot,',' ORDER BY monthly_clock_count_snapshot)
+      FROM technician_commission_record WHERE commission_tier_policy_version_id='${policy}' AND record_type='SETTLEMENT' AND source_type='MAIN';`),
+    `${prior+1}:10000,${prior+2}:12000`);
+  } finally {
+    sql('DROP TRIGGER review_tier_barrier ON technician_commission_record; DROP FUNCTION review_tier_barrier();');
+  }
+});
+
+test('R15: settled historical services do not keep a transferred-from room awaiting payment', async () => {
+  const from = roomFixture(), to = roomFixture();
+  const order = ok(await api('/api/v1/sales-orders/historical-backfill', backfill()));
+  const old = sql(`SELECT service_session_id FROM sales_order_service_session WHERE order_id='${order.orderId}' LIMIT 1;`);
+  sql(`UPDATE service_session SET room_id='${from}',bed_id=null WHERE id='${old}';`);
+  const session = activeService(from, technician);
+  const request = ok(await api('/api/v1/service-room-transfers', {serviceSessionId:session,toRoomId:to,reason:'Review fixture'}));
+  ok(await api(`/api/v1/service-room-transfers/${request.id}/approve`, {}));
+  assert.equal(sql(`SELECT status FROM room_status_event WHERE room_id='${from}' ORDER BY occurred_at DESC,id DESC LIMIT 1;`), 'CLEANING');
+  sql(`UPDATE service_session SET status='COMPLETED',ended_at=now() WHERE id='${session}';
+    UPDATE service_session_participant SET status='COMPLETED',service_ended_at=now() WHERE service_session_id='${session}';`);
+});
+
+test('R12: concurrent payment changes cannot mix report totals and channel snapshots', async () => {
+  const date = sql('SELECT current_date::text;');
+  const url = `/api/v1/operations/daily-report?date=${date}`;
+  const before = ok(await api(url));
+  const payment = sql(`SELECT p.id FROM payment_record p JOIN sales_order o ON o.id=p.order_id
+    WHERE o.store_id='${store}' AND o.status='SETTLED' AND o.paid_cents>0 AND o.business_date=current_date LIMIT 1;`);
+  assert.ok(payment);
+  // Pause the first aggregate after its snapshot starts, before later channel queries.
+  sql(`ALTER TABLE payment_record RENAME TO review_payment_backing;
+    CREATE FUNCTION review_snapshot_pause() RETURNS boolean LANGUAGE plpgsql VOLATILE AS $$ BEGIN
+      IF current_setting('review.paused',true) IS DISTINCT FROM 'yes' THEN
+        PERFORM set_config('review.paused','yes',true); PERFORM pg_sleep(2);
+      END IF; RETURN true; END $$;
+    CREATE VIEW payment_record AS SELECT * FROM review_payment_backing WHERE review_snapshot_pause();`);
+  let pending, changed = false;
+  try {
+    pending = api(url);
+    let paused = false;
+    for (let n=0; n<100; n++) {
+      paused = sql("SELECT exists(SELECT 1 FROM pg_stat_activity WHERE wait_event='PgSleep' AND query LIKE '%payment_record%');") === 't';
+      if (paused) break;
+      await delay(20);
+    }
+    assert.ok(paused, 'Report must reach the read barrier');
+    sql(`UPDATE review_payment_backing SET amount_cents=amount_cents+100 WHERE id='${payment}';`);
+    changed = true;
+    const during = ok(await pending);
+    assert.equal(during.salesAmountCents, before.salesAmountCents);
+    assert.deepEqual(during.unifiedMetrics.channels, before.unifiedMetrics.channels);
+    const after = ok(await api(url));
+    assert.equal(after.salesAmountCents, before.salesAmountCents+100);
+    assert.equal(after.unifiedMetrics.channels.reduce((sum,c)=>sum+c.salesCents,0), after.salesAmountCents);
+  } finally {
+    if (pending) await pending.catch(()=>{});
+    if (changed) sql(`UPDATE review_payment_backing SET amount_cents=amount_cents-100 WHERE id='${payment}';`);
+    sql('DROP VIEW payment_record; ALTER TABLE review_payment_backing RENAME TO payment_record; DROP FUNCTION review_snapshot_pause();');
+  }
+});
+
+test('R17: stale save and competing publish respect version and published status', async () => {
+  const date = sql("SELECT (current_date-2)::text;");
+  const created = ok(await api('/api/v1/daily-reports', { businessDate:date }));
+  const id = created.report.id, version = created.report.version;
+  const second = ok(await api('/api/v1/admin/auth/login', { loginName:'review-admin', password }, null)).accessToken;
+  sql(`CREATE FUNCTION review_report_barrier() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(0.5); RETURN NEW; END $$;
+    CREATE TRIGGER review_report_barrier BEFORE UPDATE ON daily_operating_report FOR EACH ROW EXECUTE FUNCTION review_report_barrier();`);
+  try {
+    const result = await Promise.all([api(`/api/v1/daily-reports/${id}`, { businessDate:date, version, incidentNote:'competing save' }, admin, {}, 'PUT'),
+      api(`/api/v1/daily-reports/${id}/publish?version=${version}`, {}, second)]);
+    assert.deepEqual(result.map(row=>row.status).sort(), [200,409]);
+  } finally {
+    sql('DROP TRIGGER review_report_barrier ON daily_operating_report; DROP FUNCTION review_report_barrier();');
+  }
+  assert.equal((await api(`/api/v1/daily-reports/${id}`, { businessDate:date, version }, admin, {}, 'PUT')).status, 409);
+  if (sql(`SELECT status FROM daily_operating_report WHERE id='${id}';`) !== 'PUBLISHED') {
+    const latest = sql(`SELECT version FROM daily_operating_report WHERE id='${id}';`);
+    ok(await api(`/api/v1/daily-reports/${id}/publish?version=${latest}`, {}));
+  }
+  assert.equal((await api(`/api/v1/daily-reports/${id}`, { businessDate:date }, admin, {}, 'PUT')).status, 409);
+  assert.equal(sql(`SELECT status FROM daily_operating_report WHERE id='${id}';`), 'PUBLISHED');
+});
+
+test('R13: a missing historical price rejects posting without fallback or partial writes', async () => {
+  const before = counts();
+  sql(`UPDATE service_item_price_version SET effective_business_date=current_date+1 WHERE service_item_id='${item}';`);
+  try {
+    const result = await api('/api/v1/sales-orders/historical-backfill', backfill());
+    assert.equal(result.status, 422);
+    assert.match(result.data.message, /Missing historical price/);
+    assert.equal(counts(), before);
+  } finally { sql(`UPDATE service_item_price_version SET effective_business_date='1970-01-01' WHERE service_item_id='${item}';`); }
+});
+
+test('R11: room capacity changes synchronize beds and reject occupied shrink or disable', async () => {
+  const code = randomUUID();
+  const room = ok(await api('/api/v1/rooms', { code, name:'Capacity fixture', roomType:'PRIVATE', bedCount:2 }));
+  const update = bedCount => api(`/api/v1/rooms/${room.id}`, { code, name:'Capacity fixture', roomType:'PRIVATE', bedCount }, admin, {}, 'PUT');
+  assert.equal(sql(`SELECT count(*) FROM room_bed WHERE room_id='${room.id}' AND active;`), '2');
+  ok(await update(3));
+  assert.equal(sql(`SELECT count(*) FROM room_bed WHERE room_id='${room.id}' AND active;`), '3');
+  const session = activeService(room.id, technician);
+  const bed = sql(`SELECT bed_id FROM service_session WHERE id='${session}';`);
+  sql(`UPDATE room_bed SET sort_order=999 WHERE id='${bed}';`);
+  assert.equal((await update(1)).status, 409);
+  assert.equal((await api(`/api/v1/rooms/${room.id}/active`, { active:false }, admin, {}, 'PUT')).status, 409);
+  assert.equal((await api(`/api/v1/rooms/beds/${bed}/active`, { active:false }, admin, {}, 'PUT')).status, 409);
+  sql(`UPDATE service_session SET status='COMPLETED',ended_at=now() WHERE id='${session}';
+    UPDATE service_session_participant SET status='COMPLETED',service_ended_at=now() WHERE service_session_id='${session}';`);
+  ok(await update(1));
+  assert.equal(sql(`SELECT count(*) FROM room_bed WHERE room_id='${room.id}' AND active;`), '1');
+  ok(await api(`/api/v1/rooms/${room.id}/active`, { active:false }, admin, {}, 'PUT'));
+});
+
+test('R14: malformed forwarding does not roll back a valid business write and missing rows return 404', async () => {
+  const result = ok(await api('/api/v1/members', { name:'IP fixture', phone:randomUUID().slice(0,20) }, admin, { 'X-Forwarded-For':'not-an-ip' }));
+  assert.equal(sql(`SELECT host(ip_address) FROM audit_log WHERE entity_id='${result.id}' ORDER BY created_at DESC LIMIT 1;`), '127.0.0.1');
+  assert.equal((await api(`/api/v1/member-recharge-refunds/${randomUUID()}/complete`, {})).status, 404);
+});
+
+test('R14: employee attendance conflicts return 409 and invalid employee input returns 422', async () => {
+  const employeeId = randomUUID();
+  sql(`INSERT INTO employee(id,tenant_id,full_name) VALUES('${employeeId}','${tenant}','Review employee');
+    INSERT INTO employee_store_assignment(id,tenant_id,employee_id,store_id,position_type,position_name)
+    VALUES(gen_random_uuid(),'${tenant}','${employeeId}','${store}','CASHIER','Review cashier');`);
+  const input = {employeeId};
+  assert.equal((await api('/api/v1/employee-attendance/clock-out',input)).status,409);
+  ok(await api('/api/v1/employee-attendance/clock-in',input));
+  assert.equal((await api('/api/v1/employee-attendance/clock-in',input)).status,409);
+  ok(await api('/api/v1/employee-attendance/clock-out',input));
+  assert.equal((await api('/api/v1/employee-attendance/clock-out',input)).status,409);
+  assert.equal((await api('/api/v1/employee-attendance/clock-in',{employeeId:randomUUID()})).status,422);
+});
+
+test('R09: changing a password revokes other sessions but keeps the current session', async () => {
+  const old = ok(await api('/api/v1/admin/auth/login', { loginName:'review-cashier', password }, null)).accessToken;
+  const nextPassword = randomBytes(24).toString('base64url');
+  ok(await api('/api/v1/admin/auth/password', { currentPassword:password, newPassword:nextPassword }, cashier, {}, 'PUT'));
+  assert.equal((await api('/api/v1/admin/auth/session', undefined, old)).status, 401);
+  ok(await api('/api/v1/admin/auth/session', undefined, cashier));
+  assert.equal((await api('/api/v1/admin/auth/login', { loginName:'review-cashier', password }, null)).status, 401);
+  ok(await api('/api/v1/admin/auth/login', { loginName:'review-cashier', password:nextPassword }, null));
 });
 
 test('inspection detects injected equation, quota and orphan anomalies and preserves data', async () => {

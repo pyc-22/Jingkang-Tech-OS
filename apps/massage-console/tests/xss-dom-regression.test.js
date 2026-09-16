@@ -9,8 +9,9 @@ const attack = '\"><img src=x onerror="window.injected=1"><script>window.injecte
 function page(file, names, html, globals = {}) {
   const source = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
   const ast = acorn.parse(source, { ecmaVersion: 'latest' });
+  const scope = file === 'daily-report.js' ? ast.body[0].expression.callee.body.body : ast.body;
   const declarations = names.map(name => {
-    const node = ast.body.find(n => n.id?.name === name || n.declarations?.some(d => d.id.name === name));
+    const node = scope.find(n => n.id?.name === name || n.declarations?.some(d => d.id.name === name));
     assert.ok(node, name);
     return source.slice(node.start, node.end);
   });
@@ -86,5 +87,62 @@ test('R01: print preview preserves already escaped ampersands without double enc
     { printContentOptions:()=>({}), defaultPrintContentOptions:{} });
   dom.window.renderPrintPreview();
   assert.equal(dom.window.document.querySelector('h3').textContent, 'A & B');
+  dom.window.close();
+});
+
+test('R01: daily report names, configurable labels and revision actors remain literal text', async () => {
+  const ids = ['daily-report-overview','daily-report-status','daily-report-save-meta','daily-report-month-rate',
+    'daily-report-payment-total','daily-report-payment-bars','daily-report-publish','daily-report-settings',
+    'daily-report-revisions','daily-settings-month','daily-settings-target','daily-report-settings-fields',
+    'daily-report-revisions-summary','daily-report-revisions-list'];
+  const html = ids.map(id => `<div id="${id}"></div>`).join('')
+    + '<select id="stores"></select><form id="form"></form><table><tbody id="daily-report-monthly-records"></tbody></table><dialog id="daily-report-revisions-dialog"></dialog>';
+  const dom = page('daily-report.js', ['dailyReportEscape','cents','percent','statuses','revisionAction','dateTime',
+    'renderStores','renderSettings','configFor','serviceMetric','render','revisionSummary','openRevisions'], html,
+    { selectableStores:[{id:'store',name:attack}], currentStore:()=>'store', selectedStoreName:()=>attack,
+      reportSettings:null, amountFields:[],countFields:[],textFields:[],dateInput:{value:'2026-09-16'},
+      configuredMonthlyRows:()=>[['label','count','count']], renderRefundOccurrences:()=>{},
+      renderServiceStructure:()=>{}, renderDailyPaymentFields:()=>{}, applyFieldSettings:()=>{},
+      reportHeaders:()=>({}), apiBase:'/reports', fetch:async()=>({ok:true,json:async()=>[{revisionNo:1,action:'SAVE',actorName:attack}]}) });
+  dom.window.storeInput = dom.window.document.querySelector('#stores');
+  dom.window.form = dom.window.document.querySelector('#form');
+  dom.window.document.querySelector('dialog').showModal = () => {};
+  dom.window.renderStores();
+  dom.window.renderSettings({ targetMonth:'2026-09-01', fields:[{sectionCode:'DAILY',fieldCode:'count',fieldLabel:attack,visible:true,sortOrder:1}] });
+  const report = {id:'report',version:2,status:'PUBLISHED',businessDate:'2026-09-16',updatedByName:attack,publishedByName:attack};
+  const channel = {code:attack,name:attack,active:true,netCents:100};
+  dom.window.render({report,access:{},paymentChannels:[channel],monthlyPaymentChannels:[channel]});
+  await dom.window.openRevisions();
+  assertTextOnly(dom);
+  assert.equal(dom.window.document.querySelector('[data-setting-label]').value, attack);
+  assert.equal(dom.window.document.querySelector('[data-report-payment-channel]').dataset.reportPaymentChannel, attack);
+  dom.window.close();
+});
+
+test('R17: daily report save and publish send the last observed version', async () => {
+  const requests = [], messages = [];
+  const dom = page('daily-report.js', ['save'], '<div></div>', {
+    data:{report:{id:'report',version:7}}, payload:()=>({businessDate:'2026-09-16'}),
+    apiBase:'/reports',reportHeaders:()=>({}),render:()=>{},toast:message=>messages.push(message),
+    fetch:async (url, options) => { requests.push({url,...options}); return {ok:true,json:async()=>({report:{id:'report',version:8}})}; }
+  });
+  await dom.window.save(true);
+  assert.equal(JSON.parse(requests[0].body).version, 7);
+  assert.equal(requests[1].url, '/reports/report/publish?version=8');
+  requests.length = 0;
+  dom.window.fetch = async url => { requests.push(url); return {ok:false,status:409}; };
+  await dom.window.save(true);
+  assert.equal(requests.length, 1);
+  assert.match(messages.at(-1), /刷新/);
+  dom.window.close();
+});
+
+test('R01: independent ledger renders customer input as text and preserves record identifiers', () => {
+  const dom = page('ledger.js', ['money','ledgerEscape','renderRecords'],
+    '<input id="record-search"><table><tbody id="ledger-records"></tbody></table><div id="empty-records"></div>',
+    {currentFilter:'all',records:[{id:'fixture',type:'order',customer:attack,orderNo:attack,note:attack,at:attack,amount:1}]});
+  dom.window.renderRecords();
+  assertTextOnly(dom);
+  assert.equal(dom.window.document.querySelector('[data-delete]').dataset.delete, 'fixture');
   dom.window.close();
 });

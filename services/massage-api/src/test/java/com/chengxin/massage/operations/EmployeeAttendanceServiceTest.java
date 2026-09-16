@@ -111,4 +111,24 @@ class EmployeeAttendanceServiceTest {
       "when employee_attendance.clock_out_at is not null then employee_attendance.status",
       "when employee_attendance.clock_in_at is not null then employee_attendance.status");
   }
+
+  @Test
+  void historicalAndFutureSchedulesUseTheirFullStoreLocalDate() {
+    var zone = java.time.ZoneId.of("Asia/Shanghai");
+    var now = java.time.Instant.parse("2026-09-16T03:00:00Z");
+    assertThat(EmployeeAttendanceService.initialStatus(date, zone, "SCHEDULED", LocalTime.of(10,0), LocalTime.of(18,0), now)).isEqualTo("ABSENT");
+    assertThat(EmployeeAttendanceService.initialStatus(date.plusDays(3), zone, "SCHEDULED", LocalTime.of(10,0), LocalTime.of(18,0), now)).isEqualTo("NOT_STARTED");
+    assertThat(EmployeeAttendanceService.initialStatus(date.plusDays(2), zone, "SCHEDULED", LocalTime.of(10,0), LocalTime.of(18,0), now)).isEqualTo("LATE");
+    assertThat(EmployeeAttendanceService.initialStatus(date.plusDays(2), java.time.ZoneId.of("America/New_York"), "SCHEDULED", LocalTime.of(10,0), LocalTime.of(18,0), now)).isEqualTo("NOT_STARTED");
+  }
+
+  @Test
+  void overnightScheduledEndBelongsToTheNextDay() {
+    var zone = java.time.ZoneId.of("Asia/Shanghai");
+    assertThat(EmployeeAttendanceService.shiftEnd(date, LocalTime.of(22,0), LocalTime.of(6,0), zone).toLocalDate()).isEqualTo(date.plusDays(1));
+    assertThat(EmployeeAttendanceService.initialStatus(date, zone, "SCHEDULED", LocalTime.of(22,0), LocalTime.of(6,0),
+      java.time.Instant.parse("2026-09-14T15:00:00Z"))).isEqualTo("LATE");
+    assertThat(EmployeeAttendanceService.initialStatus(date, zone, "SCHEDULED", LocalTime.of(22,0), LocalTime.of(6,0),
+      java.time.Instant.parse("2026-09-14T22:00:00Z"))).isEqualTo("ABSENT");
+  }
 }

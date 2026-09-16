@@ -10,6 +10,9 @@ import java.util.UUID;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
+import java.util.function.Supplier;
 
 /**
  * Single source for operational daily metrics. Orders use their settlement business date;
@@ -24,6 +27,10 @@ public class DailyReportService {
     this.jdbc = jdbc;
   }
 
+  @Transactional(isolation = Isolation.REPEATABLE_READ, readOnly = true)
+  public <T> T snapshot(Supplier<T> report) { return report.get(); }
+
+  @Transactional(isolation = Isolation.REPEATABLE_READ, readOnly = true)
   public DailyMetrics daily(UUID storeId, LocalDate businessDate) {
     OrderTotals orders = jdbc.sql("""
       select count(distinct o.id) filter (where coalesce(o.refund_status,'NONE') <> 'FULL') settled_order_count,
@@ -95,6 +102,7 @@ public class DailyReportService {
       channels, refundOccurrences);
   }
 
+  @Transactional(isolation = Isolation.REPEATABLE_READ, readOnly = true)
   public List<ChannelMetrics> channels(UUID storeId, LocalDate date) {
     Map<String, ChannelMetrics> result = new LinkedHashMap<>();
     jdbc.sql("select code,name,method_kind,active,cash_counted,sort_order from store_payment_method where store_id=:store order by sort_order,code")

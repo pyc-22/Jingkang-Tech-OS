@@ -46,7 +46,7 @@
   const selectedStoreName = () => storeInput.selectedOptions[0]?.textContent || '当前门店';
   const reportHeaders = json => storeContextHeaders(json);
   function renderStores() {
-    storeInput.innerHTML = (selectableStores || []).map(store => `<option value="${store.id}">${store.name}</option>`).join('');
+    storeInput.innerHTML = (selectableStores || []).map(store => `<option value="${dailyReportEscape(store.id)}">${dailyReportEscape(store.name)}</option>`).join('');
     storeInput.value = currentStore();
   }
   function configFor(code) { return reportSettings?.fields?.find(field => field.fieldCode === code) || { fieldCode: code, visible: true, required: false, sortOrder: 100, fieldLabel: '' }; }
@@ -96,7 +96,7 @@
     const config = configFor(code);
     if (!config.visible) return '';
     const display = type === 'percent' ? percent(value) : Number(value || 0).toLocaleString('zh-CN');
-    return `<article class="daily-service-metric ${tone}" data-service-field="${code}"><span>${config.fieldLabel || fallbackLabel}</span><strong>${display}</strong></article>`;
+    return `<article class="daily-service-metric ${tone}" data-service-field="${code}"><span>${dailyReportEscape(config.fieldLabel || fallbackLabel)}</span><strong>${display}</strong></article>`;
   }
   function renderServiceStructure(values, monthly, derived) {
     document.querySelector('#daily-service-daily').innerHTML = [
@@ -139,7 +139,7 @@
     const sections = { MONTHLY: '月度累计', DAILY: '当日经营', PERSONNEL: '人员情况', HANDOVER: '晚班交接' };
     document.querySelector('#daily-report-settings-fields').innerHTML = Object.keys(sections).map(section => {
       const fields = settings.fields.filter(field => field.sectionCode === section).sort((a, b) => a.sortOrder - b.sortOrder);
-      return `<section><h3>${sections[section]}</h3><div class="daily-settings-table"><div class="daily-settings-table-head"><span>字段名称</span><span>显示</span><span>必填</span><span>排序</span></div>${fields.map(field => `<div class="daily-settings-row" data-setting-field="${field.fieldCode}"><input data-setting-label value="${field.fieldLabel}"><label><input data-setting-visible type="checkbox" ${field.visible ? 'checked' : ''}>显示</label><label><input data-setting-required type="checkbox" ${field.required ? 'checked' : ''}>必填</label><input data-setting-sort type="number" min="0" step="1" value="${field.sortOrder}"></div>`).join('')}</div></section>`;
+      return `<section><h3>${sections[section]}</h3><div class="daily-settings-table"><div class="daily-settings-table-head"><span>字段名称</span><span>显示</span><span>必填</span><span>排序</span></div>${fields.map(field => `<div class="daily-settings-row" data-setting-field="${dailyReportEscape(field.fieldCode)}"><input data-setting-label value="${dailyReportEscape(field.fieldLabel)}"><label><input data-setting-visible type="checkbox" ${field.visible ? 'checked' : ''}>显示</label><label><input data-setting-required type="checkbox" ${field.required ? 'checked' : ''}>必填</label><input data-setting-sort type="number" min="0" step="1" value="${Number(field.sortOrder)}"></div>`).join('')}</div></section>`;
     }).join('');
   }
   async function openSettings() {
@@ -192,11 +192,11 @@
     document.querySelector('#daily-report-save-meta').textContent = `${selectedStoreName()} · ${savedAt} · ${reportData.report?.updatedByName || '--'}`;
     document.querySelector('#daily-report-overview').innerHTML = [
       ['门店名称', selectedStoreName(), '营业日报'], ['营业日期', dateInput.value, '当日数据'], ['当日营业额', cents(values.dailySalesCents), `目标 ${percent(derived.dailyTargetCompletionRate)}`], ['本日红冲退款', cents(reportData.refundAmountCents), '按原订单营业日归集'], ['累计营业额', cents(monthly.salesAmountCents), `本月目标 ${percent(derived.monthlyTargetCompletionRate)}`]
-    ].map(([label, value, note]) => `<article><span>${label}</span><strong>${value}</strong><small>${note}</small></article>`).join('');
+    ].map(([label, value, note]) => `<article><span>${label}</span><strong>${dailyReportEscape(value)}</strong><small>${note}</small></article>`).join('');
     renderRefundOccurrences(reportData.unifiedMetrics?.refundOccurrences);
     document.querySelector('#daily-report-month-rate').textContent = `月度完成 ${percent(derived.monthlyTargetCompletionRate)}`;
-    const monthlyChannelRows = (reportData.monthlyPaymentChannels || []).filter(channel => channel.active || channel.salesCents || channel.refundCents || channel.rechargeCents || channel.rechargeRefundCents).map(channel => `<tr data-report-payment-channel="${channel.code}"><th>累计${channel.name}净实收</th><td>${cents(channel.netCents)}</td></tr>`).join('');
-    document.querySelector('#daily-report-monthly-records').innerHTML = configuredMonthlyRows().map(([label, key, type]) => { const config = configFor(key); const value = key === 'averageCustomerSpendCents' ? derived[key] : key === 'serviceClockRate' ? derived.monthlyServiceClockRate : monthly[key]; const display = type === 'amount' ? cents(value) : type === 'percent' ? percent(value) : Number(value || 0); return `<tr data-report-field="${key}"><th>${config.fieldLabel || label}</th><td>${display}</td></tr>`; }).join('') + monthlyChannelRows;
+    const monthlyChannelRows = (reportData.monthlyPaymentChannels || []).filter(channel => channel.active || channel.salesCents || channel.refundCents || channel.rechargeCents || channel.rechargeRefundCents).map(channel => `<tr data-report-payment-channel="${dailyReportEscape(channel.code)}"><th>累计${dailyReportEscape(channel.name)}净实收</th><td>${cents(channel.netCents)}</td></tr>`).join('');
+    document.querySelector('#daily-report-monthly-records').innerHTML = configuredMonthlyRows().map(([label, key, type]) => { const config = configFor(key); const value = key === 'averageCustomerSpendCents' ? derived[key] : key === 'serviceClockRate' ? derived.monthlyServiceClockRate : monthly[key]; const display = type === 'amount' ? cents(value) : type === 'percent' ? percent(value) : Number(value || 0); return `<tr data-report-field="${key}"><th>${dailyReportEscape(config.fieldLabel || label)}</th><td>${display}</td></tr>`; }).join('') + monthlyChannelRows;
     renderServiceStructure(values, monthly, derived);
     const payments = (reportData.paymentChannels || []).filter(channel => channel.active || channel.salesCents || channel.refundCents || channel.rechargeCents || channel.rechargeRefundCents);
     renderDailyPaymentFields(reportData.paymentChannels);
@@ -204,7 +204,7 @@
     const total = Number(derived.paymentChannelTotalCents || 0);
     const scale = payments.reduce((sum, channel) => sum + Math.abs(Number(channel.netCents || 0)), 0);
     document.querySelector('#daily-report-payment-total').textContent = cents(total);
-    document.querySelector('#daily-report-payment-bars').innerHTML = payments.map((channel, index) => { const value = Number(channel.netCents || 0); const ratio = scale ? Math.abs(value) / scale * 100 : 0; const recharge = Number(channel.rechargeCents || 0); const rechargeRefund = Number(channel.rechargeRefundCents || 0); return `<div class="daily-payment-row"><span>${channel.name}</span><div><i style="width:${ratio ? Math.max(2, ratio) : 0}%;background:${colors[index % colors.length]}"></i></div><b>${cents(value)}</b><small>${ratio.toFixed(1)}% · 退款 ${cents(channel.refundCents)}${recharge || rechargeRefund ? ` · 充值净额 ${cents(recharge - rechargeRefund)}` : ''}</small></div>`; }).join('') || '<p class="table-empty">当日暂无前台结算记录</p>';
+    document.querySelector('#daily-report-payment-bars').innerHTML = payments.map((channel, index) => { const value = Number(channel.netCents || 0); const ratio = scale ? Math.abs(value) / scale * 100 : 0; const recharge = Number(channel.rechargeCents || 0); const rechargeRefund = Number(channel.rechargeRefundCents || 0); return `<div class="daily-payment-row"><span>${dailyReportEscape(channel.name)}</span><div><i style="width:${ratio ? Math.max(2, ratio) : 0}%;background:${colors[index % colors.length]}"></i></div><b>${cents(value)}</b><small>${ratio.toFixed(1)}% · 退款 ${cents(channel.refundCents)}${recharge || rechargeRefund ? ` · 充值净额 ${cents(recharge - rechargeRefund)}` : ''}</small></div>`; }).join('') || '<p class="table-empty">当日暂无前台结算记录</p>';
     const locked = status === 'PUBLISHED';
     form.querySelectorAll('input,textarea,button').forEach(control => control.disabled = locked || !access.canEdit);
     document.querySelector('#daily-report-publish').disabled = locked || !access.canPublish;
@@ -266,10 +266,11 @@
         if (!response.ok) throw new Error('日报创建失败');
         data = await response.json(); reportId = data.report?.id;
       }
+      body.version = data.report.version;
       let response = await fetch(`${apiBase}/${reportId}`, { method: 'PUT', headers: reportHeaders(true), body: JSON.stringify(body) });
-      if (!response.ok) throw new Error('日报保存失败');
+      if (!response.ok) throw new Error(response.status === 409 ? '日报已变化，请刷新后重试' : '日报保存失败');
       data = await response.json();
-      if (publish) { response = await fetch(`${apiBase}/${reportId}/publish`, { method: 'POST', headers: reportHeaders() }); if (!response.ok) throw new Error('日报发布失败'); data = await response.json(); }
+      if (publish) { response = await fetch(`${apiBase}/${reportId}/publish?version=${data.report.version}`, { method: 'POST', headers: reportHeaders() }); if (!response.ok) throw new Error(response.status === 409 ? '日报已变化，请刷新后重试' : '日报发布失败'); data = await response.json(); }
       render(data); toast(publish ? '日报已发布' : '日报已保存');
     } catch (error) { toast(error.message || '日报保存失败'); }
   }
@@ -300,8 +301,8 @@
   const dateTime = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '--';
   function revisionSummary(report) {
     if (!report) return '';
-    const published = report.status === 'PUBLISHED' ? `<span><b>发布状态</b>已发布 · ${report.publishedByName || '--'} · ${dateTime(report.publishedAt)}</span>` : `<span><b>当前状态</b>${statuses[report.status] || report.status}</span>`;
-    return `<span><b>日报日期</b>${report.businessDate}</span><span><b>最后编辑</b>${report.updatedByName || '--'} · ${dateTime(report.lastSavedAt || report.updatedAt)}</span>${published}`;
+    const published = report.status === 'PUBLISHED' ? `<span><b>发布状态</b>已发布 · ${dailyReportEscape(report.publishedByName || '--')} · ${dateTime(report.publishedAt)}</span>` : `<span><b>当前状态</b>${dailyReportEscape(statuses[report.status] || report.status)}</span>`;
+    return `<span><b>日报日期</b>${dailyReportEscape(report.businessDate)}</span><span><b>最后编辑</b>${dailyReportEscape(report.updatedByName || '--')} · ${dateTime(report.lastSavedAt || report.updatedAt)}</span>${published}`;
   }
   async function openRevisions() {
     const report = data?.report;
@@ -310,7 +311,7 @@
     if (!response.ok) { toast(response.status === 403 ? '当前账号没有日报查看权限' : '修改记录加载失败'); return; }
     const revisions = await response.json();
     document.querySelector('#daily-report-revisions-summary').innerHTML = revisionSummary(report);
-    document.querySelector('#daily-report-revisions-list').innerHTML = revisions.map(item => `<article class="daily-report-revision"><span class="daily-report-revision-version">V${item.revisionNo}</span><div><strong>${revisionAction[item.action] || item.action}</strong><p>${item.actorName || item.actorUserId || '--'} · ${dateTime(item.createdAt)}</p></div></article>`).join('') || '<p class="daily-report-revisions-empty">暂无修改记录</p>';
+    document.querySelector('#daily-report-revisions-list').innerHTML = revisions.map(item => `<article class="daily-report-revision"><span class="daily-report-revision-version">V${Number(item.revisionNo)}</span><div><strong>${dailyReportEscape(revisionAction[item.action] || item.action)}</strong><p>${dailyReportEscape(item.actorName || item.actorUserId || '--')} · ${dateTime(item.createdAt)}</p></div></article>`).join('') || '<p class="daily-report-revisions-empty">暂无修改记录</p>';
     document.querySelector('#daily-report-revisions-dialog').showModal();
   }
   function exportFilename(from, to) {
@@ -346,7 +347,7 @@
   function printReport() {
     const printWindow = window.open('', '_blank');
     if (!printWindow) { toast('请允许浏览器打开打印窗口'); return; }
-    printWindow.document.write(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${selectedStoreName()} 每日营业日报</title><link rel="stylesheet" href="${location.origin}/styles.css?v=20260915-next-optimization-v5"><link rel="stylesheet" href="${location.origin}/daily-report.css?v=20260915-next-optimization-v5"></head><body class="daily-report-print"><main class="workspace">${printableReport()}</main></body></html>`);
+    printWindow.document.write(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${dailyReportEscape(selectedStoreName())} 每日营业日报</title><link rel="stylesheet" href="${location.origin}/styles.css?v=20260915-next-optimization-v5"><link rel="stylesheet" href="${location.origin}/daily-report.css?v=20260915-next-optimization-v5"></head><body class="daily-report-print"><main class="workspace">${printableReport()}</main></body></html>`);
     printWindow.document.close();
     printWindow.addEventListener('load', () => { printWindow.focus(); printWindow.print(); });
   }

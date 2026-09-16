@@ -38,6 +38,7 @@ const seedRecords = ledgerConfig.seedRecords;
 let records = loadRecords();
 let currentFilter = 'all';
 const money = value => `¥${Number(value).toFixed(2)}`;
+const ledgerEscape = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[character]));
 
 function loadRecords() {
   try {
@@ -66,7 +67,7 @@ function renderRecords() {
     return matchesType && (!keyword || text.includes(keyword));
   });
   const table = document.querySelector('#ledger-records');
-  table.innerHTML = visible.map(record => `<tr><td>${record.at}</td><td><span class="record-type ${record.type}">${record.type === 'order' ? '订单金额' : '消费记录'}</span></td><td><b>${record.customer}</b></td><td class="muted-cell">${record.orderNo || '—'}</td><td>${record.note}</td><td class="align-right amount-cell">${money(record.amount)}</td><td><button class="record-delete" data-delete="${record.id}">删除</button></td></tr>`).join('');
+  table.innerHTML = visible.map(record => `<tr><td>${ledgerEscape(record.at)}</td><td><span class="record-type ${ledgerEscape(record.type)}">${record.type === 'order' ? '订单金额' : '消费记录'}</span></td><td><b>${ledgerEscape(record.customer)}</b></td><td class="muted-cell">${ledgerEscape(record.orderNo || '—')}</td><td>${ledgerEscape(record.note)}</td><td class="align-right amount-cell">${money(record.amount)}</td><td><button class="record-delete" data-delete="${ledgerEscape(record.id)}">删除</button></td></tr>`).join('');
   document.querySelector('#empty-records').classList.toggle('hidden', visible.length !== 0);
 }
 

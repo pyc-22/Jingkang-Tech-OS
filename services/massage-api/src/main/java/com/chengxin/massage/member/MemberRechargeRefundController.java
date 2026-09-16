@@ -11,11 +11,9 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.CrossOrigin;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -163,12 +161,6 @@ public class MemberRechargeRefundController {
   private String refundSql(String where) { return "select r.id,r.member_id,m.name member_name,m.phone member_phone,r.original_transaction_id,r.refund_no,r.status,r.amount_cents,r.bonus_reclaim_cents,r.reason,r.requested_by_name_snapshot,r.completed_by_name_snapshot,r.created_at,r.completed_at from member_recharge_refund r join member m on m.id=r.member_id " + where; }
   private ResponseStatusException bad(String message) { return new ResponseStatusException(HttpStatus.BAD_REQUEST, message); }
   private ResponseStatusException conflict(String message) { return new ResponseStatusException(HttpStatus.CONFLICT, message); }
-
-  @ExceptionHandler(ResponseStatusException.class)
-  ResponseEntity<java.util.Map<String, Object>> businessError(ResponseStatusException exception) {
-    return ResponseEntity.status(exception.getStatusCode()).body(java.util.Map.of(
-      "status", exception.getStatusCode().value(), "message", exception.getReason() == null ? "Request rejected" : exception.getReason()));
-  }
 
   record CreateInput(@NotNull UUID memberId, @NotNull UUID originalTransactionId, @NotNull @Min(1) Long amountCents, @NotBlank @Size(max=240) String reason, @NotBlank @Size(max=80) String requestKey) {}
   record RechargeTransaction(UUID id, UUID memberId, Long amountCents, UUID rechargeId, Long bonusAmountCents) {}

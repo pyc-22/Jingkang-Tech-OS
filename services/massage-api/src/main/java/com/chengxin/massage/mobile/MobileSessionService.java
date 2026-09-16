@@ -25,7 +25,7 @@ public class MobileSessionService {
 
   @Transactional
   LoginSession login(String loginName, String password) {
-    AppUser user = jdbc.sql("select id,display_name,password_hash from app_user where tenant_id=:tenant and login_name=:login and active=true")
+    AppUser user = jdbc.sql("select id,display_name,password_hash from app_user where tenant_id=:tenant and login_name=:login and active=true for share")
       .param("tenant", TENANT_ID).param("login", loginName).query(AppUser.class).optional()
       .orElseThrow(this::unauthorized);
     if (!matches(password, user.passwordHash())) throw unauthorized();

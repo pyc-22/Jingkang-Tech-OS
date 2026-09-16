@@ -4,6 +4,8 @@ import java.time.LocalDate;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,7 +17,19 @@ public class MonthlyCommissionTierService {
 
   MonthlyCommissionTierService(JdbcClient jdbc) { this.jdbc = jdbc; }
 
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void lockStore(UUID storeId) {
+    // A store gate gives multi-technician orders and reversals one lock order.
+    jdbc.sql("select pg_advisory_xact_lock(hashtextextended(:key,0))")
+      .param("key", "commission-store:" + storeId).query((rs, row) -> true).single();
+  }
+
+  @Transactional(propagation = Propagation.MANDATORY)
   public TierSnapshot resolve(UUID storeId, UUID technicianId, LocalDate businessDate, short clockAdjustment) {
+    lockStore(storeId);
+    jdbc.sql("select pg_advisory_xact_lock(hashtextextended(:key,0))")
+      .param("key", "commission-month:" + storeId + ":" + technicianId + ":" + businessDate.withDayOfMonth(1))
+      .query((rs, row) -> true).single();
     COMMISSION_LOG.info("monthlyTier.resolve entry storeId={} technicianId={} businessDate={} clockAdjustment={}", storeId, technicianId, businessDate, clockAdjustment);
     LocalDate monthStart = businessDate.withDayOfMonth(1);
     int priorClockCount = 0;
