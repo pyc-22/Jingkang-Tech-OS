@@ -9,10 +9,18 @@ try {
   if (Test-Path -LiteralPath $output) { throw "Output already exists: $output" }
   $jar = 'services/massage-api/target/massage-api-0.1.0.jar'
   if (-not (Test-Path -LiteralPath $jar)) { throw 'Build and test the release JAR first.' }
-  # Use tracked frontend paths so local exports, APKs and credentials stay out.
+  $apks = @('apps/massage-console/downloads/jingkang-technician.apk',
+    'apps/massage-console/downloads/jingkang-manager.apk')
+  foreach ($apk in $apks) {
+    if (-not (Test-Path -LiteralPath $apk -PathType Leaf) -or (Get-Item -LiteralPath $apk).Length -eq 0) {
+      throw "Required download APK is missing or empty: $apk"
+    }
+  }
+  # APKs are ignored build outputs, so include only the two published downloads explicitly.
   $files = @(git ls-files apps/massage-console services/massage-api/src/main/resources/db/migration |
     Where-Object { $_ -notlike '*/tests/*' })
   if ($LASTEXITCODE -ne 0) { throw 'Source file inventory failed.' }
+  $files += $apks
   $files += @($jar, 'server.massage.js', 'services/massage-api/src/main/resources/logback-spring.xml',
     'tools/maintenance/inspect_data_quality.sql', 'docs/reviews/2026-09-16/fix-batch1.md',
     'docs/reviews/2026-09-16/fix-batch2.md', 'docs/reviews/2026-09-16/fix-batch3.md',

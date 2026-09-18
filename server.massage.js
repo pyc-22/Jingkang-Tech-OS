@@ -42,7 +42,7 @@ http.createServer(async (req, res) => {
   if (!filePath.startsWith(root)) { res.writeHead(403).end(); return; }
   try {
     const body = await fs.readFile(filePath);
-    const headers = { 'Content-Type': mime[path.extname(filePath)] || 'application/octet-stream', 'Cache-Control': 'no-store' };
+    const headers = { 'Content-Type': mime[path.extname(filePath)] || 'application/octet-stream', 'Content-Length': body.length, 'Cache-Control': 'no-store' };
     if (path.extname(filePath) === '.apk') headers['Content-Disposition'] = `attachment; filename="${path.basename(filePath)}"`;
     res.writeHead(200, headers);
     res.end(body);

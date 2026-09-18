@@ -27,6 +27,8 @@ Debug APK 位于 `android/app/build/outputs/apk/debug/app-debug.apk`。根目录
 
 ## 发布注意事项
 
+下载页与 APK 的发布和排查步骤见 [Android 下载修复](android-downloads-fix.md)。APK 被 Git 忽略，仅部署 `git ls-files` 的清单会遗漏它们；发布包须显式携带两个下载文件并验证 HTTP 响应。
+
 - 正式 APK/AAB 必须使用受保护的发布签名；keystore 不提交仓库。
 - 远程域名和 `allowNavigation` 必须同步更新。
 - 发布前验证登录、页面导航、后台/锁屏派单提醒、服务提醒、网络恢复及系统权限拒绝场景。
