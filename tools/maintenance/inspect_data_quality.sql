@@ -1,4 +1,4 @@
--- PostgreSQL 16 / psql. Baseline: migrations through V94.
+-- PostgreSQL 16 / psql. Baseline: migrations through V99.
 -- Run in a NEW psql connection, preferably with a read-only database account.
 -- Optional -v store_id=UUID -v from_date=YYYY-MM-DD -v to_date=YYYY-MM-DD.
 -- Empty store_id means all stores. Default dates are the last 30 days, inclusive.
@@ -162,9 +162,9 @@ WITH params AS (
   FROM wallets w LEFT JOIN wallet_transaction t ON t.wallet_id=w.id
   GROUP BY w.id,w.balance_cents HAVING w.balance_cents<>coalesce(sum(t.amount_cents),0)
   UNION ALL
-  SELECT 'RECHARGE_OVER_REFUND',t.id::text,jsonb_build_object('principal',t.amount_cents,'reserved_refunds',sum(r.amount_cents))
+  SELECT 'RECHARGE_OVER_REFUND',t.id::text,jsonb_build_object('principal',coalesce(t.corrected_amount_cents,t.amount_cents),'reserved_refunds',sum(r.amount_cents))
   FROM member_recharge_refund r JOIN wallet_transaction t ON t.id=r.original_transaction_id JOIN wallets w ON w.id=t.wallet_id
-  WHERE r.status<>'CANCELLED' GROUP BY t.id,t.amount_cents HAVING sum(r.amount_cents)>t.amount_cents
+  WHERE r.status<>'CANCELLED' GROUP BY t.id,t.amount_cents HAVING sum(r.amount_cents)>coalesce(t.corrected_amount_cents,t.amount_cents)
   UNION ALL
   SELECT 'RECHARGE_REFUND_SCOPE',r.id::text,jsonb_build_object('transaction_id',t.id)
   FROM member_recharge_refund r JOIN wallet_transaction t ON t.id=r.original_transaction_id JOIN wallets w ON w.id=t.wallet_id

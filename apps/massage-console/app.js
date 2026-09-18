@@ -2711,6 +2711,7 @@ async function loadMemberCenter(){
 }
 function renderMemberProfile(profile){
   activeMemberProfile=profile;
+  renderMemberRechargeHistory(profile);
   const member=profile.member;
   const heading=document.querySelector('#member-profile-dialog .dialog-heading');
   heading?.querySelector('.dialog-heading-actions')?.remove();
@@ -2720,6 +2721,78 @@ function renderMemberProfile(profile){
   const consumptions=profile.transactions.filter(row=>row.transactionType==='CONSUMPTION');
   document.querySelector('#member-profile-transactions').innerHTML=consumptions.map(row=>`<tr><td>${memberCenterTime(row.createdAt)}</td><td><div class="member-recharge-cell"><b>${roomTransferEscape(row.serviceItems||'会员消费')}</b><small>${row.serviceEndedAt?roomTransferEscape(`服务结束 ${memberCenterTime(row.serviceEndedAt)}`):'订单消费'}</small></div></td><td>${roomTransferEscape(row.serviceTechnicianNames||row.technicianNameSnapshot||'未关联技师')}</td><td>${roomTransferEscape(row.roomNames||'—')}</td><td class="wallet-debit align-right">-${memberCenterAmount(Math.abs(row.amountCents))}</td><td class="amount-cell align-right">${memberCenterAmount(row.balanceAfterCents)}</td><td>${roomTransferEscape(row.orderNo||'—')}</td></tr>`).join('')||'<tr><td colspan="7" class="table-empty">当前门店暂无消费明细</td></tr>';
   document.querySelector('#member-profile-wallet-transactions').innerHTML=profile.transactions.map(row=>{const positive=Number(row.amountCents)>=0;const method=row.paymentMethodNameSnapshot||paymentMethodLabel[row.paymentMethod]||row.paymentMethod||'—';return `<tr><td>${memberCenterTime(row.createdAt)}</td><td><span class="record-type ${positive?'order':'consumption'}">${roomTransferEscape(walletTypeLabel[row.transactionType]||row.transactionType)}</span></td><td class="${positive?'wallet-credit':'wallet-debit'} align-right">${positive?'+':'-'}${memberCenterAmount(Math.abs(row.amountCents))}</td><td>${roomTransferEscape(method)}</td><td class="muted-cell">${roomTransferEscape(memberWalletAttribution(row))}</td></tr>`;}).join('')||'<tr><td colspan="5" class="table-empty">当前门店暂无资金流水</td></tr>';
+}
+function canCorrectMemberRecharge(){
+  return (isTenantAdmin()||adminRoles().includes('STORE_MANAGER'))&&hasAdminPermission('MEMBER_MANAGE');
+}
+function setupMemberRechargeCorrectionUi(){
+  if(document.querySelector('#member-recharge-correction-dialog'))return;
+  document.querySelector('.member-profile-wallet-ledger').insertAdjacentHTML('beforebegin','<section class="member-profile-ledger"><div class="member-profile-ledger-heading"><h3>充值记录</h3></div><div class="ledger-table-wrap"><table><thead><tr><th>充值营业日期</th><th class="align-right">充值金额</th><th>收款方式</th><th>备注</th><th class="align-right">操作</th></tr></thead><tbody id="member-recharge-history"></tbody></table></div></section>');
+  document.body.insertAdjacentHTML('beforeend','<dialog id="member-recharge-correction-dialog"><form id="member-recharge-correction-form" class="dialog-card compact"><div class="dialog-heading"><h2>修改充值记录</h2><button class="icon-button" type="button" data-close-recharge-correction aria-label="关闭">×</button></div><p id="member-recharge-correction-context"></p><div class="form-grid"><label>支付方式<select name="paymentMethod" required></select></label><label>充值金额（元）<input name="amount" type="number" min="0.01" step="0.01"></label><label class="form-full">修改原因<textarea name="reason" maxlength="240" required></textarea></label></div><div class="dialog-actions"><button class="button secondary" type="button" data-close-recharge-correction>取消</button><button class="button primary" type="submit">保存修改</button></div></form></dialog>');
+  document.querySelectorAll('[data-close-recharge-correction]').forEach(button=>button.addEventListener('click',()=>document.querySelector('#member-recharge-correction-dialog').close()));
+  document.querySelector('#member-recharge-history').addEventListener('click',event=>{
+    const button=event.target.closest('[data-recharge-correct]');
+    if(button&&!button.disabled)openMemberRechargeCorrection(button.dataset.rechargeCorrect);
+  });
+  document.querySelector('#member-recharge-correction-form').addEventListener('submit',submitMemberRechargeCorrection);
+}
+function renderMemberRechargeHistory(profile){
+  setupMemberRechargeCorrectionUi();
+  const recharges=profile.recharges??profile.transactions.filter(row=>row.transactionType==='RECHARGE');
+  document.querySelector('#member-recharge-history').innerHTML=recharges.map(row=>`<tr><td>${roomTransferEscape(row.businessDate||'待核对')}</td><td class="amount-cell align-right">${memberCenterAmount(row.rechargeAmountCents??row.amountCents)}</td><td>${roomTransferEscape(row.paymentMethodNameSnapshot||paymentMethodLabel[row.paymentMethod]||row.paymentMethod||'—')}</td><td>${roomTransferEscape(memberWalletAttribution(row))}</td><td class="align-right">${canCorrectMemberRecharge()?`<button class="record-delete edit-technician" type="button" data-recharge-correct="${roomTransferEscape(row.id)}" ${row.refundLocked?'disabled title="存在待退款或已退款记录"':''}>修改</button>`:''}${row.refundLocked?'<small class="muted-cell">退款锁定</small>':''}</td></tr>`).join('')||'<tr><td colspan="5" class="table-empty">当前门店暂无充值记录</td></tr>';
+}
+async function openMemberRechargeCorrection(id){
+  if(!canCorrectMemberRecharge()||!activeMemberProfile)return;
+  const recharges=activeMemberProfile.recharges??activeMemberProfile.transactions.filter(item=>item.transactionType==='RECHARGE');
+  const row=recharges.find(item=>item.id===id);
+  if(!row||row.refundLocked)return;
+  const form=document.querySelector('#member-recharge-correction-form');
+  form.reset();
+  form.dataset.memberId=activeMemberProfile.member.id;
+  form.dataset.rechargeId=id;
+  form.dataset.version=String(row.correctionVersion||0);
+  form.dataset.storeId=storeContextHeaders()['X-Store-Id']||'';
+  form.elements.amount.value=(Number(row.rechargeAmountCents??row.amountCents)/100).toFixed(2);
+  document.querySelector('#member-recharge-correction-context').textContent=`${activeMemberProfile.member.name} · 充值营业日期 ${row.businessDate||'待核对'}`;
+  try{
+    const response=await fetch('http://localhost:8080/api/v1/payment-methods',{headers:storeContextHeaders()});
+    if(!response.ok)throw new Error('PAYMENT_METHODS_FAILED');
+    const methods=(await response.json()).filter(item=>item.methodKind==='EXTERNAL'&&item.active!==false);
+    form.elements.paymentMethod.innerHTML='<option value="">请选择</option>'+methods.map(item=>`<option value="${roomTransferEscape(item.code)}">${roomTransferEscape(item.name)}</option>`).join('');
+    form.elements.paymentMethod.value=row.paymentMethod||'';
+    document.querySelector('#member-recharge-correction-dialog').showModal();
+  }catch{toast('支付方式加载失败，请重试');}
+}
+async function submitMemberRechargeCorrection(event){
+  event.preventDefault();
+  if(!canCorrectMemberRecharge())return;
+  const form=event.currentTarget;
+  if(form.dataset.storeId!==(storeContextHeaders()['X-Store-Id']||''))return toast('门店已切换，请重新打开充值记录');
+  const data=new FormData(form), reason=String(data.get('reason')||'').trim();
+  const rawAmount=String(data.get('amount')||'').trim();
+  const amountCents=rawAmount?Math.round(Number(rawAmount)*100):null;
+  if(!reason)return toast('请填写修改原因');
+  if(amountCents!==null&&(!Number.isSafeInteger(amountCents)||amountCents<=0))return toast('请输入有效充值金额');
+  if(!data.get('paymentMethod'))return toast('请选择支付方式');
+  const submit=form.querySelector('[type="submit"]');
+  if(submit.disabled)return;
+  submit.disabled=true;
+  try{
+    const response=await fetch(`http://localhost:8080/api/v1/members/${form.dataset.memberId}/recharges/${form.dataset.rechargeId}/correction`,{method:'PUT',headers:storeContextHeaders(true),body:JSON.stringify({paymentMethod:data.get('paymentMethod'),amountCents,reason,version:Number(form.dataset.version)})});
+    if(!response.ok){
+      const error=await response.json().catch(()=>({}));
+      const message=error.detail||error.message||'';
+      const reasons={'Recharge has a pending or completed refund':'该充值存在待退款或已退款记录','Insufficient wallet balance for this correction':'修改后会员余额不足','Recharge changed; refresh before correcting':'充值记录已变化，请重新打开后修改','No recharge values changed':'支付方式和金额均未变化'};
+      return toast(reasons[message]||(response.status===409?'记录已变化或余额不足，请刷新后重试':message||'充值修改失败'));
+    }
+    const result=await response.json();
+    state.members=state.members.map(member=>member.id===result.memberId?{...member,balance:result.balanceCents/100}:member);
+    document.querySelector('#member-recharge-correction-dialog').close();
+    renderMemberCard();
+    toast('充值记录已修改');
+    await Promise.all([loadMemberCenter(),openMemberProfile(result.memberId)]);
+  }catch{toast('请求异常，请刷新充值记录确认结果');}
+  finally{submit.disabled=false;}
 }
 function openMemberEditDialog(){
   if(!activeMemberProfile)return;
@@ -2811,7 +2884,7 @@ async function loadSalesOrders({resetPage=false}={}){
 }
 const refundKindLabel={FULL_REVERSAL:'整单退款'};
 async function loadRefundManagement(){const response=await fetch(`http://localhost:8080/api/v1/refunds?status=${refundManagementStatus}`,{headers:storeContextHeaders()});if(!response.ok){document.querySelector('#refund-management-records').innerHTML='<tr><td colspan="9" class="table-empty">退款与红冲记录加载失败</td></tr>';return;}const rows=await response.json();document.querySelector('#refund-management-records').innerHTML=rows.map(row=>{const refund=row.refund;const pending=row.payments.filter(payment=>payment.status==='PENDING');const hasCompleted=row.payments.some(payment=>payment.status==='COMPLETED');const paymentText=row.payments.map(payment=>`${paymentMethodLabel[payment.paymentMethod]||payment.paymentMethod}${payment.status==='PENDING'?'（待确认退款）':''}`).join('、');const actors=`${roomTransferEscape(refund.requestedByNameSnapshot||'—')}<small class="muted-cell">${refund.completedByNameSnapshot?roomTransferEscape(`完成：${refund.completedByNameSnapshot}`):'尚未完成'}</small>`;return `<tr><td><b>${roomTransferEscape(refund.refundNo)}</b><small class="muted-cell">${roomTransferEscape(refund.reason)}</small></td><td><span class="record-type ${refund.refundKind==='FULL_REVERSAL'?'refund-state':'consumption'}">${roomTransferEscape(refundKindLabel[refund.refundKind]||refund.refundKind)}</span></td><td><button class="record-delete edit-technician" data-order-detail="${roomTransferEscape(refund.orderId)}">${roomTransferEscape(refund.orderNo)}</button></td><td>${roomTransferEscape(refund.memberName||'散客')}<small class="muted-cell">${roomTransferEscape(refund.memberPhone||'')}</small></td><td>${roomTransferEscape(paymentText)}</td><td class="amount-cell refund-signed-amount">${signedMoneyCents(refund.signedTotalCents||-refund.totalCents)}</td><td>${actors}<small class="muted-cell">${new Date(refund.createdAt).toLocaleString('zh-CN')}</small></td><td><span class="record-type ${refund.status==='COMPLETED'?'order':refund.status==='PENDING'?'refund-state':'consumption'}">${refund.status==='PENDING'?'待确认退款':refund.status==='COMPLETED'?'已完成':'已取消'}</span></td><td class="align-right">${pending.map(payment=>`<button class="record-delete edit-technician" data-dashboard-confirm="${roomTransferEscape(refund.id)}" data-dashboard-payment="${roomTransferEscape(payment.id)}">确认${roomTransferEscape(paymentMethodLabel[payment.paymentMethod]||payment.paymentMethod)}</button>`).join('')}${refund.status==='PENDING'&&!hasCompleted?`<button class="record-delete" data-dashboard-cancel="${roomTransferEscape(refund.id)}">取消</button>`:''}</td></tr>`;}).join('')||'<tr><td colspan="9" class="table-empty">暂无符合条件的退款与红冲记录</td></tr>';}
-async function loadMemberWalletLedger(){const query=document.querySelector('#wallet-ledger-search').value.trim();const from=document.querySelector('#wallet-ledger-from').value;const to=document.querySelector('#wallet-ledger-to').value;const response=await fetch(`http://localhost:8080/api/v1/wallet-transactions?query=${encodeURIComponent(query)}&from=${from}&to=${to}`,{headers:storeContextHeaders()});if(!response.ok){document.querySelector('#wallet-ledger-records').innerHTML='<tr><td colspan="8" class="table-empty">资金账本加载失败</td></tr>';return;}const rows=await response.json();document.querySelector('#wallet-ledger-records').innerHTML=rows.map(row=>{const positive=Number(row.amountCents)>=0;const signed=`${positive?'+':'-'}${money(Math.abs(row.amountCents)/100)}`;const refundAction=row.transactionType==='RECHARGE'&&hasAdminPermission('ORDER_REFUND')?`<button class="record-delete" type="button" data-recharge-refund="${roomTransferEscape(row.id)}" data-recharge-member="${roomTransferEscape(row.memberId)}" data-recharge-name="${memberBusinessEscape(row.memberName)}" data-recharge-amount="${roomTransferEscape(row.amountCents)}">申请退款</button>`:'';return `<tr><td>${new Date(row.createdAt).toLocaleString('zh-CN')}</td><td><b>${roomTransferEscape(row.memberName)}</b><small class="muted-cell"> ${roomTransferEscape(row.memberPhone||row.memberCode)}</small></td><td><span class="record-type ${positive?'order':'consumption'}">${roomTransferEscape(walletTypeLabel[row.transactionType]||row.transactionType)}</span></td><td class="wallet-amount ${positive?'credit':'debit'}">${signed}</td><td>${money(row.balanceBeforeCents/100)}</td><td class="amount-cell">${money(row.balanceAfterCents/100)}</td><td>${roomTransferEscape(row.source||'—')}</td><td class="muted-cell">${roomTransferEscape(row.note||'—')} ${refundAction}</td></tr>`;}).join('')||'<tr><td colspan="8" class="table-empty">暂无符合条件的资金流水</td></tr>';}
+async function loadMemberWalletLedger(){const query=document.querySelector('#wallet-ledger-search').value.trim();const from=document.querySelector('#wallet-ledger-from').value;const to=document.querySelector('#wallet-ledger-to').value;const response=await fetch(`http://localhost:8080/api/v1/wallet-transactions?query=${encodeURIComponent(query)}&from=${from}&to=${to}`,{headers:storeContextHeaders()});if(!response.ok){document.querySelector('#wallet-ledger-records').innerHTML='<tr><td colspan="8" class="table-empty">资金账本加载失败</td></tr>';return;}const rows=await response.json();document.querySelector('#wallet-ledger-records').innerHTML=rows.map(row=>{const positive=Number(row.amountCents)>=0;const signed=`${positive?'+':'-'}${money(Math.abs(row.amountCents)/100)}`;const refundAction=row.transactionType==='RECHARGE'&&hasAdminPermission('ORDER_REFUND')?`<button class="record-delete" type="button" data-recharge-refund="${roomTransferEscape(row.id)}" data-recharge-member="${roomTransferEscape(row.memberId)}" data-recharge-name="${memberBusinessEscape(row.memberName)}" data-recharge-amount="${roomTransferEscape(row.rechargeAmountCents??row.amountCents)}">申请退款</button>`:'';return `<tr><td>${new Date(row.createdAt).toLocaleString('zh-CN')}</td><td><b>${roomTransferEscape(row.memberName)}</b><small class="muted-cell"> ${roomTransferEscape(row.memberPhone||row.memberCode)}</small></td><td><span class="record-type ${positive?'order':'consumption'}">${roomTransferEscape(walletTypeLabel[row.transactionType]||row.transactionType)}</span></td><td class="wallet-amount ${positive?'credit':'debit'}">${signed}</td><td>${money(row.balanceBeforeCents/100)}</td><td class="amount-cell">${money(row.balanceAfterCents/100)}</td><td>${roomTransferEscape(row.source||'—')}</td><td class="muted-cell">${roomTransferEscape(row.note||'—')} ${refundAction}</td></tr>`;}).join('')||'<tr><td colspan="8" class="table-empty">暂无符合条件的资金流水</td></tr>';}
 function setupMemberRechargeRefundUi(){if(document.querySelector('#member-recharge-refund-dialog'))return;document.querySelector('.refund-management-panel')?.insertAdjacentHTML('afterend','<section class="panel admin-table-panel member-recharge-refund-panel"><div class="admin-toolbar"><div><h2>充值退款管理</h2><p>充值退款确认后扣减会员余额，并形成独立资金流水</p></div><div class="segment-control" id="member-recharge-refund-filter"><button type="button" class="selected" data-member-recharge-refund-status="PENDING">待确认</button><button type="button" data-member-recharge-refund-status="COMPLETED">已完成</button><button type="button" data-member-recharge-refund-status="CANCELLED">已取消</button><button type="button" data-member-recharge-refund-status="ALL">全部</button></div></div><div class="ledger-table-wrap"><table><thead><tr><th>退款单号</th><th>会员</th><th>退款金额</th><th>原因</th><th>申请人</th><th>状态</th><th class="align-right">操作</th></tr></thead><tbody id="member-recharge-refund-records"><tr><td colspan="7" class="table-empty">打开经营管理后加载</td></tr></tbody></table></div></section>');document.body.insertAdjacentHTML('beforeend','<dialog id="member-recharge-refund-dialog"><form id="member-recharge-refund-form" class="dialog-card compact"><div class="dialog-heading"><div><p class="eyebrow">会员资金退款</p><h2 id="member-recharge-refund-title">充值退款</h2></div><button class="icon-button" type="button" id="close-member-recharge-refund" aria-label="关闭">×</button></div><div class="form-grid"><label>退款金额（元）<input name="amount" type="number" min="0.01" step="0.01" required></label><label class="form-full">退款原因<textarea name="reason" maxlength="240" required placeholder="请填写退款原因"></textarea></label></div><input name="memberId" type="hidden"><input name="transactionId" type="hidden"><div class="dialog-actions"><button class="button secondary" type="button" id="cancel-member-recharge-refund">取消</button><button class="button primary" type="submit">提交退款申请</button></div></form></dialog>');document.querySelector('#close-member-recharge-refund').addEventListener('click',()=>document.querySelector('#member-recharge-refund-dialog').close());document.querySelector('#cancel-member-recharge-refund').addEventListener('click',()=>document.querySelector('#member-recharge-refund-dialog').close());document.querySelector('#member-recharge-refund-form').addEventListener('submit',submitMemberRechargeRefund);document.querySelector('#member-recharge-refund-filter').addEventListener('click',event=>{const button=event.target.closest('[data-member-recharge-refund-status]');if(!button)return;memberRechargeRefundStatus=button.dataset.memberRechargeRefundStatus;document.querySelectorAll('[data-member-recharge-refund-status]').forEach(item=>item.classList.toggle('selected',item===button));loadMemberRechargeRefunds();});document.querySelector('#member-recharge-refund-records').addEventListener('click',handleMemberRechargeRefundAction);document.querySelector('#wallet-ledger-records').addEventListener('click',event=>{const button=event.target.closest('[data-recharge-refund]');if(button)openMemberRechargeRefund(button);});}
 let memberRechargeRefundStatus='PENDING';
 function openMemberRechargeRefund(button){const form=document.querySelector('#member-recharge-refund-form');form.reset();form.memberId.value=button.dataset.rechargeMember;form.transactionId.value=button.dataset.rechargeRefund;form.amount.value=(Number(button.dataset.rechargeAmount)/100).toFixed(2);form.amount.max=(Number(button.dataset.rechargeAmount)/100).toFixed(2);document.querySelector('#member-recharge-refund-title').textContent=`${button.dataset.rechargeName} · 充值退款`;document.querySelector('#member-recharge-refund-dialog').showModal();}

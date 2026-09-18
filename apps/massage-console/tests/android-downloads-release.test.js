@@ -18,6 +18,7 @@ function fixture(t, script) {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const files = [...releaseFiles, 'services/massage-api/target/massage-api-0.1.0.jar',
     'services/massage-api/src/main/resources/logback-spring.xml', 'tools/maintenance/inspect_data_quality.sql',
+    'docs/releases/20260918-member-recharge-correction-v1.md',
     ...qualityDocs.map(name => `docs/reviews/2026-09-16/${name}`), 'tools/release/' + script];
   for (const file of files) {
     const target = path.join(dir, file);

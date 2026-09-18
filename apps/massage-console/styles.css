@@ -673,6 +673,9 @@ dialog > .dialog-card {
 .refund-line-choice { cursor:default; }
 .form-grid label[hidden] { display:none !important; }
 .form-grid label.is-hidden { display:none !important; }
+#member-recharge-correction-context { margin:0 0 16px; color:var(--muted); font-size:12px; line-height:1.5; }
+#member-recharge-correction-form textarea { min-height:72px; resize:vertical; padding:8px; border:1px solid var(--line); border-radius:5px; color:var(--ink); background:#fff; font:inherit; font-size:12px; }
+#member-recharge-correction-form textarea:focus { border-color:#5e9d90; outline:0; box-shadow:0 0 0 3px rgba(8,123,115,.1); }
 @media (max-width:560px){.business-correction-change{grid-template-columns:minmax(0,1fr);}.business-correction-change>strong{transform:rotate(90deg);height:18px;}.business-correction-side b{white-space:normal;}.business-correction-history-heading{display:grid;gap:3px;}}
 
 /* 20260912 requirements 3/6/7: compact frontdesk layout, readable cards, automatic wrapping */

@@ -24,7 +24,8 @@ try {
   $files += @($jar, 'server.massage.js', 'services/massage-api/src/main/resources/logback-spring.xml',
     'tools/maintenance/inspect_data_quality.sql', 'docs/reviews/2026-09-16/fix-batch1.md',
     'docs/reviews/2026-09-16/fix-batch2.md', 'docs/reviews/2026-09-16/fix-batch3.md',
-    'docs/reviews/2026-09-16/final-fix-review.md', 'docs/reviews/2026-09-16/release-quality-v10.md')
+    'docs/reviews/2026-09-16/final-fix-review.md', 'docs/reviews/2026-09-16/release-quality-v10.md',
+    'docs/releases/20260918-member-recharge-correction-v1.md')
   foreach ($file in $files) {
     $target = Join-Path $output $file
     New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null

@@ -598,7 +598,7 @@ public class DailyOperatingReportController {
     }
     CardActivityRaw raw = jdbc.sql("""
       with ranked_recharges as (
-        select wt.store_id,wt.member_id,wt.business_date,wt.amount_cents,
+        select wt.store_id,wt.member_id,wt.business_date,coalesce(wt.corrected_amount_cents,wt.amount_cents) amount_cents,
           row_number() over(partition by wt.store_id,wt.member_id order by wt.created_at,wt.id) recharge_number
         from wallet_transaction wt
         where wt.transaction_type='RECHARGE'
@@ -610,7 +610,7 @@ public class DailyOperatingReportController {
         coalesce((select sum(amount_cents) from member_recharge_refund where store_id=:store and status='COMPLETED' and business_date between :from and :to),0) cancellation_cents,
         coalesce((select sum(-amount_cents) from wallet_transaction where store_id=:store and transaction_type='CONSUMPTION' and business_date between :from and :to),0) consumption_debit_cents,
         coalesce((select sum(amount_cents) from wallet_transaction where store_id=:store and transaction_type='REFUND' and source in ('ORDER_REFUND','ORDER_CORRECTION') and business_date between :from and :to),0) consumption_refund_cents,
-        coalesce((select sum(amount_cents) from wallet_transaction where store_id=:store and transaction_type='RECHARGE' and business_date between :from and :to),0)
+        coalesce((select sum(coalesce(corrected_amount_cents,amount_cents)) from wallet_transaction where store_id=:store and transaction_type='RECHARGE' and business_date between :from and :to),0)
           + coalesce((select sum(amount_cents) from wallet_transaction where store_id=:store and transaction_type='ADJUSTMENT' and source='RECHARGE_REFUND' and business_date between :from and :to),0) recharge_net_cents
       """).param("store", storeId).param("from", from).param("to", to).query(CardActivityRaw.class).single();
     return new CardActivity(raw.openCents(), raw.openCount(), raw.renewCents(), raw.cancellationCents(),
@@ -661,7 +661,7 @@ public class DailyOperatingReportController {
     List<NamedChannelRow> rechargeRows = jdbc.sql("""
       select coalesce(payment.payment_method,'UNSPECIFIED') code,
              coalesce(max(payment.payment_method_name_snapshot),case when payment.payment_method is null then '未指定' else payment.payment_method end) name,
-             coalesce(sum(payment.amount_cents),0) amount_cents
+             coalesce(sum(coalesce(payment.corrected_amount_cents,payment.amount_cents)),0) amount_cents
       from wallet_transaction payment
       where payment.store_id=:store and payment.transaction_type='RECHARGE'
         and payment.business_date between :from and :to

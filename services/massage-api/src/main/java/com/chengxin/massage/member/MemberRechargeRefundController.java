@@ -77,6 +77,9 @@ public class MemberRechargeRefundController {
     long prior = jdbc.sql("select coalesce(sum(amount_cents),0) from member_recharge_refund where original_transaction_id=:transaction and status <> 'CANCELLED'").param("transaction", original.id()).query(Long.class).single();
     if (input.amountCents() > original.amountCents() - prior) throw conflict("Refund amount exceeds remaining recharge amount");
     long bonusReclaim = bonusReclaim(original, input.amountCents());
+    // Also invalidate correction snapshots that started before this refund reservation.
+    jdbc.sql("update wallet_transaction set correction_version=correction_version+1 where id=:id")
+      .param("id", original.id()).update();
     UUID id = UUID.randomUUID(); String refundNo = "MRF" + System.currentTimeMillis();
     jdbc.sql("insert into member_recharge_refund(id,tenant_id,store_id,member_id,original_transaction_id,refund_no,request_key,status,amount_cents,bonus_reclaim_cents,reason,requested_by_user_id,requested_by_name_snapshot) values(:id,:tenant,:store,:member,:transaction,:no,:key,'PENDING',:amount,:bonus,:reason,:actor,:actorName)")
       .param("id", id).param("tenant", TENANT_ID).param("store", store).param("member", input.memberId()).param("transaction", original.id()).param("no", refundNo).param("key", input.requestKey()).param("amount", input.amountCents()).param("bonus", bonusReclaim).param("reason", input.reason().trim()).param("actor", actor.userId()).param("actorName", actor.displayName()).update();
@@ -136,7 +139,7 @@ public class MemberRechargeRefundController {
 
   private RechargeTransaction lockRecharge(UUID store, UUID member, UUID transaction) {
     return jdbc.sql("""
-      select wt.id,wt.member_id,wt.amount_cents,wt.recharge_id,
+      select wt.id,wt.member_id,coalesce(wt.corrected_amount_cents,wt.amount_cents) amount_cents,wt.recharge_id,
         coalesce((select sum(b.amount_cents) from wallet_transaction b where b.recharge_id=wt.id
           and b.transaction_type='BONUS' and b.wallet_id=wt.wallet_id and b.member_id=wt.member_id
           and b.store_id=wt.store_id and b.tenant_id=wt.tenant_id),0) bonus_amount_cents

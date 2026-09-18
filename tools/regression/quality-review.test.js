@@ -17,7 +17,7 @@ const store = '22222222-2222-2222-2222-222222222222';
 const item = '50000000-0000-0000-0000-000000000001';
 const technician = '30000000-0000-0000-0000-000000000001';
 const password = randomBytes(24).toString('base64url');
-let dir, connection, base, app, consoleApp, consoleBase, started = false, admin, cashier, reader, mobile, coveragePort;
+let dir, connection, base, app, consoleApp, consoleBase, started = false, admin, cashier, reader, manager, mobile, coveragePort;
 const coverage = process.env.REVIEW_COVERAGE === '1';
 const jacocoRoot = path.join(process.env.USERPROFILE, '.m2/repository/org/jacoco');
 const jacocoAgent = path.join(jacocoRoot, 'org.jacoco.agent/0.8.12/org.jacoco.agent-0.8.12-runtime.jar');
@@ -149,7 +149,7 @@ test.before(async () => {
   const salt = randomBytes(16);
   const hash = `PBKDF2$310000$${salt.toString('base64url')}$${pbkdf2Sync(password, salt, 310000, 32, 'sha256').toString('base64url')}`;
   sql(`INSERT INTO role(id,tenant_id,code,name) VALUES(gen_random_uuid(),'${tenant}','REVIEW_READER','Review reader');`);
-  for (const [name, role] of [['review-admin', 'TENANT_ADMIN'], ['review-cashier', 'CASHIER'], ['review-reader', 'REVIEW_READER']]) {
+  for (const [name, role] of [['review-admin', 'TENANT_ADMIN'], ['review-cashier', 'CASHIER'], ['review-reader', 'REVIEW_READER'], ['review-manager', 'STORE_MANAGER']]) {
     const user = randomUUID();
     sql(`INSERT INTO app_user(id,tenant_id,login_name,display_name,password_hash) VALUES('${user}','${tenant}','${name}','Review fixture','${hash}');
       INSERT INTO user_role SELECT '${user}',id FROM role WHERE code='${role}';
@@ -158,12 +158,15 @@ test.before(async () => {
   admin = ok(await api('/api/v1/admin/auth/login', { loginName: 'review-admin', password }, null)).accessToken;
   cashier = ok(await api('/api/v1/admin/auth/login', { loginName: 'review-cashier', password }, null)).accessToken;
   reader = ok(await api('/api/v1/admin/auth/login', { loginName: 'review-reader', password }, null)).accessToken;
+  manager = ok(await api('/api/v1/admin/auth/login', { loginName: 'review-manager', password }, null)).accessToken;
   assert.ok(admin && cashier && reader, 'Login must return all fixture tokens');
   sql(`UPDATE app_user SET password_hash='${hash}' WHERE login_name='tech-liqing';`);
   mobile = ok(await api('/api/v1/mobile/auth/login', { loginName: 'tech-liqing', password }, null)).accessToken;
   assert.ok(mobile);
   // Fix the fixture business cutoff to midnight, independently of runner timezone.
   sql("UPDATE store SET business_day_cutoff='00:00',timezone='UTC';");
+  sql(`INSERT INTO store_payment_method(id,tenant_id,store_id,code,name,method_kind)
+    VALUES(gen_random_uuid(),'${tenant}','${store}','ALIPAY','Alipay','EXTERNAL');`);
 });
 
 test.after(async () => {
@@ -200,8 +203,8 @@ test('authentication and normal member permission boundary', async () => {
 test('release health and complete Flyway migrations succeed on an empty database', async () => {
   const health = ok(await api('/api/health', undefined, null));
   assert.equal(health.status, 'UP');
-  assert.equal(health.release, '20260916-quality-batch3-v10');
-  assert.equal(sql("SELECT version FROM flyway_schema_history WHERE success=true ORDER BY installed_rank DESC LIMIT 1;"), '98');
+  assert.equal(health.release, '20260918-member-recharge-correction-v1');
+  assert.equal(sql("SELECT version FROM flyway_schema_history WHERE success=true ORDER BY installed_rank DESC LIMIT 1;"), '99');
   assert.equal(sql("SELECT convalidated FROM pg_constraint WHERE conname='service_bed_room_ownership';"), 't');
   assert.equal(sql("SELECT convalidated FROM pg_constraint WHERE conname='service_bed_requires_room';"), 't');
 });
@@ -709,4 +712,253 @@ test('inspection rejects reversed dates before scanning or changing business dat
   assert.match(result.stderr, /from_date must be on or before to_date/);
   assert.doesNotMatch(result.stdout, /INSPECTION_COMPLETE_READ_ONLY/);
   assert.equal(counts(), before);
+});
+
+function correctRecharge(member, overrides = {}, token = manager, headers = {}) {
+  return api(`/api/v1/members/${member.id}/recharges/${original(member)}/correction`,
+    {paymentMethod:'ALIPAY',reason:'Reviewed historical payment',version:0,...overrides}, token, headers, 'PUT');
+}
+
+test('recharge correction: manager updates original-day channels, persisted report and audit only', async () => {
+  const member = await newMember(10000,2000), recharge = original(member), date='2020-02-03';
+  sql(`UPDATE wallet_transaction SET business_date='${date}' WHERE member_id='${member.id}';
+    INSERT INTO daily_operating_report(id,tenant_id,store_id,business_date,status,manager_count,incident_note)
+    VALUES(gen_random_uuid(),'${tenant}','${store}','${date}','PUBLISHED',5,'preserved');
+    INSERT INTO daily_operating_report(id,tenant_id,store_id,business_date)
+    VALUES(gen_random_uuid(),'${tenant}','${store}',current_date) ON CONFLICT(store_id,business_date) DO NOTHING;`);
+  const today = sql('SELECT current_date::text;');
+  const todayReport = ok(await api(`/api/v1/daily-reports?date=${today}`));
+  const untouched = sql(`SELECT jsonb_agg(to_jsonb(r) ORDER BY id)::text FROM daily_operating_report r WHERE NOT(store_id='${store}' AND business_date='${date}');`);
+  const beforeLedger = sql(`SELECT amount_cents||':'||balance_before_cents||':'||balance_after_cents||':'||created_at FROM wallet_transaction WHERE id='${recharge}';`);
+  const changed = ok(await correctRecharge(member));
+  assert.equal(changed.businessDate,date); assert.equal(changed.balanceCents,12000); assert.equal(changed.adjustmentId,null);
+  const historical = ok(await api(`/api/v1/daily-reports?date=${date}`));
+  assert.equal(historical.currentValues.dailyCashFlowCents,10000);
+  assert.equal(historical.paymentChannels.find(c=>c.code==='CASH').rechargeCents,0);
+  assert.equal(historical.paymentChannels.find(c=>c.code==='ALIPAY').rechargeCents,10000);
+  assert.equal(historical.report.dailyAlipayCents,10000); assert.equal(historical.report.dailyCashCents,0);
+  assert.equal(historical.report.status,'PUBLISHED'); assert.equal(historical.report.managerCount,5);
+  assert.equal(historical.report.incidentNote,'preserved');
+  assert.deepEqual(ok(await api(`/api/v1/daily-reports?date=${today}`)),todayReport);
+  assert.equal(sql(`SELECT jsonb_agg(to_jsonb(r) ORDER BY id)::text FROM daily_operating_report r WHERE NOT(store_id='${store}' AND business_date='${date}');`),untouched);
+  assert.equal(sql(`SELECT amount_cents||':'||balance_before_cents||':'||balance_after_cents||':'||created_at FROM wallet_transaction WHERE id='${recharge}';`),beforeLedger);
+  const audit = JSON.parse(sql(`SELECT json_build_object('before',before_data,'after',after_data,'actor',actor_user_id,'at',created_at)::text FROM audit_log WHERE action='MEMBER_RECHARGE_CORRECTED' AND entity_id='${recharge}';`));
+  assert.equal(audit.before.businessDate,date); assert.equal(audit.after.businessDate,date);
+  assert.equal(audit.before.paymentMethod,'CASH'); assert.equal(audit.after.paymentMethod,'ALIPAY');
+  assert.equal(audit.before.amountCents,10000); assert.equal(audit.after.amountCents,10000);
+  assert.equal(audit.after.reason,'Reviewed historical payment'); assert.ok(audit.at);
+  assert.equal(audit.actor,sql("SELECT id FROM app_user WHERE login_name='review-manager';"));
+});
+
+test('recharge correction: principal changes preserve the ledger, bonus and refund ceiling', async () => {
+  const member = await newMember(10000,2000), recharge = original(member), date='2020-02-04';
+  sql(`UPDATE wallet_transaction SET business_date='${date}' WHERE member_id='${member.id}';
+    INSERT INTO daily_operating_report(id,tenant_id,store_id,business_date)
+    VALUES(gen_random_uuid(),'${tenant}','${store}','${date}');`);
+  const today = ok(await api('/api/v1/operations/daily-report'));
+  const increased = ok(await correctRecharge(member,{amountCents:15000}));
+  assert.equal(increased.balanceCents,17000);
+  assert.equal(sql(`SELECT daily_card_sale_cents||':'||daily_card_open_cents||':'||daily_alipay_cents FROM daily_operating_report WHERE store_id='${store}' AND business_date='${date}';`),'15000:15000:15000');
+  assert.equal(sql(`SELECT amount_cents||':'||balance_before_cents||':'||balance_after_cents||':'||business_date FROM wallet_transaction WHERE id='${increased.adjustmentId}';`),`5000:12000:17000:${date}`);
+  const decreased = ok(await correctRecharge(member,{amountCents:8000,version:1},admin));
+  assert.equal(decreased.balanceCents,10000);
+  assert.equal(sql(`SELECT daily_card_sale_cents||':'||daily_card_open_cents||':'||daily_alipay_cents FROM daily_operating_report WHERE store_id='${store}' AND business_date='${date}';`),'8000:8000:8000');
+  assert.equal(sql(`SELECT count(*) FROM wallet_transaction WHERE member_id='${member.id}' AND balance_before_cents+amount_cents<>balance_after_cents;`),'0');
+  assert.equal(sql(`SELECT sum(amount_cents) FROM wallet_transaction WHERE member_id='${member.id}';`),'10000');
+  assert.equal(sql(`SELECT amount_cents FROM wallet_transaction WHERE member_id='${member.id}' AND transaction_type='BONUS';`),'2000');
+  const profile = ok(await api(`/api/v1/members/${member.id}/profile`));
+  assert.equal(profile.member.rechargeCents,8000); assert.equal(profile.member.lastRechargeCents,8000);
+  assert.equal(profile.transactions.find(t=>t.id===recharge).rechargeAmountCents,8000);
+  const report = ok(await api(`/api/v1/operations/daily-report?date=${date}`));
+  assert.equal(report.rechargeAmountCents,8000);
+  const detail = ok(await api(`/api/v1/daily-reports?date=${date}`));
+  assert.equal(detail.currentValues.dailyCardOpenCents,8000); assert.equal(detail.currentValues.dailyCashFlowCents,8000);
+  assert.deepEqual(ok(await api('/api/v1/operations/daily-report')),today);
+  assert.equal((await refund(member,9000)).status,409);
+  const request = ok(await refund(member,8000));
+  ok(await api(`/api/v1/member-recharge-refunds/${request.id}/complete`,{}));
+  assert.equal(sql(`SELECT balance_cents FROM member_wallet WHERE member_id='${member.id}';`),'0');
+  const raised=await newMember(10000), raisedId=original(raised);
+  ok(await correctRecharge(raised,{amountCents:15000}));
+  const raisedRefund=ok(await refund(raised,15000));
+  ok(await api(`/api/v1/member-recharge-refunds/${raisedRefund.id}/complete`,{}));
+  const output = command('psql',[...connection,'-Atq','-v','from_date=2020-02-04','-f',path.join(root,'tools/maintenance/inspect_data_quality.sql')]);
+  for (const check of ['RECHARGE_OVER_REFUND','WALLET_ROW_EQUATION']) {
+    const line=output.split(/\r?\n/).find(line=>line.startsWith(check+'|'));
+    assert.ok(line,check);
+    assert.ok(!JSON.parse(line.split('|')[3]).some(row=>[recharge,raisedId].includes(row.id)),line);
+  }
+});
+
+test('recharge correction: original recharge remains accessible after more than 200 wallet entries', async () => {
+  const member=await newMember(), recharge=original(member);
+  sql(`UPDATE wallet_transaction SET created_at=now()-interval '2 years',business_date='2020-02-06' WHERE id='${recharge}';
+    INSERT INTO wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,source,business_date)
+    SELECT gen_random_uuid(),'${tenant}','${store}',w.id,'${member.id}','ADJUSTMENT',0,10000,10000,'REVIEW_FIXTURE',current_date
+    FROM member_wallet w CROSS JOIN generate_series(1,201) WHERE w.member_id='${member.id}';`);
+  const profile=ok(await api(`/api/v1/members/${member.id}/profile`));
+  assert.equal(profile.transactions.length,200);
+  assert.ok(!profile.transactions.some(row=>row.id===recharge));
+  assert.equal(profile.recharges.length,1); assert.equal(profile.recharges[0].id,recharge);
+  assert.equal(ok(await correctRecharge(member)).businessDate,'2020-02-06');
+});
+
+test('recharge correction: historical renewal changes renewal totals without changing opening principal', async () => {
+  const member=await newMember(), date='2020-02-07';
+  sql(`UPDATE wallet_transaction SET business_date='2020-02-06' WHERE member_id='${member.id}';`);
+  ok(await api(`/api/v1/members/${member.id}/recharges`,{amountCents:20000,bonusCents:0,paymentMethod:'CASH'}));
+  const renewal=sql(`SELECT id FROM wallet_transaction WHERE member_id='${member.id}' AND transaction_type='RECHARGE' ORDER BY created_at DESC LIMIT 1;`);
+  sql(`UPDATE wallet_transaction SET business_date='${date}' WHERE id='${renewal}';
+    INSERT INTO daily_operating_report(id,tenant_id,store_id,business_date) VALUES(gen_random_uuid(),'${tenant}','${store}','${date}');`);
+  ok(await api(`/api/v1/members/${member.id}/recharges/${renewal}/correction`,
+    {paymentMethod:'WECHAT',amountCents:18000,reason:'Reviewed renewal',version:0},manager,{},'PUT'));
+  const report=ok(await api(`/api/v1/daily-reports?date=${date}`));
+  assert.equal(report.currentValues.dailyCardOpenCents,0); assert.equal(report.currentValues.dailyCardRenewCents,18000);
+  assert.equal(report.report.dailyCardRenewCents,18000);
+  assert.equal(report.paymentChannels.find(c=>c.code==='WECHAT').rechargeCents,18000);
+  assert.equal(sql(`SELECT balance_cents FROM member_wallet WHERE member_id='${member.id}';`),'28000');
+  assert.equal(sql(`SELECT coalesce(corrected_amount_cents,amount_cents) FROM wallet_transaction WHERE id='${original(member)}';`),'10000');
+});
+
+test('recharge correction: role, matrix path and cross-store boundaries prevent writes', async () => {
+  const member=await newMember(), recharge=original(member), before=counts();
+  assert.equal((await correctRecharge(member,{},cashier)).status,403);
+  assert.equal((await api(`/api/v1/members;test=1/${member.id}/recharges/${recharge}/correction`,
+    {paymentMethod:'ALIPAY',reason:'review',version:0},cashier,{},'PUT')).status,403);
+  const other=randomUUID();
+  sql(`INSERT INTO store(id,tenant_id,name,code) VALUES('${other}','${tenant}','Correction boundary','${other}');`);
+  assert.equal((await correctRecharge(member,{},manager,{'X-Store-Id':other})).status,403);
+  assert.equal((await correctRecharge(member,{},admin,{'X-Store-Id':other})).status,404);
+  assert.equal((await api(`/api/v1/members/${randomUUID()}/recharges/${recharge}/correction`,
+    {paymentMethod:'ALIPAY',reason:'review',version:0},admin,{},'PUT')).status,404);
+  assert.equal(counts(),before);
+  assert.equal(sql(`SELECT correction_version FROM wallet_transaction WHERE id='${recharge}';`),'0');
+});
+
+test('recharge correction: mandatory reason, valid amount, channel and optimistic version', async () => {
+  const member=await newMember(), recharge=original(member);
+  for(const input of [{reason:' '},{amountCents:0},{amountCents:-1},{version:null}]) {
+    assert.equal((await correctRecharge(member,input)).status,400);
+  }
+  assert.equal((await correctRecharge(member,{paymentMethod:'MEMBER_BALANCE'})).status,422);
+  assert.equal((await correctRecharge(member,{paymentMethod:'NOT_A_METHOD'})).status,422);
+  assert.equal((await correctRecharge(member,{paymentMethod:'CASH'})).status,409);
+  assert.equal((await correctRecharge(member,{version:1})).status,409);
+  assert.equal(sql(`SELECT count(*) FROM audit_log WHERE entity_id='${recharge}' AND action='MEMBER_RECHARGE_CORRECTED';`),'0');
+  ok(await correctRecharge(member));
+  assert.equal((await correctRecharge(member,{amountCents:20000})).status,409);
+});
+
+test('recharge correction: pending and completed refunds block changes; cancelled refunds permit correction', async () => {
+  const member=await newMember(), recharge=original(member);
+  const pending=ok(await refund(member,100));
+  assert.equal((await correctRecharge(member,{version:1})).status,409);
+  ok(await api(`/api/v1/member-recharge-refunds/${pending.id}/cancel`,{}));
+  ok(await correctRecharge(member,{version:1}));
+  const second=ok(await refund(member,100));
+  ok(await api(`/api/v1/member-recharge-refunds/${second.id}/complete`,{}));
+  const version=Number(sql(`SELECT correction_version FROM wallet_transaction WHERE id='${recharge}';`));
+  assert.equal((await correctRecharge(member,{paymentMethod:'CASH',version})).status,409);
+  assert.equal(ok(await api(`/api/v1/members/${member.id}/profile`)).transactions.find(t=>t.id===recharge).refundLocked,true);
+});
+
+test('recharge correction: spent principal cannot make wallet negative and rejection is atomic', async () => {
+  const member=await newMember(), recharge=original(member);
+  sql(`INSERT INTO wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,source,business_date)
+    SELECT gen_random_uuid(),'${tenant}','${store}',id,'${member.id}','ADJUSTMENT',-9000,10000,1000,'REVIEW_FIXTURE',current_date
+    FROM member_wallet WHERE member_id='${member.id}'; UPDATE member_wallet SET balance_cents=1000 WHERE member_id='${member.id}';`);
+  const before=sql(`SELECT row_to_json(t)::text FROM wallet_transaction t WHERE id='${recharge}';`), count=counts();
+  assert.equal((await correctRecharge(member,{amountCents:8999})).status,409);
+  assert.equal(counts(),count);
+  assert.equal(sql(`SELECT row_to_json(t)::text FROM wallet_transaction t WHERE id='${recharge}';`),before);
+  assert.equal(ok(await correctRecharge(member,{amountCents:9000})).balanceCents,0);
+});
+
+test('recharge correction: two sessions editing one version apply only one financial delta', async () => {
+  const member=await newMember();
+  const results=await Promise.all([correctRecharge(member,{amountCents:12000},manager),correctRecharge(member,{amountCents:13000},admin)]);
+  assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);
+  const winner=results.find(r=>r.status===200).data;
+  assert.equal(sql(`SELECT balance_cents FROM member_wallet WHERE member_id='${member.id}';`),String(winner.amountCents));
+  assert.equal(sql(`SELECT count(*) FROM wallet_transaction WHERE member_id='${member.id}' AND source='RECHARGE_CORRECTION';`),'1');
+});
+
+test('recharge correction: a concurrent refund reservation invalidates the correction snapshot', async () => {
+  const member=await newMember(), recharge=original(member);
+  sql(`CREATE FUNCTION review_correction_refund_barrier() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF NEW.member_id='${member.id}'::uuid THEN PERFORM pg_sleep(2); END IF; RETURN NEW; END $$;
+    CREATE TRIGGER review_correction_refund_barrier BEFORE INSERT ON member_recharge_refund FOR EACH ROW EXECUTE FUNCTION review_correction_refund_barrier();`);
+  try {
+    const pending=refund(member,8000,admin);
+    let sleeping=false;
+    for(let n=0;n<40;n++) {
+      sleeping=sql("SELECT exists(select 1 from pg_stat_activity where wait_event='PgSleep' and query like 'insert into member_recharge_refund%');")==='t';
+      if(sleeping)break;
+      await delay(50);
+    }
+    assert.ok(sleeping,'refund must hold the principal before correction starts');
+    const correction=correctRecharge(member,{amountCents:1000});
+    ok(await pending);
+    assert.equal((await correction).status,409);
+    assert.equal(sql(`SELECT coalesce(corrected_amount_cents,amount_cents) FROM wallet_transaction WHERE id='${recharge}';`),'10000');
+  } finally { sql('DROP TRIGGER review_correction_refund_barrier ON member_recharge_refund; DROP FUNCTION review_correction_refund_barrier();'); }
+});
+
+test('recharge correction: audit persistence failure rolls back principal, wallet, ledger and report', async () => {
+  const member=await newMember(), recharge=original(member), date='2020-02-05';
+  sql(`UPDATE wallet_transaction SET business_date='${date}' WHERE id='${recharge}';
+    INSERT INTO daily_operating_report(id,tenant_id,store_id,business_date) VALUES(gen_random_uuid(),'${tenant}','${store}','${date}');
+    CREATE FUNCTION review_correction_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF NEW.action='MEMBER_RECHARGE_CORRECTED' AND NEW.entity_id='${recharge}'::uuid THEN RAISE EXCEPTION 'fixture audit failure'; END IF; RETURN NEW; END $$;
+    CREATE TRIGGER review_correction_audit_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION review_correction_audit_failure();`);
+  const snapshot=()=>sql(`SELECT json_build_object('principal',(SELECT row_to_json(t) FROM wallet_transaction t WHERE id='${recharge}'),
+    'wallet',(SELECT row_to_json(w) FROM member_wallet w WHERE member_id='${member.id}'),
+    'report',(SELECT row_to_json(r) FROM daily_operating_report r WHERE store_id='${store}' AND business_date='${date}'))::text;`);
+  const before=snapshot(), count=counts();
+  try { assert.equal((await correctRecharge(member,{amountCents:12000})).status,500); assert.equal(snapshot(),before); assert.equal(counts(),count); }
+  finally { sql('DROP TRIGGER review_correction_audit_failure ON audit_log; DROP FUNCTION review_correction_audit_failure();'); }
+});
+
+if (process.env.REVIEW_BROWSER) test('recharge correction: real browser manager edit, mobile layout and cashier visibility', async () => {
+  const {chromium}=require(process.env.REVIEW_BROWSER);
+  const browser=await chromium.launch({channel:'chrome',headless:true});
+  const errors=[];
+  try {
+    for(const width of [1440,390]) {
+      const member=await newMember(), recharge=original(member);
+      sql(`UPDATE wallet_transaction SET business_date='2020-02-08' WHERE id='${recharge}';`);
+      const page=await browser.newPage({viewport:{width,height:900}});
+      page.on('pageerror',error=>errors.push(error.message));
+      await page.addInitScript(({token,store})=>{
+        if(!localStorage.getItem('chengxin-admin-access-token'))localStorage.setItem('chengxin-admin-access-token',token);
+        localStorage.setItem('chengxin-current-store-id',store);
+      },{token:manager,store});
+      await page.goto(consoleBase);
+      await page.waitForFunction(()=>typeof frontdeskLoginRequired!=='undefined'&&!frontdeskLoginRequired);
+      await page.evaluate(id=>openMemberProfile(id),member.id);
+      await page.locator(`[data-recharge-correct="${recharge}"]`).click();
+      const dialog=page.locator('#member-recharge-correction-dialog');
+      await dialog.waitFor({state:'visible'});
+      const box=await dialog.boundingBox();
+      assert.ok(box.x>=0&&box.x+box.width<=width+1&&box.y>=0&&box.y+box.height<=900);
+      assert.equal(await dialog.evaluate(element=>element.scrollWidth<=element.clientWidth+1),true);
+      await dialog.locator('[name=paymentMethod]').selectOption('ALIPAY');
+      await dialog.locator('[name=amount]').fill('125.00');
+      await dialog.locator('[name=reason]').fill('Browser historical correction');
+      await page.screenshot({path:path.join(dir,`recharge-dialog-${width}.png`)});
+      const response=page.waitForResponse(r=>r.url().endsWith(`/${recharge}/correction`)&&r.request().method()==='PUT');
+      await dialog.locator('[type=submit]').click();
+      assert.equal((await response).status(),200);
+      await page.waitForFunction(()=>!document.querySelector('#member-recharge-correction-dialog').open);
+      await page.waitForFunction(()=>document.querySelector('#member-recharge-history').textContent.includes('125.00'));
+      assert.equal(sql(`SELECT balance_cents FROM member_wallet WHERE member_id='${member.id}';`),'12500');
+      await page.evaluate(token=>localStorage.setItem('chengxin-admin-access-token',token),cashier);
+      await page.reload();
+      await page.waitForFunction(()=>typeof frontdeskLoginRequired!=='undefined'&&!frontdeskLoginRequired);
+      await page.evaluate(id=>openMemberProfile(id),member.id);
+      assert.equal(await page.locator('[data-recharge-correct]').count(),0);
+      await page.close();
+    }
+    assert.deepEqual(errors,[]);
+  } finally {await browser.close();}
 });
