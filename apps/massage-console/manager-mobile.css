@@ -55,7 +55,34 @@ h1,h2,p { margin:0; } h1 { margin-top:5px; font-size:25px; line-height:1.15; } h
 [data-manager-page-panel][hidden] { display:none !important; }
 .expense-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
 .expense-heading .manager-section-kicker { margin:0 0 3px; color:#168276; font-size:9px; font-weight:800; }.expense-heading > div > p:last-child { margin-top:4px; color:var(--muted); font-size:10px; }.expense-heading button { display:flex; align-items:center; gap:4px; white-space:nowrap; }.expense-heading button span { font-size:15px; line-height:1; }
-.manager-expense-summary { display:grid; grid-template-columns:1fr 1fr 1fr; gap:1px; overflow:hidden; border:1px solid #e1ebe7; border-radius:5px; background:#e1ebe7; }.manager-expense-summary article { min-width:0; min-height:74px; padding:10px; background:#f8fbfa; }.manager-expense-summary article:nth-child(2) { background:#eef8f5; }.manager-expense-summary article:nth-child(3) { background:#fff5e7; }.manager-expense-summary span,.manager-expense-summary small { display:block; color:#788781; font-size:9px; }.manager-expense-summary strong { display:block; margin:8px 0 4px; color:#23564d; font-size:17px; font-variant-numeric:tabular-nums; }.manager-expense-summary article:nth-child(3) strong { color:#a3631f; }
+.manager-expense-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin:12px 0; }
+.manager-expense-summary button { min-width:0; padding:12px 4px; border:1px solid #dce6e3; border-radius:6px; background:#fff; text-align:center; cursor:pointer; }
+.manager-expense-summary button[aria-pressed="true"] { border-color:#16806c; background:#edf8f4; }
+.manager-expense-summary span,.manager-expense-summary small { display:block; color:#74827c; font-size:10px; }
+.manager-expense-summary strong { display:block; margin:10px 0 6px; color:#263c35; font-size:20px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.manager-expense-summary button:first-child strong { font-size:15px; }
+.manager-expense-summary button:nth-child(2) strong { color:#b16a12; }
+.manager-expense-summary button:nth-child(3) strong { color:#2678ab; }
+.manager-expense-summary button:nth-child(4) strong { color:#16806c; }
+.expense-date-range { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.expense-date-range label { display:grid; gap:6px; color:#63746c; font-size:12px; min-width:0; }
+.expense-date-range input { width:100%; min-width:0; box-sizing:border-box; min-height:40px; padding:6px; border:1px solid #ccd9d4; border-radius:4px; background:#fff; }
+#manager-expense-browser .expense-toolbar { grid-template-columns:minmax(0,1fr) auto auto; }
+#manager-expense-browser .expense-toolbar label { font-size:12px; }
+#manager-expense-browser .expense-toolbar select { font-size:13px; min-height:38px; }
+.expense-card-main { display:flex; align-items:start; gap:10px; }
+.expense-card-body { flex:1; min-width:0; }
+.expense-card-title { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 12px; }
+.expense-card-title b { font-size:14px; overflow-wrap:anywhere; }
+.expense-card-title strong { font-size:16px; color:#234e42; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.expense-card-reference { display:flex; flex-wrap:wrap; gap:4px 10px; margin-top:8px; color:#74837d; font-size:11px; overflow-wrap:anywhere; }
+.expense-card-main .expense-status { flex:none; font-size:11px; }
+#manager-expense-list .expense-row-actions button { min-height:32px; font-size:12px; }
+#manager-expense-list article.PAID { border-left-color:#16806c; }
+#manager-expense-list article.APPROVED { border-left-color:#8168aa; }
+#manager-expense-list article.REJECTED { border-left-color:#c35555; }
+#manager-expense-list article.WITHDRAWN { border-left-color:#8e9692; }
+.expense-page-footer { display:grid; justify-items:center; gap:10px; padding:18px 0; color:#74837d; font-size:12px; }
 .manager-secondary-button,.manager-primary-button,.manager-quiet-button { min-height:30px; padding:0 10px; border:0; border-radius:4px; cursor:pointer; font-size:11px; font-weight:700; }
 .manager-secondary-button { color:#17685f; background:#e6f2ef; }.manager-secondary-button:hover { background:#d6eae5; }
 .manager-primary-button { color:#fff; background:var(--teal); }.manager-primary-button:hover { background:var(--teal-dark); }

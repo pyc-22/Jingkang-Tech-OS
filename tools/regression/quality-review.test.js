@@ -19,6 +19,7 @@ const technician = '30000000-0000-0000-0000-000000000001';
 const password = randomBytes(24).toString('base64url');
 let dir, connection, base, app, consoleApp, consoleBase, started = false, admin, cashier, reader, manager, mobile, coveragePort;
 const coverage = process.env.REVIEW_COVERAGE === '1';
+require('./expense-workspace.cases')({test,sql,api,ok,context:()=>({tenant,store,base,consoleBase,admin,manager,cashier,reader,dir,password})});
 const jacocoRoot = path.join(process.env.USERPROFILE, '.m2/repository/org/jacoco');
 const jacocoAgent = path.join(jacocoRoot, 'org.jacoco.agent/0.8.12/org.jacoco.agent-0.8.12-runtime.jar');
 const jacocoCli = process.env.JACOCO_CLI || path.join(jacocoRoot, 'org.jacoco.cli/0.8.12/org.jacoco.cli-0.8.12-nodeps.jar');
@@ -203,8 +204,8 @@ test('authentication and normal member permission boundary', async () => {
 test('release health and complete Flyway migrations succeed on an empty database', async () => {
   const health = ok(await api('/api/health', undefined, null));
   assert.equal(health.status, 'UP');
-  assert.equal(health.release, '20260918-member-recharge-correction-v1');
-  assert.equal(sql("SELECT version FROM flyway_schema_history WHERE success=true ORDER BY installed_rank DESC LIMIT 1;"), '99');
+  assert.equal(health.release, '20260918-expense-workspace-v1');
+  assert.equal(sql("SELECT version FROM flyway_schema_history WHERE success=true ORDER BY installed_rank DESC LIMIT 1;"), '100');
   assert.equal(sql("SELECT convalidated FROM pg_constraint WHERE conname='service_bed_room_ownership';"), 't');
   assert.equal(sql("SELECT convalidated FROM pg_constraint WHERE conname='service_bed_requires_room';"), 't');
 });

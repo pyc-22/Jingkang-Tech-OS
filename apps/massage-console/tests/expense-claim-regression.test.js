@@ -11,10 +11,11 @@ const index = fs.readFileSync(path.join(root, 'apps/massage-console/index.html')
 const financeController = fs.readFileSync(path.join(root, 'services/massage-api/src/main/java/com/chengxin/massage/operations/FinanceExpenseClaimController.java'), 'utf8');
 
 test('manager expense summary excludes non-effective claim states', () => {
-  assert.match(manager, /managerExpenseAccountingStatuses=\['SUBMITTED','APPROVED','PAID'\]/);
-  assert.match(manager, /rows\.filter\(row=>managerExpenseAccountingStatuses\.includes\(row\.status\)\)/);
+  const query = fs.readFileSync(path.join(root, 'services/massage-api/src/main/java/com/chengxin/massage/operations/ExpenseClaimQueryService.java'), 'utf8');
+  assert.match(query, /sum\(c.amount_cents\) filter\(where c.status in \('SUBMITTED','APPROVED','PAID'\)\)/);
+  assert.match(manager, /summary\.effectiveAmountCents/);
   assert.match(managerHtml, />有效申请金额</);
-  assert.match(manager, /不计入有效金额/);
+  assert.match(manager, /renderManagerExpenseSummary\(result.summary\)/);
 });
 
 test('finance claim browser exposes manager, date, number and attachment workflows', () => {

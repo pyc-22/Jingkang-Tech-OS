@@ -529,7 +529,7 @@ async function loadManagerDashboard({manual=false}={}) {
     await managerOptionalTask(loadManagerStoreComparison);
     await managerOptionalTask(loadManagerStoreAlerts);
     await managerOptionalTask(loadManagerCrossStoreTransactions);
-    if(canViewExpenses) await managerOptionalTask(loadManagerExpenses);
+    if(canViewExpenses) await managerOptionalTask(()=>loadManagerExpenses(false,!manual));
     if(manual) managerToast('经营数据已刷新');
     return true;
   } catch(error) {
@@ -602,7 +602,6 @@ let managerExpenseCategories=[];
 let managerExpenseEditingId=null;
 let managerExpenseDetail=null;
 const managerExpenseStatusLabel={DRAFT:'\u8349\u7A3F',SUBMITTED:'\u5F85\u5BA1\u6838',RETURNED:'\u5DF2\u9000\u56DE',APPROVED:'\u5DF2\u901A\u8FC7',REJECTED:'\u5DF2\u9A73\u56DE',PAID:'\u5DF2\u4ED8\u6B3E',WITHDRAWN:'\u5DF2\u64A4\u56DE'};
-const managerExpenseAccountingStatuses=['SUBMITTED','APPROVED','PAID'];
 const managerExpenseEscape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const managerExpenseMoney=cents=>`\u00a5${(Number(cents||0)/100).toFixed(2)}`;
 const managerExpenseToday=()=>{const now=new Date();return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;};
@@ -610,8 +609,20 @@ const managerExpenseCategoryName=id=>managerExpenseCategories.find(item=>item.id
 async function managerExpenseError(response){try{const body=await response.json();const message=body.message||body.error||`HTTP_${response.status}`;return message==='Internal Server Error'?'服务器处理报销资料失败，请刷新后重试':message;}catch{return `HTTP_${response.status}`;}}
 async function loadManagerExpenseCategories(){managerExpenseCategories=await managerJson('/expense-claims/categories');const select=document.querySelector('#manager-expense-category');if(!select)return;const pending=managerExpenseCategories.find(item=>item.code==='PENDING_FINANCE_CLASSIFICATION');const specific=managerExpenseCategories.filter(item=>item.code!=='PENDING_FINANCE_CLASSIFICATION');select.innerHTML=(pending?`<option value="${managerEscape(pending.id)}">\u5F85\u8D22\u52A1\u5206\u7C7B\uFF08\u4E0D\u786E\u5B9A\u65F6\u9009\u62E9\uFF09</option>`:'')+specific.map(item=>`<option value="${managerEscape(item.id)}">${managerExpenseEscape(item.name)}${item.categoryLevel===1?' - \u5927\u7C7B':''}</option>`).join('');syncManagerExpenseReceiptPolicy();}
 function renderManagerExpenseAttachments(attachments=[]){const target=document.querySelector('#manager-expense-attachments');if(!target)return;target.innerHTML=attachments.map(item=>`<article><span>${managerExpenseEscape(item.originalFilename)} · ${(Number(item.fileSizeBytes||0)/1024).toFixed(0)} KB</span><button type="button" data-expense-attachment="${managerEscape(item.id)}">\u5220\u9664</button></article>`).join('');}
-function renderManagerExpenseSummary(rows=[]){const amount=rows.filter(row=>managerExpenseAccountingStatuses.includes(row.status)).reduce((sum,row)=>sum+Number(row.amountCents||0),0);const pending=rows.filter(row=>row.status==='SUBMITTED').length;document.querySelector('#manager-expense-visible-count').textContent=rows.length;document.querySelector('#manager-expense-visible-amount').textContent=managerExpenseMoney(amount);document.querySelector('#manager-expense-pending-count').textContent=pending;}
-function renderManagerExpenseList(rows=[]){const target=document.querySelector('#manager-expense-list');if(!target)return;target.innerHTML=rows.map(row=>{const status=row.status||'DRAFT';const canEdit=managerHasPermission('EXPENSE_SUBMIT')&&(status==='DRAFT'||status==='RETURNED');const canSubmit=canEdit;const canWithdraw=managerHasPermission('EXPENSE_SUBMIT')&&status==='SUBMITTED';const statusHint=status==='SUBMITTED'?'等待财务审核':status==='APPROVED'?'等待付款':status==='PAID'?'已完成付款':managerExpenseAccountingStatuses.includes(status)?'已进入有效金额':'不计入有效金额';return `<article class="expense-card ${status}"><div class="expense-row-head"><span class="expense-category-mark" aria-hidden="true">¥</span><div><b>${managerExpenseEscape(row.categoryName||managerExpenseCategoryName(row.expenseCategoryId))}</b><small>${managerExpenseEscape(row.expenseDate)} · ${managerExpenseEscape(row.claimNo)}</small></div><strong>${managerExpenseMoney(row.amountCents)}</strong></div><div class="expense-row-meta"><span class="expense-status ${status}">${managerEscape(managerExpenseStatusLabel[status]||status)}</span><small>${statusHint}</small></div><div class="expense-row-actions">${canEdit?`<button type="button" data-expense-edit="${managerEscape(row.id)}">编辑</button>`:''}${canSubmit?`<button type="button" data-expense-submit="${managerEscape(row.id)}">提交审核</button>`:''}${canWithdraw?`<button class="danger" type="button" data-expense-withdraw="${managerEscape(row.id)}">撤回</button>`:''}<button type="button" data-expense-detail="${managerEscape(row.id)}">详情</button></div></article>`;}).join('')||'<p class="comparison-empty">暂无报销记录</p>';}
+function renderManagerExpenseSummary(summary) {
+  document.querySelector('#manager-expense-visible-amount').textContent=(Number(summary.effectiveAmountCents||0)/100).toFixed(2);
+  document.querySelector('#manager-expense-pending-count').textContent=summary.pendingCount;
+  document.querySelector('#manager-expense-approved-count').textContent=summary.approvedCount;
+  document.querySelector('#manager-expense-paid-count').textContent=summary.paidCount;
+  document.querySelectorAll('[data-expense-status]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.expenseStatus===document.querySelector('#manager-expense-status').value)));
+}
+function renderManagerExpenseList(rows=[]) {
+  const target=document.querySelector('#manager-expense-list');
+  target.innerHTML=rows.map(row=>{
+    const status=row.status||'DRAFT', editable=managerHasPermission('EXPENSE_SUBMIT')&&['DRAFT','RETURNED'].includes(status);
+    return `<article class="expense-card ${managerEscape(status)}"><div class="expense-card-main"><div class="expense-card-body"><div class="expense-card-title"><b>${managerExpenseEscape(row.categoryName)}</b><strong>${managerExpenseMoney(row.amountCents)}</strong></div><div class="expense-card-reference"><span>${managerExpenseEscape(row.claimNo)}</span><time>${managerExpenseEscape(ExpenseUI.time(row.submittedAt))}</time></div></div><span class="expense-status ${managerEscape(status)}">${managerExpenseStatusLabel[status]||managerExpenseEscape(status)}</span></div><div class="expense-row-actions">${editable?`<button type="button" data-expense-edit="${managerEscape(row.id)}">编辑</button><button type="button" data-expense-submit="${managerEscape(row.id)}">提交审核</button>`:''}${managerHasPermission('EXPENSE_SUBMIT')&&status==='SUBMITTED'?`<button class="danger" type="button" data-expense-withdraw="${managerEscape(row.id)}">撤回</button>`:''}<button type="button" data-expense-detail="${managerEscape(row.id)}">详情</button></div></article>`;
+  }).join('')||'<p class="comparison-empty">暂无报销记录</p>';
+}
 async function loadManagerExpenses(){if(!managerHasPermission('EXPENSE_STORE_VIEW'))return;const status=document.querySelector('#manager-expense-status')?.value||'';const [rows]=await Promise.all([managerJson(`/expense-claims?status=${encodeURIComponent(status)}`),managerExpenseCategories.length?Promise.resolve():loadManagerExpenseCategories()]);renderManagerExpenseList(rows);}
 function managerExpenseFormReset(){const form=document.querySelector('#manager-expense-form');form.reset();document.querySelector('#manager-expense-date').value=managerExpenseToday();document.querySelector('#manager-expense-editor-title').textContent='\u65B0\u589E\u62A5\u9500';document.querySelector('#manager-expense-reason-field').classList.add('hidden');document.querySelector('#manager-expense-attachments').innerHTML='';managerExpenseEditingId=null;managerExpenseDetail=null;}
 async function openManagerExpenseEditor(id=null){if(!managerHasPermission('EXPENSE_SUBMIT'))return managerToast('\u5F53\u524D\u8D26\u53F7\u6CA1\u6709\u62A5\u9500\u6743\u9650');await loadManagerExpenseCategories();managerExpenseFormReset();if(id){const detail=await managerJson(`/expense-claims/${id}`);const claim=detail.claim;managerExpenseEditingId=id;managerExpenseDetail=detail;const form=document.querySelector('#manager-expense-form');form.elements.expenseCategoryId.value=claim.expenseCategoryId;form.elements.expenseDate.value=claim.expenseDate;form.elements.amount.value=(Number(claim.amountCents||0)/100).toFixed(2);form.elements.paymentSource.value=claim.paymentSource;form.elements.receiptType.value=claim.receiptType;form.elements.payeeName.value=claim.payeeName||'';form.elements.invoiceNo.value=claim.invoiceNo||'';form.elements.description.value=claim.description||'';form.elements.noReceiptReason.value=claim.noReceiptReason||'';document.querySelector('#manager-expense-editor-title').textContent='\u7F16\u8F91\u62A5\u9500';renderManagerExpenseAttachments(detail.attachments||[]);}document.querySelector('#manager-expense-browser').classList.add('hidden');document.querySelector('#manager-expense-editor').classList.remove('hidden');toggleManagerExpenseReason();document.querySelector('#manager-expense-editor').scrollIntoView({behavior:'smooth',block:'start'});}
@@ -648,9 +659,62 @@ async function previewManagerExpenseDetailAttachment(id,name,type){const respons
 async function submitManagerExpenseFromDetail(id){const data=await managerJson(`/expense-claims/${id}`);const claim=data.claim||{};const attachments=data.attachments||[];if(claim.receiptType==='NO_RECEIPT'&&!String(claim.noReceiptReason||'').trim())return managerToast('无票报销必须填写无票说明');if(claim.receiptType==='NO_RECEIPT'&&!attachments.some(item=>item.attachmentKind==='NO_RECEIPT_EXPLANATION'))return managerToast('无票报销必须上传说明凭证');if(claim.receiptType!=='NO_RECEIPT'&&!attachments.some(item=>item.attachmentKind==='EXPENSE_PROOF'))return managerToast('请先上传发票或收据凭证');if(!window.confirm('确认提交该报销？'))return;await managerExpenseAction(id,'submit','提交');document.querySelector('#manager-expense-detail-dialog').close();}
 document.querySelector('#manager-expense-detail-close').addEventListener('click',()=>document.querySelector('#manager-expense-detail-dialog').close());document.querySelector('#manager-expense-list').addEventListener('click',event=>{const detail=event.target.closest('[data-expense-detail]');if(!detail)return;event.preventDefault();event.stopImmediatePropagation();openManagerExpenseDetail(detail.dataset.expenseDetail).catch(()=>managerToast('报销详情加载失败'));},true);document.querySelector('#manager-expense-detail-content').addEventListener('click',event=>{const file=event.target.closest('[data-detail-attachment]');if(file)return previewManagerExpenseDetailAttachment(file.dataset.detailAttachment,file.dataset.detailAttachmentName,file.dataset.detailAttachmentType).catch(()=>managerToast('附件预览失败'));});document.querySelector('#manager-expense-detail-actions').addEventListener('click',event=>{const edit=event.target.closest('[data-detail-edit]');if(edit){document.querySelector('#manager-expense-detail-dialog').close();return openManagerExpenseEditor(edit.dataset.detailEdit).catch(()=>managerToast('报销编辑加载失败'));}const submit=event.target.closest('[data-detail-submit]');if(submit)return submitManagerExpenseFromDetail(submit.dataset.detailSubmit).catch(()=>managerToast('提交失败，请稍后重试'));const withdraw=event.target.closest('[data-detail-withdraw]');if(withdraw){if(!window.confirm('确认撤回该报销？'))return;return managerExpenseAction(withdraw.dataset.detailWithdraw,'withdraw','撤回').then(()=>document.querySelector('#manager-expense-detail-dialog').close());}});
 
-let managerExpenseSyncSnapshot=new Map();
-let managerExpenseSyncInitialized=false;
-async function loadManagerExpenses(){if(!managerHasPermission('EXPENSE_STORE_VIEW'))return;const status=document.querySelector('#manager-expense-status')?.value||'';const [rows]=await Promise.all([managerJson(`/expense-claims?status=${encodeURIComponent(status)}`),managerExpenseCategories.length?Promise.resolve():loadManagerExpenseCategories()]);const changed=managerExpenseSyncInitialized&&rows.some(row=>managerExpenseSyncSnapshot.get(row.id)&&managerExpenseSyncSnapshot.get(row.id)!==row.status)||(managerExpenseSyncInitialized&&rows.length!==managerExpenseSyncSnapshot.size);managerExpenseSyncSnapshot=new Map(rows.map(row=>[row.id,row.status]));managerExpenseSyncInitialized=true;renderManagerExpenseSummary(rows);renderManagerExpenseList(rows);if(changed){managerToast('报销状态已更新，请查看详情');if(navigator.vibrate)navigator.vibrate(140);}const sync=document.querySelector('#manager-sync-time');if(sync)sync.textContent=`${new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date())} 已同步`;}
+let managerExpenseRows=[], managerExpensePage=0, managerExpenseTotal=0, managerExpenseRequest=0, managerExpenseLoading=false;
+let managerExpenseFiltersReady=false, managerExpenseQueryKey='';
+function initManagerExpenseFilters() {
+  if(managerExpenseFiltersReady)return;
+  let saved={};try{saved=JSON.parse(localStorage.getItem('manager-expense-filters')||'{}')||{};}catch{}
+  const defaults=ExpenseUI.range();
+  for(const key of ['from','to'])document.querySelector('#manager-expense-'+key).value=/^\d{4}-\d{2}-\d{2}$/.test(saved[key]||'')?saved[key]:defaults[key];
+  document.querySelector('#manager-expense-status').value=saved.status||'';
+  managerExpenseFiltersReady=true;
+}
+function managerExpenseQuery() {
+  const values={};for(const key of ['from','to','status'])values[key]=document.querySelector('#manager-expense-'+key).value;
+  try{localStorage.setItem('manager-expense-filters',JSON.stringify(values));}catch{}
+  return new URLSearchParams(values);
+}
+document.querySelectorAll('#manager-expense-from,#manager-expense-to').forEach(input=>input.addEventListener('change',()=>loadManagerExpenses()));
+document.querySelectorAll('[data-expense-status]').forEach(button=>button.addEventListener('click',()=>{
+  const select=document.querySelector('#manager-expense-status');select.value=select.value===button.dataset.expenseStatus?'':button.dataset.expenseStatus;loadManagerExpenses();
+}));
+document.querySelector('#manager-expense-more').addEventListener('click',()=>loadManagerExpenses(true));
+if('IntersectionObserver' in window)new IntersectionObserver(entries=>{
+  if(entries.some(entry=>entry.isIntersecting)&&!managerExpenseLoading&&managerExpenseRows.length<managerExpenseTotal)loadManagerExpenses(true);
+},{rootMargin:'0px'}).observe(document.querySelector('#manager-expense-more'));
+document.querySelector('#manager-expense-export').addEventListener('click',async event=>{
+  const button=event.currentTarget;button.disabled=true;
+  try{await ExpenseUI.download(`${managerApi}/expense-claims/export?${managerExpenseQuery()}`,managerStoreHeaders());}
+  catch(error){managerToast(error.message);}finally{button.disabled=false;}
+});
+async function loadManagerExpenses(append=false,background=false) {
+  if(!managerHasPermission('EXPENSE_STORE_VIEW'))return;
+  if(append&&managerExpenseLoading)return;
+  initManagerExpenseFilters();
+  const query=managerExpenseQuery();
+  const key=JSON.stringify(managerStoreHeaders())+query.toString();
+  if(background&&key===managerExpenseQueryKey&&(managerExpenseLoading||managerExpensePage>0))return;
+  const request=++managerExpenseRequest;
+  managerExpenseLoading=false;
+  document.querySelector('#manager-expense-more').disabled=false;
+  if(query.get('from')>query.get('to'))return managerToast('开始日期应早于或等于结束日期');
+  const scope=JSON.stringify(managerStoreHeaders()), page=append?managerExpensePage+1:0;
+  managerExpenseLoading=true;
+  document.querySelector('#manager-expense-more').disabled=true;
+  query.set('page',page);query.set('size','20');
+  try {
+    const [result]=await Promise.all([managerJson(`/expense-claims/page?${query}`),managerExpenseCategories.length?Promise.resolve():loadManagerExpenseCategories()]);
+    if(request!==managerExpenseRequest||scope!==JSON.stringify(managerStoreHeaders()))return;
+    managerExpenseRows=append?managerExpenseRows.concat(result.items):result.items;
+    managerExpenseQueryKey=key;
+    managerExpensePage=page;managerExpenseTotal=result.total;
+    renderManagerExpenseSummary(result.summary);renderManagerExpenseList(managerExpenseRows);
+    document.querySelector('#manager-expense-progress').textContent=`已加载 ${managerExpenseRows.length} 条 / 共 ${result.total} 条`;
+    document.querySelector('#manager-expense-more').hidden=managerExpenseRows.length>=result.total;
+    const sync=document.querySelector('#manager-sync-time');if(sync)sync.textContent=ExpenseUI.time(new Date())+' 已同步';
+  } catch(error) { if(request===managerExpenseRequest)managerToast(error.message||'报销记录加载失败'); }
+  finally { if(request===managerExpenseRequest){managerExpenseLoading=false;document.querySelector('#manager-expense-more').disabled=false;} }
+}
 
 if(localStorage.getItem(managerTokenKey))loadManagerStores(); else showManagerLogin();
 

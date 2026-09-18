@@ -120,6 +120,21 @@ public class FinanceExpenseClaimController {
     return review(id, "APPROVED", input == null ? null : input.comment(), authorization);
   }
 
+  @PostMapping("/batch-review")
+  @Transactional
+  List<FinanceClaimDetail> batchReview(@Valid @RequestBody BatchReviewInput input,
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+    sessions.requirePermission(authorization, "EXPENSE_REVIEW");
+    sessions.requirePermission(authorization, "EXPENSE_ALL_STORE_VIEW");
+    requireComment(input.comment(), "请填写统一审核意见");
+    if (!List.of("APPROVED", "REJECTED").contains(input.action())) throw bad("批量操作仅支持通过或驳回");
+    if (input.ids().stream().distinct().count() != input.ids().size()) throw bad("报销单重复");
+    // Stable lock order prevents two overlapping batches from deadlocking.
+    List<UUID> ids = input.ids().stream().sorted().toList();
+    for (UUID id : ids) lockClaim(id);
+    return ids.stream().map(id -> review(id, input.action(), input.comment().trim(), authorization)).toList();
+  }
+
   @PostMapping("/{id}/return")
   @Transactional
   FinanceClaimDetail returnClaim(
@@ -230,13 +245,15 @@ public class FinanceExpenseClaimController {
 
   private FinanceClaimDetail review(UUID id, String targetStatus, String comment, String authorization) {
     UUID actor = sessions.requireAuthenticatedUserId(authorization);
+    lockClaim(id);
     ExpenseClaimController.ClaimRow before = claim(id);
     if (!"SUBMITTED".equals(before.status())) throw conflict("Only submitted claims can be reviewed");
     if ("APPROVED".equals(targetStatus) && "PENDING_FINANCE_CLASSIFICATION".equals(categoryInfo(before.expenseCategoryId(), false).code())) {
       throw conflict("Please classify this expense claim before approval");
     }
-    jdbc.sql("update expense_claim set status=:status,reviewed_by_user_id=:actor,reviewed_at=now(),review_note=:note,updated_at=now(),version=version+1 where id=:id and status='SUBMITTED'")
+    int changed = jdbc.sql("update expense_claim set status=:status,reviewed_by_user_id=:actor,reviewed_at=now(),review_note=:note,updated_at=now(),version=version+1 where id=:id and status='SUBMITTED'")
       .param("id", id).param("status", targetStatus).param("actor", actor).param("note", blankToNull(comment)).update();
+    if (changed != 1) throw conflict("报销状态已变化，请刷新后重试");
     ExpenseClaimController.ClaimRow updated = claim(id);
     String action = "APPROVED".equals(targetStatus) ? "APPROVE" : ("RETURNED".equals(targetStatus) ? "RETURN" : "REJECT");
     history(id, actor, action, before.status(), updated.status(), comment, updated);
@@ -257,6 +274,11 @@ public class FinanceExpenseClaimController {
   private ExpenseClaimController.ClaimRow claim(UUID id) {
     return jdbc.sql("select c.id,c.claim_no,c.store_id,s.name store_name,c.applicant_user_id,applicant.display_name applicant_name,c.expense_category_id,coalesce(parent.name || ' / ','') || category.name category_name,c.expense_date,c.amount_cents,c.payee_name,c.payment_source,c.receipt_type,c.invoice_no,c.description,c.no_receipt_reason,c.status,c.duplicate_warning::text duplicate_warning,c.submitted_at,c.reviewed_by_user_id,c.reviewed_at,c.review_note,c.created_at,c.updated_at,c.version from expense_claim c join store s on s.id=c.store_id join app_user applicant on applicant.id=c.applicant_user_id join expense_category category on category.id=c.expense_category_id left join expense_category parent on parent.id=category.parent_id where c.id=:id and c.tenant_id=:tenant")
       .param("id", id).param("tenant", TENANT_ID).query(ExpenseClaimController.ClaimRow.class).optional().orElseThrow(() -> notFound("Expense claim not found"));
+  }
+
+  private void lockClaim(UUID id) {
+    jdbc.sql("select id from expense_claim where id=:id and tenant_id=:tenant for update")
+      .param("id", id).param("tenant", TENANT_ID).query(UUID.class).optional().orElseThrow(() -> notFound("Expense claim not found"));
   }
 
   private CategoryInfo categoryInfo(UUID id, boolean activeOnly) {
@@ -284,6 +306,8 @@ public class FinanceExpenseClaimController {
   private ResponseStatusException notFound(String message) { return new ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, message); }
 
   public record ReviewInput(@Size(max = 2000) String comment) {}
+  public record BatchReviewInput(@NotNull @Size(min = 1, max = 100) List<@NotNull UUID> ids,
+                                @NotBlank String action, @NotBlank @Size(max = 2000) String comment) {}
   public record CategoryAssignmentInput(@NotNull UUID categoryId, @Size(max = 2000) String comment) {}
   public record PaymentInput(@NotNull @Positive Long amountCents, @NotBlank @Size(max = 50) String paymentMethod, @NotNull LocalDate paymentDate, @Size(max = 160) String paymentReference, @Size(max = 2000) String note) {}
   public record FinanceClaimSummary(UUID id, String claimNo, UUID storeId, String storeName, UUID expenseCategoryId, String categoryName, LocalDate expenseDate, Long amountCents, String payeeName, String receiptType, String status, OffsetDateTime submittedAt, OffsetDateTime updatedAt, UUID applicantUserId, String applicantName, Long attachmentCount, Boolean hasExpenseProof) {}

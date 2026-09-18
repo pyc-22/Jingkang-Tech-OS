@@ -23,6 +23,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -40,10 +43,14 @@ public class FinanceExpenseReportController {
   private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
   private final JdbcClient jdbc;
   private final AdminSessionService sessions;
+  private final TransactionTemplate snapshot;
 
-  FinanceExpenseReportController(JdbcClient jdbc, AdminSessionService sessions) {
+  FinanceExpenseReportController(JdbcClient jdbc, AdminSessionService sessions, PlatformTransactionManager transactions) {
     this.jdbc = jdbc;
     this.sessions = sessions;
+    this.snapshot = new TransactionTemplate(transactions);
+    this.snapshot.setReadOnly(true);
+    this.snapshot.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
   }
 
   @GetMapping("/summary")
@@ -54,7 +61,7 @@ public class FinanceExpenseReportController {
       @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
     requireFinanceAccess(authorization);
     DateRange range = dateRange(from, to);
-    return loadSummary(range, storeId);
+    return snapshot.execute(status -> loadSummary(range, storeId));
   }
 
   @GetMapping("/export")
@@ -65,6 +72,10 @@ public class FinanceExpenseReportController {
       @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
     requireFinanceAccess(authorization);
     DateRange range = dateRange(from, to);
+    return snapshot.execute(status -> exportSnapshot(range, storeId));
+  }
+
+  private ResponseEntity<byte[]> exportSnapshot(DateRange range, UUID storeId) {
     FinanceExpenseSummary summary = loadSummary(range, storeId);
     List<ExpenseExportRow> details = loadDetails(range, storeId);
     String scopeName = storeId == null ? "全部门店" : storeName(storeId);
@@ -79,7 +90,7 @@ public class FinanceExpenseReportController {
     String where = where(storeId);
     JdbcClient.StatementSpec totalsStatement = parameters(jdbc.sql("""
       select count(*)::bigint claim_count,
-        coalesce(sum(c.amount_cents),0)::bigint total_amount_cents,
+        coalesce(sum(c.amount_cents) filter(where c.status in ('SUBMITTED','APPROVED','PAID')),0)::bigint total_amount_cents,
         count(*) filter (where c.status='SUBMITTED')::bigint pending_count,
         coalesce(sum(c.amount_cents) filter (where c.status='SUBMITTED'),0)::bigint pending_amount_cents,
         count(*) filter (where c.status='APPROVED')::bigint approved_count,
@@ -98,7 +109,7 @@ public class FinanceExpenseReportController {
 
     List<StoreSummary> stores = parameters(jdbc.sql("""
       select c.store_id,s.name store_name,count(*)::bigint claim_count,
-        coalesce(sum(c.amount_cents),0)::bigint amount_cents,
+        coalesce(sum(c.amount_cents) filter(where c.status in ('SUBMITTED','APPROVED','PAID')),0)::bigint amount_cents,
         coalesce(sum(c.amount_cents) filter (where c.status='PAID'),0)::bigint paid_amount_cents
       from expense_claim c join store s on s.id=c.store_id
       """ + where + " group by c.store_id,s.name order by amount_cents desc,s.name"), range, storeId)
@@ -106,7 +117,7 @@ public class FinanceExpenseReportController {
 
     List<CategorySummary> categories = parameters(jdbc.sql("""
       select c.expense_category_id,coalesce(parent.name || ' / ','') || category.name category_name,
-        count(*)::bigint claim_count,coalesce(sum(c.amount_cents),0)::bigint amount_cents,
+        count(*)::bigint claim_count,coalesce(sum(c.amount_cents) filter(where c.status in ('SUBMITTED','APPROVED','PAID')),0)::bigint amount_cents,
         coalesce(sum(c.amount_cents) filter (where c.status='PAID'),0)::bigint paid_amount_cents
       from expense_claim c
       join expense_category category on category.id=c.expense_category_id
@@ -135,21 +146,21 @@ public class FinanceExpenseReportController {
   }
 
   private String where(UUID storeId) {
-    return " where c.tenant_id=:tenant and c.status not in ('DRAFT','WITHDRAWN') and c.expense_date between :from and :to" +
+    return " where c.tenant_id=:tenant and coalesce(c.submitted_at,c.created_at)>=:from and coalesce(c.submitted_at,c.created_at)<:until" +
       (storeId == null ? "" : " and c.store_id=:store");
   }
 
   private JdbcClient.StatementSpec parameters(JdbcClient.StatementSpec statement, DateRange range, UUID storeId) {
-    JdbcClient.StatementSpec result = statement.param("tenant", TENANT_ID).param("from", range.from()).param("to", range.to());
+    JdbcClient.StatementSpec result = statement.param("tenant", TENANT_ID).param("from", range.from().atStartOfDay(BUSINESS_ZONE).toOffsetDateTime())
+      .param("until", range.to().plusDays(1).atStartOfDay(BUSINESS_ZONE).toOffsetDateTime());
     return storeId == null ? result : result.param("store", storeId);
   }
 
   private DateRange dateRange(LocalDate from, LocalDate to) {
     LocalDate today = LocalDate.now(BUSINESS_ZONE);
-    LocalDate start = from == null ? today.withDayOfMonth(1) : from;
+    LocalDate start = from == null ? today.minusDays(29) : from;
     LocalDate end = to == null ? today : to;
     if (end.isBefore(start)) throw bad("The end date must not be before the start date");
-    if (start.plusDays(366).isBefore(end)) throw bad("The report date range cannot exceed 367 days");
     return new DateRange(start, end);
   }
 

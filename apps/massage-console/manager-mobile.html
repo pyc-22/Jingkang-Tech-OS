@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>靖康科技运营 - 管理看板</title>
-    <link rel="stylesheet" href="./manager-mobile.css?v=20260915-next-optimization-v5" />
+    <link rel="stylesheet" href="./manager-mobile.css?v=20260918-expense-workspace-v1" />
     <link rel="stylesheet" href="./login-portal.css?v=20260915-next-optimization-v5" />
   </head>
   <body class="login-portal-page">
@@ -116,10 +116,17 @@
         <section class="manager-section expense-section" data-manager-page-panel="expense" data-manager-permission="EXPENSE_STORE_VIEW">
           <div class="section-heading expense-heading"><div><p class="manager-section-kicker">门店费用</p><h2>费用报销</h2><p>提交本店开销，跟踪财务审核进度</p></div><button class="manager-primary-button" id="manager-expense-new" type="button" data-manager-permission="EXPENSE_SUBMIT"><span aria-hidden="true">＋</span>新增报销</button></div>
           <div id="manager-expense-browser">
-            <div class="manager-expense-summary"><article><span>当前记录</span><strong id="manager-expense-visible-count">0</strong><small>筛选结果</small></article><article><span>有效申请金额</span><strong id="manager-expense-visible-amount">¥0.00</strong><small>不含草稿、退回、驳回、撤回</small></article><article><span>待审核</span><strong id="manager-expense-pending-count">0</strong><small>需要财务处理</small></article></div>
-            <div class="expense-toolbar"><label><span>状态筛选</span><select id="manager-expense-status" aria-label="报销状态"><option value="">全部状态</option><option value="DRAFT">草稿</option><option value="SUBMITTED">待审核</option><option value="RETURNED">已退回</option><option value="APPROVED">已通过</option><option value="REJECTED">已驳回</option><option value="PAID">已付款</option><option value="WITHDRAWN">已撤回</option></select></label><button class="manager-secondary-button" id="manager-expense-refresh" type="button" title="刷新报销记录">刷新</button></div>
-            <div class="manager-expense-list-heading"><b>报销记录</b><small>点击详情查看审核意见和凭证</small></div>
+            <div class="expense-date-range"><label>开始日期<input type="date" id="manager-expense-from" required></label><label>结束日期<input type="date" id="manager-expense-to" required></label></div>
+            <div class="manager-expense-summary">
+              <button type="button" data-expense-status="EFFECTIVE"><span>有效申请金额</span><strong id="manager-expense-visible-amount">0.00</strong><small>元</small></button>
+              <button type="button" data-expense-status="SUBMITTED"><span>待审核</span><strong id="manager-expense-pending-count">0</strong><small>单</small></button>
+              <button type="button" data-expense-status="APPROVED"><span>已审核</span><strong id="manager-expense-approved-count">0</strong><small>待付款 / 单</small></button>
+              <button type="button" data-expense-status="PAID"><span>已付款</span><strong id="manager-expense-paid-count">0</strong><small>单</small></button>
+            </div>
+            <div class="expense-toolbar"><label><span>状态</span><select id="manager-expense-status" aria-label="报销状态"><option value="">全部状态</option><option value="EFFECTIVE">有效申请</option><option value="DRAFT">草稿</option><option value="SUBMITTED">待审核</option><option value="RETURNED">已退回</option><option value="APPROVED">已审核</option><option value="REJECTED">已驳回</option><option value="PAID">已付款</option><option value="WITHDRAWN">已撤回</option></select></label><button class="manager-secondary-button" id="manager-expense-export" type="button">导出 Excel</button><button class="manager-secondary-button" id="manager-expense-refresh" type="button" title="刷新报销记录">刷新</button></div>
+            <div class="manager-expense-list-heading"><b>报销记录</b></div>
             <div id="manager-expense-list" class="manager-expense-list"><p class="comparison-empty">正在加载报销记录</p></div>
+            <div class="expense-page-footer"><span id="manager-expense-progress" aria-live="polite">已加载 0 条 / 共 0 条</span><button class="manager-secondary-button" type="button" id="manager-expense-more" hidden>加载更多</button></div>
           </div>
           <div id="manager-expense-editor" class="manager-expense-editor hidden">
             <div class="expense-editor-title"><div><p>门店费用</p><h3 id="manager-expense-editor-title">新增报销</h3></div><button class="manager-quiet-button" id="manager-expense-close" type="button">关闭</button></div>
@@ -150,6 +157,7 @@
     <dialog id="manager-expense-preview"><div class="manager-expense-preview-card"><div class="expense-editor-title"><h3 id="manager-expense-preview-title">凭证预览</h3><button class="manager-quiet-button" id="manager-expense-preview-close" type="button">关闭</button></div><div id="manager-expense-preview-content" class="manager-expense-preview-content"></div></div></dialog>
     <dialog id="manager-expense-detail-dialog"><div class="manager-expense-detail-card"><div class="expense-editor-title"><div><p>费用报销单</p><h3 id="manager-expense-detail-title">报销详情</h3></div><button class="manager-quiet-button" id="manager-expense-detail-close" type="button">关闭</button></div><div id="manager-expense-detail-content" class="manager-expense-detail-content"></div><div class="expense-editor-actions" id="manager-expense-detail-actions"></div></div></dialog>
     <dialog id="manager-clock-dialog"><form id="manager-clock-form" class="manager-clock-dialog-card"><div class="expense-editor-title"><div><p>现场安排</p><h3>安排技师上钟</h3></div><button class="manager-quiet-button" id="manager-clock-close" type="button">关闭</button></div><div class="manager-clock-grid"><label>上钟类别<select id="manager-clock-type" name="clockType"><option value="QUEUE">排钟</option><option value="CALL">点钟</option><option value="SELECTED">选钟</option><option value="BOOKED_QUEUE">预定排钟</option><option value="BOOKED_CALL">预定点钟</option></select></label><label>服务房间<select id="manager-clock-room" name="roomId" required></select></label><label class="manager-clock-full">服务项目<select id="manager-clock-service" name="serviceItemId" required></select></label><label>服务时长<input id="manager-clock-duration" name="duration" type="number" min="15" max="360" step="5" required /><small>分钟，默认跟随项目</small></label></div><div class="manager-clock-picker"><div class="manager-clock-picker-heading"><b>选择技师</b><small id="manager-clock-tech-count">最多选择 4 位</small></div><div id="manager-clock-tech-list" class="manager-clock-tech-list"></div></div><div id="manager-clock-allocation" class="manager-clock-allocation"></div><p class="manager-clock-note">即时派钟会进入技师端待接单；预定钟会先占用房间并在前一单结束后提醒技师。</p><div class="expense-editor-actions"><button class="manager-secondary-button" id="manager-clock-cancel" type="button">取消</button><button class="manager-primary-button" type="submit">确认安排</button></div></form></dialog>
-    <script src="./manager-mobile.js?v=20260916-quality-batch2-v9"></script>
+    <script src="./expense-ui.js?v=20260918-expense-workspace-v1"></script>
+    <script src="./manager-mobile.js?v=20260918-expense-workspace-v1"></script>
   </body>
 </html>
