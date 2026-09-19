@@ -16,6 +16,16 @@ module.exports = ({test,sql,api,ok,context}) => {
   const browse = async (q,finance=false,token) => ok(await api(`/api/v1/${finance?'finance/':''}expense-claims/page?${q}`,undefined,token||context()[finance?'admin':'manager']));
   const batch = (ids,action='APPROVED',comment='Shared review',token=context().admin) => api('/api/v1/finance/expense-claims/batch-review',{ids,action,comment},token);
 
+  test('expense: ISO date filters work with Chinese mobile and finance browser languages',async()=>{
+    const {manager,admin}=context();
+    for(const language of ['zh-CN,zh;q=0.9','en-US,en;q=0.9']) {
+      for(const [route,token] of [['expense-claims/page',manager],['finance/expense-claims/page',admin],['finance/expense-reports/summary',admin]]) {
+        const response=await api('/api/v1/'+route+'?'+query({}),undefined,token,{'Accept-Language':language});
+        assert.equal(response.status,200,`${language} ${route}: ${JSON.stringify(response.data)}`);
+      }
+    }
+  });
+
   test('expense: full totals, twenty-row pagination and both clients share identical scope',async()=>{
     const {store}=context(),f=claims({count:505});
     for(const status of ['DRAFT','RETURNED','REJECTED','WITHDRAWN','APPROVED','PAID'])claims({status,prefix:f.prefix+status});
@@ -171,5 +181,62 @@ module.exports = ({test,sql,api,ok,context}) => {
       }
       assert.deepEqual(errors,[]);
     }finally{await browser.close();}
+  });
+  if(process.env.REVIEW_BROWSER)test('expense: Chinese mobile submits and finance polling sees the claim, then manager sees approval',async()=>{
+    const {consoleBase,store,manager,admin,dir}=context(),cat=category();
+    sql(`UPDATE expense_claim SET submitted_at=least(submitted_at,now()-interval '1 minute')
+      WHERE store_id='${store}' AND (submitted_at AT TIME ZONE 'Asia/Shanghai')::date=(now() AT TIME ZONE 'Asia/Shanghai')::date;`);
+    const {chromium}=require(process.env.REVIEW_BROWSER),browser=await chromium.launch({channel:'chrome',headless:true});
+    const errors=[],failed=[];
+    try {
+      const mobile=await browser.newPage({viewport:{width:390,height:844},locale:'zh-CN'});
+      const finance=await browser.newPage({viewport:{width:1200,height:900},locale:'zh-CN'});
+      for(const page of [mobile,finance])page.on('pageerror',e=>errors.push(e.message));
+      await mobile.addInitScript(({manager,store})=>{
+        localStorage.setItem('chengxin-manager-mobile-access-token',manager);
+        localStorage.setItem('chengxin-manager-mobile-store-id',store);
+        localStorage.setItem('chengxin-manager-mobile-page','home');
+      },{manager,store});
+      // Reproduce the old JAR's /{id} binding response without touching an existing database.
+      await mobile.route('**/api/v1/expense-claims/page?*',route=>route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({error:'Bad Request'})}));
+      await mobile.route('**/api/health',route=>route.fulfill({json:{status:'UP',release:'20260913-next-optimization-v2'}}));
+      await mobile.goto(consoleBase+'/manager-mobile.html');
+      await mobile.locator('#manager-toast').filter({hasText:'前后端版本不一致'}).waitFor();
+      await mobile.unrouteAll({behavior:'wait'});
+      for(const page of [mobile,finance])page.on('response',r=>{if(r.url().includes('/expense-claims')&&r.status()>=400)failed.push(`${r.status()} ${r.url()}`);});
+      await mobile.locator('[data-manager-nav=expense]').click();
+      const opened=mobile.waitForResponse(r=>r.url().includes('/expense-claims/page?'));
+      await mobile.locator('#manager-expense-refresh').click();assert.equal((await opened).status(),200);
+      await finance.addInitScript(({admin,store})=>{
+        localStorage.setItem('chengxin-admin-access-token',admin);
+        localStorage.setItem('chengxin-current-store-id',store);
+      },{admin,store});
+      await finance.goto(consoleBase);
+      await finance.waitForFunction(()=>typeof isTenantAdmin==='function'&&isTenantAdmin()&&!document.querySelector('[data-view=finance]').hidden);
+      await finance.locator('.nav-group > summary').filter({hasText:'财务与配置'}).click();
+      await finance.locator('[data-view=finance]').click();
+      await finance.waitForFunction(()=>document.querySelector('#finance-sync-status').textContent.includes('已同步'));
+      await finance.locator('#finance-store-filter').selectOption(store);
+      await mobile.locator('#manager-expense-new').click();
+      await mobile.locator('#manager-expense-category').selectOption(cat);
+      await mobile.locator('#manager-expense-amount').fill('12.34');
+      await mobile.locator('#manager-expense-form [name=description]').fill('Mobile to finance sync regression');
+      await mobile.locator('#manager-expense-files').setInputFiles({name:'receipt.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64')});
+      const submitted=mobile.waitForResponse(r=>/\/expense-claims\/[^/]+\/submit$/.test(r.url()));
+      await mobile.locator('#manager-expense-save-submit').click();
+      const response=await submitted;assert.equal(response.status(),200);const {claim}=await response.json();
+      await mobile.locator(`[data-expense-detail="${claim.id}"]`).waitFor();
+      // Wait for the real 20-second poll, without calling loadFinanceClaims from the test.
+      await finance.locator(`[data-finance-review="${claim.id}"]`).waitFor({timeout:30000});
+      assert.equal(await mobile.locator('#manager-expense-visible-amount').textContent(),(await finance.locator('#finance-total-amount').textContent()).replace('¥',''));
+      await finance.locator(`[data-finance-review="${claim.id}"]`).click();
+      await finance.locator('#finance-review-form [name=comment]').fill('Verified across clients');
+      const approved=finance.waitForResponse(r=>r.url().endsWith(`/${claim.id}/approve`));
+      await finance.locator('#finance-approve-claim').click();assert.equal((await approved).status(),200);
+      await mobile.locator('#manager-expense-refresh').click();
+      await mobile.waitForFunction(id=>document.querySelector(`[data-expense-detail="${id}"]`)?.closest('article').classList.contains('APPROVED'),claim.id);
+      await mobile.screenshot({path:path.join(dir,'expense-sync-manager-390.png')});
+      assert.deepEqual(failed,[]);assert.deepEqual(errors,[]);
+    } finally {await browser.close();}
   });
 };

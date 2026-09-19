@@ -95,7 +95,7 @@ async function managerJson(path, headers=managerStoreHeaders()) {
   const response=await fetch(`${managerApi}${path}`,{headers});
   if(response.status===401) throw new Error('UNAUTHORIZED');
   if(response.status===403) throw new Error('FORBIDDEN');
-  if(!response.ok) throw new Error(`HTTP_${response.status}`);
+  if(!response.ok) throw new Error(path.startsWith('/expense-claims')?await ExpenseUI.error(response):`HTTP_${response.status}`);
   return response.json();
 }
 async function managerOptionalJson(path, fallback, headers=managerStoreHeaders()) {
@@ -661,19 +661,34 @@ document.querySelector('#manager-expense-detail-close').addEventListener('click'
 
 let managerExpenseRows=[], managerExpensePage=0, managerExpenseTotal=0, managerExpenseRequest=0, managerExpenseLoading=false;
 let managerExpenseFiltersReady=false, managerExpenseQueryKey='';
+let managerExpenseDateMode='recent', managerExpenseDateRange=null;
 function initManagerExpenseFilters() {
   if(managerExpenseFiltersReady)return;
   let saved={};try{saved=JSON.parse(localStorage.getItem('manager-expense-filters')||'{}')||{};}catch{}
   const defaults=ExpenseUI.range();
-  for(const key of ['from','to'])document.querySelector('#manager-expense-'+key).value=/^\d{4}-\d{2}-\d{2}$/.test(saved[key]||'')?saved[key]:defaults[key];
+  managerExpenseDateMode=saved.dateMode==='recent'||!saved.from&&!saved.to?'recent':'custom';
+  for(const key of ['from','to'])document.querySelector('#manager-expense-'+key).value=managerExpenseDateMode==='custom'&&/^\d{4}-\d{2}-\d{2}$/.test(saved[key]||'')?saved[key]:defaults[key];
+  managerExpenseDateRange=defaults;
   document.querySelector('#manager-expense-status').value=saved.status||'';
   managerExpenseFiltersReady=true;
 }
 function managerExpenseQuery() {
   const values={};for(const key of ['from','to','status'])values[key]=document.querySelector('#manager-expense-'+key).value;
-  try{localStorage.setItem('manager-expense-filters',JSON.stringify(values));}catch{}
+  if(managerExpenseDateMode==='recent') {
+    if(values.from!==managerExpenseDateRange.from||values.to!==managerExpenseDateRange.to)managerExpenseDateMode='custom';
+    else {
+      managerExpenseDateRange=ExpenseUI.range();
+      for(const key of ['from','to'])values[key]=document.querySelector('#manager-expense-'+key).value=managerExpenseDateRange[key];
+    }
+  }
+  try{localStorage.setItem('manager-expense-filters',JSON.stringify({...values,dateMode:managerExpenseDateMode}));}catch{}
   return new URLSearchParams(values);
 }
+document.querySelector('#manager-expense-recent').addEventListener('click',()=>{
+  managerExpenseDateMode='recent';managerExpenseDateRange=ExpenseUI.range();
+  for(const key of ['from','to'])document.querySelector('#manager-expense-'+key).value=managerExpenseDateRange[key];
+  loadManagerExpenses();
+});
 document.querySelectorAll('#manager-expense-from,#manager-expense-to').forEach(input=>input.addEventListener('change',()=>loadManagerExpenses()));
 document.querySelectorAll('[data-expense-status]').forEach(button=>button.addEventListener('click',()=>{
   const select=document.querySelector('#manager-expense-status');select.value=select.value===button.dataset.expenseStatus?'':button.dataset.expenseStatus;loadManagerExpenses();
@@ -693,6 +708,7 @@ async function loadManagerExpenses(append=false,background=false) {
   initManagerExpenseFilters();
   const query=managerExpenseQuery();
   const key=JSON.stringify(managerStoreHeaders())+query.toString();
+  if(key!==managerExpenseQueryKey)append=false;
   if(background&&key===managerExpenseQueryKey&&(managerExpenseLoading||managerExpensePage>0))return;
   const request=++managerExpenseRequest;
   managerExpenseLoading=false;

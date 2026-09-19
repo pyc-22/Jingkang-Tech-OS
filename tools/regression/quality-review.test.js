@@ -204,7 +204,8 @@ test('authentication and normal member permission boundary', async () => {
 test('release health and complete Flyway migrations succeed on an empty database', async () => {
   const health = ok(await api('/api/health', undefined, null));
   assert.equal(health.status, 'UP');
-  assert.equal(health.release, '20260918-expense-workspace-v1');
+  assert.equal(health.release, '20260919-expense-sync-fix-v1');
+  assert.equal(health.expenseClaimPaging, true);
   assert.equal(sql("SELECT version FROM flyway_schema_history WHERE success=true ORDER BY installed_rank DESC LIMIT 1;"), '100');
   assert.equal(sql("SELECT convalidated FROM pg_constraint WHERE conname='service_bed_room_ownership';"), 't');
   assert.equal(sql("SELECT convalidated FROM pg_constraint WHERE conname='service_bed_requires_room';"), 't');

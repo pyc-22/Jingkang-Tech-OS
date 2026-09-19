@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.ResponseBody;
 
 @Controller
 public class HomeController {
-  private static final String RELEASE = "20260918-expense-workspace-v1";
+  private static final String RELEASE = "20260919-expense-sync-fix-v1";
   private final JdbcClient jdbc;
 
   HomeController(JdbcClient jdbc) {
@@ -32,6 +32,7 @@ public class HomeController {
       "service", "massage-api",
       "database", database == 1 ? "UP" : "DOWN",
       "expenseClaimSequence", expenseClaimSequence,
+      "expenseClaimPaging", true,
       "release", RELEASE,
       "time", OffsetDateTime.now()
     );

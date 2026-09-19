@@ -26,7 +26,8 @@ try {
     'docs/reviews/2026-09-16/fix-batch2.md', 'docs/reviews/2026-09-16/fix-batch3.md',
     'docs/reviews/2026-09-16/final-fix-review.md', 'docs/reviews/2026-09-16/release-quality-v10.md',
     'docs/releases/20260918-member-recharge-correction-v1.md',
-    'docs/releases/20260918-expense-workspace-v1.md')
+    'docs/releases/20260918-expense-workspace-v1.md',
+    'docs/releases/20260919-expense-sync-fix-v1.md')
   foreach ($file in $files) {
     $target = Join-Path $output $file
     New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null

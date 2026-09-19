@@ -3446,12 +3446,18 @@ function openClockDialog(tech = null, selectedRoom = null) {
 
 let financeClaims=[], financeActiveClaim=null;
 let financeClaimPage=0, financeClaimRequest=0, financeClaimQueryKey='', financeClaimSort='time', financeClaimDirection='desc';
+let financeClaimDefaultRange=null;
 let financeSelected=new Set(), financeBatchIds=[], financeBatchAction='', financeAttachmentIndex=0, financeAttachmentRequest=0;
 function financeClaimDefaults() {
   const range=ExpenseUI.range();
+  const from=document.querySelector('#finance-claims-from'),to=document.querySelector('#finance-claims-to');
+  if(!from.value&&!to.value||financeClaimDefaultRange&&from.value===financeClaimDefaultRange.from&&to.value===financeClaimDefaultRange.to) {
+    from.value=range.from;to.value=range.to;financeClaimDefaultRange=range;
+  } else financeClaimDefaultRange=null;
   for(const key of ['from','to']){const input=document.querySelector('#finance-claims-'+key);if(!input.value)input.value=range[key];}
 }
 function financeClaimQuery() {
+  financeClaimDefaults();
   const query=new URLSearchParams();
   const fields={from:'finance-claims-from',to:'finance-claims-to',status:'finance-status-filter',storeId:'finance-store-filter',applicant:'finance-applicant-filter',categoryId:'finance-category-filter',claimNo:'finance-claims-number'};
   for(const [key,id] of Object.entries(fields))query.set(key,document.getElementById(id).value.trim());
@@ -3528,7 +3534,7 @@ const financeStatusLabel={DRAFT:'草稿',SUBMITTED:'待审核',RETURNED:'已退�
 const financeEscape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const financeAmount=cents=>`¥${(Number(cents||0)/100).toFixed(2)}`;
 const financeToday=()=>new Date().toISOString().slice(0,10);
-async function financeError(response){try{const body=await response.json();return body.message||body.error||`HTTP_${response.status}`;}catch{return `HTTP_${response.status}`;}}
+async function financeError(response){return ExpenseUI.error(response);}
 function renderFinanceStoreFilter(rows){const select=document.querySelector('#finance-store-filter');if(!select)return;const current=select.value;const stores=[...new Map(rows.map(row=>[row.storeId,{id:row.storeId,name:row.storeName}])).values()];select.innerHTML='<option value="">全部门店</option>'+stores.map(store=>`<option value="${roomTransferEscape(store.id)}">${financeEscape(store.name)}</option>`).join('');if(stores.some(store=>store.id===current))select.value=current;}
 function renderFinanceApplicantFilter(rows){const select=document.querySelector('#finance-applicant-filter');if(!select)return;const current=select.value;const applicants=[...new Map(rows.filter(row=>row.applicantUserId&&row.applicantName).map(row=>[row.applicantUserId,{id:row.applicantUserId,name:row.applicantName}])).values()].sort((a,b)=>a.name.localeCompare(b.name,'zh-CN'));select.innerHTML='<option value="">全部店长</option>'+applicants.map(item=>`<option value="${financeEscape(item.id)}">${financeEscape(item.name)}</option>`).join('');if(applicants.some(item=>item.id===current))select.value=current;}
 function renderFinanceClaims(rows) {
@@ -3604,7 +3610,6 @@ async function downloadFinanceAttachment(id,filename){if(!financeActiveClaim)ret
 
 async function loadFinanceClaims(page=null) {
   if(!hasAdminPermission('EXPENSE_REVIEW'))return;
-  financeClaimDefaults();
   const query=financeClaimQuery();
   const request=++financeClaimRequest;
   if(query.get('from')>query.get('to'))return toast('开始日期应早于或等于结束日期');
@@ -3640,7 +3645,7 @@ async function loadFinanceClaims(page=null) {
   const categories=document.querySelector('#finance-category-filter'),category=categories.value;
   categories.innerHTML='<option value="">全部分类</option>'+financeExpenseCategories.map(item=>`<option value="${financeEscape(item.id)}">${financeEscape(item.parentName?item.parentName+' / '+item.name:item.name)}</option>`).join('');categories.value=category;
 }
-function financeSyncTick(){const view=document.querySelector('#finance-view');if(!view||view.classList.contains('hidden')||!localStorage.getItem(adminTokenKey))return;loadFinanceClaims().catch(()=>{});loadFinanceReport().catch(()=>{});}
+function financeSyncTick(){const view=document.querySelector('#finance-view');if(!view||view.classList.contains('hidden')||!localStorage.getItem(adminTokenKey))return;loadFinanceClaims().catch(error=>{document.querySelector('#finance-sync-status').textContent=error.message||'报销同步失败，请刷新重试';});loadFinanceReport().catch(()=>{});}
 window.setInterval(financeSyncTick,20000);
 
 const managementTabGroups = {

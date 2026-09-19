@@ -52,6 +52,55 @@ test('expense dates use China day and inclusive thirty-day, week and month bound
   assert.deepEqual(ExpenseUI.range('month',now),{from:'2026-03-01',to:'2026-03-02'});
   assert.deepEqual(ExpenseUI.range('last-month',now),{from:'2026-02-01',to:'2026-02-28'});
 });
+
+test('expense errors distinguish an old API from invalid filters and permissions',async()=>{
+  const oldFetch=global.fetch;let probes=0;
+  try{
+    global.fetch=async()=>{probes++;return {ok:true,json:async()=>({release:'20260913-next-optimization-v2'})};};
+    const response=(status,message)=>({status,json:async()=>({message})});
+    assert.match(await ExpenseUI.error(response(400)),/前后端版本不一致.*20260913-next-optimization-v2/);
+    assert.equal(await ExpenseUI.error(response(403,'没有查看权限')),'没有查看权限');assert.equal(probes,1);
+    global.fetch=async()=>({ok:true,json:async()=>({expenseClaimPaging:true})});
+    assert.equal(await ExpenseUI.error(response(400,'开始日期应早于或等于结束日期')),'开始日期应早于或等于结束日期');
+    global.fetch=async()=>{throw new Error('offline');};
+    assert.equal(await ExpenseUI.error(response(400,'Invalid date')),'Invalid date');
+  }finally{global.fetch=oldFetch;}
+});
+
+test('manager recent range follows the next day but custom dates survive reload',async()=>{
+  const f=mobile({from:'2026-08-20',to:'2026-09-18',status:'SUBMITTED',dateMode:'recent'});
+  try{
+    let range={from:'2026-08-21',to:'2026-09-19'};
+    f.w.ExpenseUI={...ExpenseUI,range:()=>range};
+    await f.w.loadManagerExpenses();
+    assert.match(f.requests.at(-1),/from=2026-08-21&to=2026-09-19/);
+    await f.w.loadManagerExpenses(true);
+    range={from:'2026-08-22',to:'2026-09-20'};
+    await f.w.loadManagerExpenses(true);
+    assert.match(f.requests.at(-1),/from=2026-08-22&to=2026-09-20.*page=0/);
+    f.w.document.querySelector('#manager-expense-from').value='2026-07-01';
+    f.w.document.querySelector('#manager-expense-from').dispatchEvent(new f.w.Event('change'));
+    await new Promise(resolve=>setImmediate(resolve));
+    const saved=JSON.parse(f.w.localStorage.getItem('manager-expense-filters'));
+    assert.equal(saved.dateMode,'custom');
+    const reloaded=mobile(saved);try{await reloaded.w.loadManagerExpenses();assert.match(reloaded.requests.at(-1),/from=2026-07-01&to=2026-09-20/);}finally{reloaded.d.window.close();}
+    f.w.document.querySelector('#manager-expense-recent').click();await new Promise(resolve=>setImmediate(resolve));
+    assert.match(f.requests.at(-1),/from=2026-08-22&to=2026-09-20/);
+    assert.equal(JSON.parse(f.w.localStorage.getItem('manager-expense-filters')).dateMode,'recent');
+  }finally{f.d.window.close();}
+});
+
+test('finance default dates advance across midnight while custom filters stay fixed',async()=>{
+  const f=finance();try{
+    let range={from:'2026-08-20',to:'2026-09-18'};f.w.ExpenseUI={...ExpenseUI,range:()=>range};
+    await f.w.loadFinanceClaims();await f.w.loadFinanceClaims(1);
+    range={from:'2026-08-21',to:'2026-09-19'};await f.w.loadFinanceClaims();
+    assert.match(f.requests.at(-1).url,/from=2026-08-21&to=2026-09-19.*page=0/);
+    f.w.document.querySelector('#finance-claims-from').value='2026-07-01';
+    await f.w.loadFinanceClaims();range={from:'2026-08-22',to:'2026-09-20'};await f.w.loadFinanceClaims();
+    assert.match(f.requests.at(-1).url,/from=2026-07-01&to=2026-09-19/);
+  }finally{f.d.window.close();}
+});
 test('manager restores filters and shows full summary while loading twenty rows',async()=>{
   const f=mobile({from:'2026-09-01',to:'2026-09-18',status:'SUBMITTED'});
   try{
