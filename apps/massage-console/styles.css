@@ -333,21 +333,23 @@ body.frontdesk-auth-locked #close-admin-login { display:none; }
 .tech-state.reassign,.management-view .service-status.reassignment { color:#9b5f1e; background:#fff1df; }
 
 /* Front-desk technician cards retain queue order while exposing current service state. */
-.technician-panel .technician-list { grid-template-columns:repeat(auto-fill,minmax(242px,1fr)); width:100%; }
+.technician-panel .technician-list { grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr)); align-items:start; gap:10px; width:100%; }
 .technician-panel .tech-card { position:relative; display:block; min-height:124px; padding:12px; border:1px solid #dce6e1; border-left:4px solid #4ba876; border-radius:6px; background:#fff; }
 .technician-panel .tech-card.state-pending { border-left-color:#7b64c9; background:#fbfaff; }
 .technician-panel .tech-card.state-accepted { border-left-color:#438bc5; background:#f7fbff; }
 .technician-panel .tech-card.state-serving { border-left-color:#d78935; background:#fffaf3; }
 .technician-panel .tech-card.state-reassign { border-left-color:#c6554a; background:#fff8f7; }
 .technician-panel .tech-card.state-off { border-left-color:#9aa6a2; background:#f7f8f8; }
-.tech-card-main { display:grid; grid-template-columns:48px minmax(0,1fr); align-items:center; gap:8px; min-width:0; padding-right:50px; }
-.tech-card .tech-avatar,.dispatch-tech-choice .tech-avatar { width:48px; height:48px; padding:6px; line-height:1.1; text-align:center; overflow-wrap:anywhere; }
-.tech-card .technician-name,.dispatch-tech-choice > span:nth-child(2) { min-width:0; text-align:center; }
-.tech-card .technician-name b,.dispatch-tech-choice b { font-size:20px; font-weight:700; white-space:normal; overflow-wrap:anywhere; }
-.tech-card .technician-full-name { font-size:13px; font-weight:400; white-space:normal; overflow-wrap:anywhere; }
+.tech-card-main { display:grid; grid-template-columns:48px minmax(0,1fr) auto; align-items:center; gap:10px; min-width:0; }
+.technician-panel .tech-card .tech-avatar,.dispatch-tech-choice .tech-avatar { width:48px; height:48px; padding:6px; color:#fff; background:#238a58; line-height:1.1; text-align:center; overflow-wrap:anywhere; }
+.tech-card .technician-name,.dispatch-tech-choice .technician-name { min-width:0; text-align:left; }
+.tech-card .technician-full-name,.dispatch-tech-choice .technician-full-name { color:var(--ink); font-size:16px; font-weight:400; white-space:normal; overflow-wrap:anywhere; }
 .dispatch-tech-choice { grid-template-columns:48px minmax(0,1fr) auto; }
+.dispatch-tech-choice .dispatch-tech-status { align-self:end; justify-self:end; }
+.dispatch-tech-choice .dispatch-tech-meta { grid-column:1 / -1; padding-top:7px; border-top:1px solid #edf1ef; text-align:right; }
 .tech-card .technician-name small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.tech-card .tech-state { grid-column:2; justify-self:start; min-width:0; white-space:nowrap; }
+.tech-card-controls { display:grid; justify-items:end; align-self:start; gap:6px; }
+.tech-card .tech-state { min-width:0; white-space:nowrap; }
 .tech-card-meta { display:flex; justify-content:space-between; gap:8px; margin-top:12px; padding-top:8px; border-top:1px solid #edf1ef; color:#667773; font-size:11px; }
 .tech-card-meta b { color:#274740; font-variant-numeric:tabular-nums; }
 .tech-next-service { display:block; overflow:hidden; margin-top:7px; color:#3973a4; font-size:11px; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }
@@ -360,15 +362,14 @@ body.frontdesk-auth-locked #close-admin-login { display:none; }
 .technician-panel .tech-card.state-serving { border-left-color:#bd6913; background:#fff7e8; }
 .technician-panel .tech-card.state-reassign { border-left-color:#b33b32; background:#fff3f1; }
 .technician-panel .tech-card.state-off { border-left-color:#687873; background:#f0f3f2; }
-.technician-panel .tech-card .tech-state { border:1px solid currentColor; font-weight:800; }
+.technician-panel .tech-card .tech-state { border:1px solid transparent; font-weight:400; }
 .technician-panel .tech-card .tech-state.available { color:#176c43; background:#d8f1e2; }
 .technician-panel .tech-card .tech-state.pending { color:#4d3590; background:#e8e0ff; }
 .technician-panel .tech-card .tech-state.accepted { color:#1d5d91; background:#dcecff; }
 .technician-panel .tech-card .tech-state.serving { color:#994f0c; background:#ffe7bd; }
 .technician-panel .tech-card .tech-state.reassign { color:#982f29; background:#ffdeda; }
 .technician-panel .tech-card .tech-state.off { color:#53635e; background:#dfe5e2; }
-.tech-card .tech-action { position:absolute; top:11px; right:10px; min-width:40px; }
-@media (max-width:760px) { .technician-panel .technician-list { grid-template-columns:1fr; } .tech-card-main { padding-right:48px; } }
+.tech-card .tech-action { min-width:44px; }
 
 /* Context actions are restricted to an active service and reuse the audited front-desk operations. */
 .technician-context-menu { position:fixed; z-index:120; width:190px; overflow:hidden; border:1px solid #d8e3df; border-radius:5px; background:#fff; box-shadow:0 10px 28px rgba(25,50,44,.18); }
@@ -692,7 +693,8 @@ dialog > .dialog-card {
 .room-panel .room .room-top { font-size:14px; }
 .technician-panel .technician-name { font-size:17px; }
 .technician-panel .technician-name small { font-size:14px; }
-.technician-panel .tech-state,.technician-panel .tech-action { min-height:44px; font-size:14px; }
+.technician-panel .tech-state { min-height:22px; font-size:11px; }
+.technician-panel .tech-action { min-height:44px; font-size:14px; }
 .operator-menu-trigger { display:grid; gap:2px; padding:0; border:0; background:transparent; color:inherit; text-align:left; cursor:pointer; }
 .operator-menu-trigger b { color:#fff; font-size:14px; }
 .operator-menu-trigger small { color:#a9beb8; font-size:11px; }
@@ -709,7 +711,7 @@ dialog > .dialog-card {
    after the larger card typography is applied. Keep this final override after
    the legacy room-specific styles so the minimum target is deterministic. */
 .room-panel .room-actions > button,
-.technician-panel .tech-card > .tech-action,
+.technician-panel .tech-card-controls > .tech-action,
 .technician-panel .technician > .tech-action {
   min-height:44px;
   font-size:14px;

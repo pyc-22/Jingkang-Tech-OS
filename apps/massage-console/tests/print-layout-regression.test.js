@@ -14,8 +14,8 @@ test('print item details use stable narrow and wide layouts', () => {
   assert.match(app, /col-amount\{width:19%;text-align:right;white-space:nowrap/);
   assert.match(app, /show\('showLineAmount'\) && \(!show\('showUnitPrice'\) \|\| narrowPaper\)/);
   assert.doesNotMatch(app, /printBrowserReceiptByOptions[\s\S]*<pre>\$\{receiptEscape\(text\)\}/);
-  assert.match(html, /app\.js\?v=20260922-member-codes-technician-ui-v1/);
-  assert.match(html, /styles\.css\?v=20260922-member-codes-technician-ui-v1/);
+  assert.match(html, /app\.js\?v=20260922-technician-cards-v2/);
+  assert.match(html, /styles\.css\?v=20260922-technician-cards-v2/);
   assert.match(html, /frontdesk-card-settlement\.css\?v=20260915-next-optimization-v5/);
 });
 

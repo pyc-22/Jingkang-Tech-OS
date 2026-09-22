@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { JSDOM } = require('jsdom');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 function functionSource(name) {
@@ -36,9 +37,10 @@ test('on-duty dispatch choices show employee code separately from queue position
   context.state.rooms = [{ id:'101', apiId:'room1', availableBedCount:1, bedCount:1 }];
   context.openClockDialog();
   const html = elements.get('#dispatch-tech-list').innerHTML;
-  assert.match(html, /<span class="tech-avatar" style="font-size:18px">007<\/span><span><b>007<\/b><span class="technician-full-name">同名技师<\/span>/);
+  assert.match(html, /class="tech-avatar"[^>]*>007<\/span><span class="technician-name"><span class="technician-full-name">同名技师<\/span>/);
   assert.match(html, /轮钟 03/);
-  assert.match(html, /<b>&lt;008&gt;<\/b>/);
+  assert.match(html, />&lt;008&gt;<\/span>/);
+  assert.doesNotMatch(html, /<b>007<\/b>/);
   assert.doesNotMatch(html, /工号 /);
   assert.doesNotMatch(html, /<008>/);
 });
@@ -48,7 +50,8 @@ test('queue cards label technician codes explicitly and never use queue position
   context.state.technicians = [technician, { ...technician, id:'t2', code:null }];
   context.renderTechnicians();
   const html = elements.get('#technician-list').innerHTML;
-  assert.match(html, /<span class="tech-avatar" style="font-size:18px">007<\/span><span class="technician-name"><b>007<\/b><span class="technician-full-name">同名技师<\/span>/);
+  assert.match(html, /class="tech-avatar"[^>]*>007<\/span><span class="technician-name"><span class="technician-full-name">同名技师<\/span>/);
+  assert.doesNotMatch(html, /<b>007<\/b>/);
   assert.doesNotMatch(html, /工号 /);
   assert.match(html, /未设置工号/);
   assert.match(html, /轮排 03/);
@@ -96,12 +99,44 @@ test('dispatch choices keep full long codes and names, with an explicit missing-
   context.state.rooms = [{ id:'101', apiId:'room1', availableBedCount:1, bedCount:1 }];
   context.openClockDialog();
   const html = elements.get('#dispatch-tech-list').innerHTML;
-  assert.match(html, /<b>A001234567890123456789<\/b><span class="technician-full-name">王小明完整姓名展示<\/span>/);
-  assert.match(html, /<b>未设置工号<\/b>/);
+  assert.match(html, />A001234567890123456789<\/span><span class="technician-name"><span class="technician-full-name">王小明完整姓名展示<\/span>/);
+  assert.match(html, />未设置工号<\/small>/);
   assert.match(html, /class="tech-avatar"/);
   assert.match(html, /轮钟 03/);
-  assert.match(html, /<em>可派<\/em>/);
-  assert.match(html, /<em>服务中<\/em>/);
+  assert.match(html, /<em class="dispatch-tech-status">可派钟<\/em>/);
+  assert.match(html, /<em class="dispatch-tech-status">服务中<\/em>/);
+});
+
+test('compact queue cards preserve actions, status, statistics and useful service context', () => {
+  const { context, elements } = harness(['roomTransferEscape', 'renderTechnicians'], { clockTypeLabels:{ QUEUE:'排钟' } });
+  context.state.technicians = ['available','pending','accepted','serving','reassign','off'].map((state,index) => ({
+    ...technician, id:state, state, queue:index+1, queueCount:2, callCount:3, extensionCount:1,
+    detail:state==='available' ? '可立即安排服务' : state==='serving' ? '101 房' : '排班状态说明',
+    name:state==='available' ? '<img src=x onerror=alert(1)>' : '同名技师',
+    nextReservation:state==='serving' ? { reservationType:'QUEUE',roomCode:'102' } : null
+  }));
+  context.renderTechnicians();
+  const dom = new JSDOM(elements.get('#technician-list').innerHTML);
+  try {
+    const cards = dom.window.document.querySelectorAll('.tech-card');
+    assert.equal(cards.length,6);
+    assert.doesNotMatch(dom.window.document.body.textContent,/可立即安排服务/);
+    assert.equal(dom.window.document.querySelector('img'),null);
+    assert.equal(cards[0].querySelector('.technician-full-name').textContent,'<img src=x onerror=alert(1)>');
+    assert.deepEqual([...cards].map(card => card.querySelector('[data-tech]').textContent),['上钟','开始服务','开始服务','下钟','待重派','不可上钟']);
+    for (const [index,card] of [...cards].entries()) {
+      const controls = card.querySelector('.tech-card-controls');
+      assert.equal(controls.children[0].dataset.tech,card.dataset.techCard);
+      assert.ok(controls.children[1].classList.contains('tech-state'));
+      assert.equal(controls.children[0].disabled,index>=4);
+      assert.match(card.querySelector('.tech-card-meta').textContent,/排钟 2 · 点钟 3 · 加钟 1/);
+      assert.match(card.querySelector('.tech-card-meta').textContent,new RegExp('轮排 0'+(index+1)));
+      assert.equal(card.querySelector('.technician-name b'),null);
+    }
+    assert.match(cards[3].textContent,/房间 101/);
+    assert.match(cards[3].textContent,/下一单：排钟 · 102房/);
+    assert.match(cards[5].textContent,/排班状态说明/);
+  } finally { dom.window.close(); }
 });
 
 test('clicking a dispatch card still selects and deselects by technician id', () => {

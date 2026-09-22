@@ -31,7 +31,7 @@ test('order history is explicitly placed before service records', () => {
   assert.match(app, /document\.querySelector\('#management-view #service-session-record-panel'\)/);
 });
 
-test('technician state colors remain distinct and high contrast on both clients', () => {
+test('technician state colors remain distinct with lightweight frontdesk badges', () => {
   for (const state of ['available', 'pending', 'accepted', 'serving', 'reassign', 'off']) {
     assert.match(css, new RegExp(`\.technician-panel \\.tech-card\\.state-${state} \\{`));
     assert.match(css, new RegExp(`\.technician-panel \\.tech-card \\.tech-state\\.${state} \\{`));
@@ -40,6 +40,6 @@ test('technician state colors remain distinct and high contrast on both clients'
     assert.match(mobileCss, new RegExp(`\\.manager-live-technician\\.${state} \\{`));
     assert.match(mobileCss, new RegExp(`\\.manager-technician-status\\.${state} \\{`));
   }
-  assert.match(css, /border:1px solid currentColor/);
+  assert.match(css, /\.technician-panel \.tech-card \.tech-state \{ border:1px solid transparent; font-weight:400; \}/);
   assert.match(mobileCss, /border:1px solid currentColor/);
 });

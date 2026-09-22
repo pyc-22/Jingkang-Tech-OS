@@ -22,7 +22,7 @@ test('room cards wrap with a stable minimum width and bounded scrolling area', (
 });
 
 test('room and technician action buttons keep a 44px touch target and readable type', () => {
-  assert.match(css, /\.room-panel \.room-actions > button,\s*\.technician-panel \.tech-card > \.tech-action,\s*\.technician-panel \.technician > \.tech-action\s*\{[^}]*min-height:44px;[^}]*font-size:14px;/s);
+  assert.match(css, /\.room-panel \.room-actions > button,\s*\.technician-panel \.tech-card-controls > \.tech-action,\s*\.technician-panel \.technician > \.tech-action\s*\{[^}]*min-height:44px;[^}]*font-size:14px;/s);
 });
 
 test('technician queue shows clocked-in and total technician counts', () => {
