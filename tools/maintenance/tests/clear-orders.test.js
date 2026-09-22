@@ -247,7 +247,7 @@ test('schema checks and delete planning also work against every repository migra
   const migrations = path.join(root,'services/massage-api/src/main/resources/db/migration');
   const files = fs.readdirSync(migrations).filter(file => /^V\d+__.*\.sql$/.test(file))
     .sort((a,b) => Number(a.match(/^V(\d+)/)[1]) - Number(b.match(/^V(\d+)/)[1]));
-  query(files.map(file => fs.readFileSync(path.join(migrations,file),'utf8')).join('\n'));
+  for (const file of files) query('BEGIN;\n' + fs.readFileSync(path.join(migrations,file),'utf8') + '\nCOMMIT;');
   query(`INSERT INTO store(id,tenant_id,name,code) VALUES('${store}','11111111-1111-1111-1111-111111111111','Cleanup fixture','cleanup-test');
     INSERT INTO sales_order(id,tenant_id,store_id,order_no,status,receivable_cents,paid_cents,business_date)
     SELECT md5('order'||n)::uuid,'11111111-1111-1111-1111-111111111111','${store}', 'TEST-'||n,'SETTLED',100,100,

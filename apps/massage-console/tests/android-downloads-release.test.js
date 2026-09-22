@@ -21,6 +21,9 @@ function fixture(t, script) {
     'docs/releases/20260918-member-recharge-correction-v1.md',
     'docs/releases/20260918-expense-workspace-v1.md',
     'docs/releases/20260919-expense-sync-fix-v1.md',
+    'docs/releases/20260922-member-codes-technician-ui-v1.md',
+    'tools/maintenance/backup-member-codes.ps1', 'tools/maintenance/backup-member-codes.sql',
+    'tools/maintenance/rollback-member-codes.sql',
     ...qualityDocs.map(name => `docs/reviews/2026-09-16/${name}`), 'tools/release/' + script];
   for (const file of files) {
     const target = path.join(dir, file);
@@ -63,6 +66,11 @@ for (const script of ['package-android-downloads.ps1', 'package-quality-release.
     for (const apk of apks) {
       assert.deepEqual(fs.readFileSync(path.join(output, apk)), fs.readFileSync(path.join(dir, apk)));
       assert.ok(manifest.includes(apk));
+    }
+    if (script === 'package-quality-release.ps1') {
+      for (const file of ['backup-member-codes.ps1','backup-member-codes.sql','rollback-member-codes.sql']) {
+        assert.ok(manifest.includes('tools/maintenance/'+file));
+      }
     }
     assert.equal(fs.existsSync(path.join(output, 'apps/massage-console/downloads/private-export.txt')), false);
     const repeat = run(dir, script);

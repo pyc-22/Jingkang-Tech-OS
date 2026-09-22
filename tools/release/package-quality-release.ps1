@@ -27,7 +27,11 @@ try {
     'docs/reviews/2026-09-16/final-fix-review.md', 'docs/reviews/2026-09-16/release-quality-v10.md',
     'docs/releases/20260918-member-recharge-correction-v1.md',
     'docs/releases/20260918-expense-workspace-v1.md',
-    'docs/releases/20260919-expense-sync-fix-v1.md')
+    'docs/releases/20260919-expense-sync-fix-v1.md',
+    'docs/releases/20260922-member-codes-technician-ui-v1.md',
+    'tools/maintenance/backup-member-codes.ps1',
+    'tools/maintenance/backup-member-codes.sql',
+    'tools/maintenance/rollback-member-codes.sql')
   foreach ($file in $files) {
     $target = Join-Path $output $file
     New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null

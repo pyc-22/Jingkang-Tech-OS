@@ -340,7 +340,12 @@ body.frontdesk-auth-locked #close-admin-login { display:none; }
 .technician-panel .tech-card.state-serving { border-left-color:#d78935; background:#fffaf3; }
 .technician-panel .tech-card.state-reassign { border-left-color:#c6554a; background:#fff8f7; }
 .technician-panel .tech-card.state-off { border-left-color:#9aa6a2; background:#f7f8f8; }
-.tech-card-main { display:grid; grid-template-columns:31px minmax(0,1fr); align-items:center; gap:8px; min-width:0; padding-right:50px; }
+.tech-card-main { display:grid; grid-template-columns:48px minmax(0,1fr); align-items:center; gap:8px; min-width:0; padding-right:50px; }
+.tech-card .tech-avatar,.dispatch-tech-choice .tech-avatar { width:48px; height:48px; padding:6px; line-height:1.1; text-align:center; overflow-wrap:anywhere; }
+.tech-card .technician-name,.dispatch-tech-choice > span:nth-child(2) { min-width:0; text-align:center; }
+.tech-card .technician-name b,.dispatch-tech-choice b { font-size:20px; font-weight:700; white-space:normal; overflow-wrap:anywhere; }
+.tech-card .technician-full-name { font-size:13px; font-weight:400; white-space:normal; overflow-wrap:anywhere; }
+.dispatch-tech-choice { grid-template-columns:48px minmax(0,1fr) auto; }
 .tech-card .technician-name small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .tech-card .tech-state { grid-column:2; justify-self:start; min-width:0; white-space:nowrap; }
 .tech-card-meta { display:flex; justify-content:space-between; gap:8px; margin-top:12px; padding-top:8px; border-top:1px solid #edf1ef; color:#667773; font-size:11px; }

@@ -36,9 +36,10 @@ test('on-duty dispatch choices show employee code separately from queue position
   context.state.rooms = [{ id:'101', apiId:'room1', availableBedCount:1, bedCount:1 }];
   context.openClockDialog();
   const html = elements.get('#dispatch-tech-list').innerHTML;
-  assert.match(html, /<b>工号 007<\/b><span class="technician-full-name">同名技师<\/span>/);
+  assert.match(html, /<span class="tech-avatar" style="font-size:18px">007<\/span><span><b>007<\/b><span class="technician-full-name">同名技师<\/span>/);
   assert.match(html, /轮钟 03/);
-  assert.match(html, /工号 &lt;008&gt;/);
+  assert.match(html, /<b>&lt;008&gt;<\/b>/);
+  assert.doesNotMatch(html, /工号 /);
   assert.doesNotMatch(html, /<008>/);
 });
 
@@ -47,7 +48,8 @@ test('queue cards label technician codes explicitly and never use queue position
   context.state.technicians = [technician, { ...technician, id:'t2', code:null }];
   context.renderTechnicians();
   const html = elements.get('#technician-list').innerHTML;
-  assert.match(html, /工号 007/);
+  assert.match(html, /<span class="tech-avatar" style="font-size:18px">007<\/span><span class="technician-name"><b>007<\/b><span class="technician-full-name">同名技师<\/span>/);
+  assert.doesNotMatch(html, /工号 /);
   assert.match(html, /未设置工号/);
   assert.match(html, /轮排 03/);
 });
@@ -59,8 +61,8 @@ test('selected dispatch participants show code in both summary and service confi
   });
   context.state.technicians = [technician];
   context.renderDispatchSelection();
-  assert.equal(elements.get('#clock-tech-name').textContent, '工号 007 · 同名技师');
-  assert.match(elements.get('#dispatch-allocation-list').innerHTML, /<legend>工号 007 · 同名技师<\/legend>/);
+  assert.equal(elements.get('#clock-tech-name').textContent, '007 · 同名技师');
+  assert.match(elements.get('#dispatch-allocation-list').innerHTML, /<legend>007 · 同名技师<\/legend>/);
 });
 
 test('attendance date selection fetches and renders historical clock-in and clock-out records', async () => {
@@ -94,7 +96,7 @@ test('dispatch choices keep full long codes and names, with an explicit missing-
   context.state.rooms = [{ id:'101', apiId:'room1', availableBedCount:1, bedCount:1 }];
   context.openClockDialog();
   const html = elements.get('#dispatch-tech-list').innerHTML;
-  assert.match(html, /<b>工号 A001234567890123456789<\/b><span class="technician-full-name">王小明完整姓名展示<\/span>/);
+  assert.match(html, /<b>A001234567890123456789<\/b><span class="technician-full-name">王小明完整姓名展示<\/span>/);
   assert.match(html, /<b>未设置工号<\/b>/);
   assert.match(html, /class="tech-avatar"/);
   assert.match(html, /轮钟 03/);

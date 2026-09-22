@@ -108,7 +108,7 @@ public class MemberController {
     }
     UUID member = UUID.randomUUID();
     UUID wallet = UUID.randomUUID();
-    String code = "M" + System.currentTimeMillis();
+    String code = allocateMemberCode(storeId);
     jdbc.sql("insert into member(id,tenant_id,registered_store_id,code,name,phone) values(:id,:tenant,:store,:code,:name,:phone)")
       .param("id", member).param("tenant", TENANT_ID).param("store", storeId).param("code", code).param("name", name).param("phone", phone).update();
     jdbc.sql("insert into member_wallet(id,tenant_id,opened_store_id,member_id) values(:id,:tenant,:store,:member)")
@@ -152,7 +152,7 @@ public class MemberController {
     } else {
       memberId = UUID.randomUUID();
       UUID walletId = UUID.randomUUID();
-      String code = "M" + System.currentTimeMillis();
+      String code = allocateMemberCode(storeId);
       jdbc.sql("insert into member(id,tenant_id,registered_store_id,code,name,phone) values(:id,:tenant,:store,:code,:name,:phone)")
         .param("id", memberId).param("tenant", TENANT_ID).param("store", storeId).param("code", code)
         .param("name", name).param("phone", phone).update();
@@ -298,6 +298,26 @@ public class MemberController {
       .param("tenant", TENANT_ID).param("phone", phone).query(ExistingMember.class).optional().orElse(null);
   }
 
+  private String allocateMemberCode(UUID storeId) {
+    MemberCodeAllocation allocation = jdbc.sql("""
+      update store
+         set member_code_next_number = member_code_next_number + 1,
+             updated_at = now(),
+             version = version + 1
+       where id=:store and tenant_id=:tenant and member_code_next_number between 1 and 99999
+       returning member_code_prefix, member_code_next_number - 1 member_number
+      """).param("store", storeId).param("tenant", TENANT_ID).query(MemberCodeAllocation.class).optional()
+      .orElseThrow(() -> conflict("该门店会员编号已达到 99999 上限"));
+    return formatMemberCode(allocation.memberCodePrefix(), allocation.memberNumber());
+  }
+
+  static String formatMemberCode(String prefix, int number) {
+    if (prefix == null || !prefix.matches("[A-Z]") || number < 1 || number > 99999) {
+      throw new IllegalArgumentException("Invalid member code allocation");
+    }
+    return prefix + String.format(java.util.Locale.ROOT, "%05d", number);
+  }
+
   private void reactivate(UUID memberId, String name) {
     jdbc.sql("update member set name=:name,active=true,updated_at=now(),version=version+1 where id=:id and tenant_id=:tenant and active=false")
       .param("name", name).param("id", memberId).param("tenant", TENANT_ID).update();
@@ -351,6 +371,7 @@ public class MemberController {
   record Member(UUID id, String code, String name, String phone, Long balanceCents) {}
   record MemberWriteResult(UUID id, String code, String name, String phone, Long balanceCents, Boolean reactivated) {}
   record ExistingMember(UUID id, Boolean active) {}
+  record MemberCodeAllocation(String memberCodePrefix, Integer memberNumber) {}
   record MemberCenterRow(UUID id, String code, String name, String phone, String registeredStoreName, Long balanceCents, Long rechargeCents, Long bonusCents, Long consumptionCents, java.time.OffsetDateTime lastConsumptionAt, Long lastRechargeCents, String lastRechargeTechnicianName, String lastRechargeEmployeeName, java.time.OffsetDateTime lastRechargeAt, String lastActivityType, java.time.OffsetDateTime lastActivityAt, java.time.OffsetDateTime createdAt) {}
   record MemberWalletTransaction(UUID id, String transactionType, Long amountCents, Long balanceBeforeCents, Long balanceAfterCents, String paymentMethod, String paymentMethodNameSnapshot, UUID technicianId, String technicianNameSnapshot, UUID employeeId, String employeeNameSnapshot, String source, String note, java.time.OffsetDateTime createdAt, java.time.LocalDate businessDate, Long rechargeAmountCents, Long correctionVersion, Boolean refundLocked, String orderNo, String serviceItems, String serviceTechnicianNames, String roomNames, java.time.OffsetDateTime serviceEndedAt) {}
   record MemberRecharge(UUID id, java.time.LocalDate businessDate, Long rechargeAmountCents, String paymentMethod,
