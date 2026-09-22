@@ -30,6 +30,9 @@ INSERT INTO member_code_backup_run(migration_version,dump_file,dump_sha256)
 VALUES(101, :'dump_file', :'dump_sha256');
 INSERT INTO member_code_backup(member_id,tenant_id,registered_store_id,old_code,created_at,updated_at,version)
 SELECT id,tenant_id,registered_store_id,code,created_at,updated_at,version FROM member;
+-- V101 reads the snapshot and writes only its resulting code, even when pg_dump uses a different login.
+GRANT SELECT ON TABLE member_code_backup_run, member_code_backup TO :"migration_user";
+GRANT UPDATE (migrated_code) ON TABLE member_code_backup TO :"migration_user";
 COMMIT;
 SELECT captured_at,dump_file,dump_sha256,(SELECT count(*) FROM member_code_backup) AS members
 FROM member_code_backup_run;

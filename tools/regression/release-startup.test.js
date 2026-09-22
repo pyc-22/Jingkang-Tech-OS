@@ -37,7 +37,7 @@ async function start(extra=[],expectHealthy=true) {
   fs.mkdirSync(socketDir,{recursive:true});
   app=spawn(java,[`-Djdk.net.unixdomain.tmpdir=${socketDir}`,'-jar',jar,...extra],{cwd:dir,windowsHide:true,stdio:['ignore',log,log],
     env:{...process.env,MASSAGE_DB_URL:`jdbc:postgresql://127.0.0.1:${pgPort}/release_startup`,
-      MASSAGE_DB_USER:'postgres',MASSAGE_DB_PASSWORD:'',MASSAGE_API_ADDRESS:'127.0.0.1',MASSAGE_API_PORT:String(apiPort)}});
+      MASSAGE_DB_USER:'massage_app',MASSAGE_DB_PASSWORD:'',MASSAGE_API_ADDRESS:'127.0.0.1',MASSAGE_API_PORT:String(apiPort)}});
   fs.closeSync(log);
   let error,health;
   app.on('error',value=>{error=value;});
@@ -50,7 +50,7 @@ async function start(extra=[],expectHealthy=true) {
   const text=fs.readFileSync(logFile,'utf8');
   if(expectHealthy) {
     assert.equal(health?.status,'UP',`${error||''}\n${text.slice(-6000)}`);
-    assert.equal(health.release,'20260922-release-integrity-v3');
+    assert.equal(health.release,'20260922-member-backup-permissions-v4');
   } else {
     assert.ok(app.exitCode!==null && app.exitCode!==0,`Expected failed startup\n${text.slice(-6000)}`);
   }
@@ -65,11 +65,12 @@ test.before(async()=>{
   started=true;
   command('createdb',['-h','127.0.0.1','-p',String(pgPort),'-U','postgres','release_startup']);
   connection=['-X','-h','127.0.0.1','-p',String(pgPort),'-U','postgres','-d','release_startup'];
+  sql('CREATE ROLE massage_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE; ALTER DATABASE release_startup OWNER TO massage_app;');
 });
 test.after(async()=>{
   try {await stop();} finally {if(started) command('pg_ctl',['-D',path.join(dir,'pgdata'),'-m','fast','-w','stop']);}
 });
-test('real Boot startup logs V101 backup rejection, then migrates historical members and restarts',async()=>{
+test('restricted-role Boot startup rejects missing backup privileges, upgrades V101 and restarts after cross-account backup',async()=>{
   await start(['--spring.flyway.target=100']);
   await stop();
   assert.equal(sql("SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank DESC LIMIT 1;"),'100');
@@ -88,11 +89,43 @@ test('real Boot startup logs V101 backup rejection, then migrates historical mem
   assert.match(failure,/Run backup-member-codes.ps1/);
   assert.match(failure,/Application run failed/);
   assert.equal(sql("SELECT max(version::int) FROM flyway_schema_history WHERE success;"),'100');
-  const backup=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','RemoteSigned','-File',
-    path.join(runtime,'tools/maintenance/backup-member-codes.ps1'),'-Port',String(pgPort),'-Database','release_startup',
+  const backup=()=>spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','RemoteSigned','-File',
+    path.join(runtime,'tools/maintenance/backup-member-codes.ps1'),'-Port',String(pgPort),'-Database','release_startup','-MigrationUser','massage_app',
     '-BackupDirectory',path.join(dir,'backup'),'-PgBin',bin,'-ApplicationStopped'],{encoding:'utf8',windowsHide:true,timeout:120000,
       env:Object.fromEntries(Object.entries(process.env).filter(([key])=>key.toLowerCase()!=='psmodulepath'))});
-  assert.equal(backup.status,0,backup.stderr+'\n'+backup.stdout);
+  const firstBackup=backup();
+  assert.equal(firstBackup.status,0,firstBackup.stderr+'\n'+firstBackup.stdout);
+  assert.match(firstBackup.stdout,/massage_app/);
+  assert.match(firstBackup.stderr,/V101_BACKUP_READY/);
+  assert.equal(sql("SELECT rolsuper OR rolcreaterole OR rolcreatedb FROM pg_roles WHERE rolname='massage_app';"),'f');
+  assert.equal(sql("SELECT string_agg(tableowner,',' ORDER BY tablename) FROM pg_tables WHERE tablename IN ('member_code_backup','member_code_backup_run');"),'postgres,postgres');
+  const preflight=()=>spawnSync(path.join(bin,'psql.exe'),['-X','-h','127.0.0.1','-p',String(pgPort),'-U','massage_app',
+    '-d','release_startup','-v','ON_ERROR_STOP=1','-f',path.join(runtime,'tools/maintenance/check-member-codes.sql')],
+    {encoding:'utf8',windowsHide:true,timeout:30000});
+  assert.equal(preflight().status,0);
+  assert.equal(sql(`SELECT has_table_privilege('massage_app','member_code_backup','INSERT')
+    OR has_table_privilege('massage_app','member_code_backup','DELETE')
+    OR has_column_privilege('massage_app','member_code_backup','old_code','UPDATE')
+    OR has_table_privilege('massage_app','member_code_backup_run','UPDATE');`),'f');
+  sql('REVOKE UPDATE (migrated_code) ON member_code_backup FROM massage_app;');
+  const missingUpdate=preflight();
+  assert.notEqual(missingUpdate.status,0);
+  assert.match(missingUpdate.stderr,/V101_NOT_READY:.*backup table privileges/);
+  const updateFailure=await start([],false);
+  assert.match(updateFailure,/permission denied for table member_code_backup/);
+  assert.equal(sql("SELECT max(version::int) FROM flyway_schema_history WHERE success;"),'100');
+  assert.equal(sql("SELECT count(*) FROM information_schema.columns WHERE table_name='store' AND column_name='member_code_prefix';"),'0');
+  assert.equal(sql("SELECT count(*) FROM member WHERE code LIKE 'M%';"),'2');
+  assert.deepEqual(snapshot(),before);
+  sql('REVOKE SELECT ON member_code_backup_run, member_code_backup FROM massage_app;');
+  const missingSelect=preflight();
+  assert.notEqual(missingSelect.status,0);
+  assert.match(missingSelect.stderr,/V101_NOT_READY:.*backup table privileges/);
+  const selectFailure=await start([],false);
+  assert.match(selectFailure,/permission denied for table member_code_backup_run/);
+  const refreshedBackup=backup();
+  assert.equal(refreshedBackup.status,0,refreshedBackup.stderr+'\n'+refreshedBackup.stdout);
+  assert.equal(preflight().status,0);
   await start();
   assert.equal(sql("SELECT max(version::int) FROM flyway_schema_history WHERE success;"),'101');
   assert.equal(sql("SELECT string_agg(code,',' ORDER BY created_at,id) FROM member;"),'A00001,A00002');

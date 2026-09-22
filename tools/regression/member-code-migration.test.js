@@ -84,7 +84,7 @@ test('historical migration requires a verified backup, preserves all business da
   fails('BEGIN;\n'+fileSql(path.join(migrations,'V101__member_store_codes.sql')),/Run backup-member-codes/);
   assert.equal(sql("SELECT count(*) FROM information_schema.columns WHERE table_name='store' AND column_name='member_code_prefix';"),'0');
   const backup=spawnSync('powershell.exe',['-NoProfile','-ExecutionPolicy','RemoteSigned','-File',path.join(maintenance,'backup-member-codes.ps1'),
-    '-Port',String(port),'-Database','member_codes','-BackupDirectory',path.join(dir,'backups'),'-PgBin',bin,'-ApplicationStopped'],
+    '-Port',String(port),'-Database','member_codes','-MigrationUser','postgres','-BackupDirectory',path.join(dir,'backups'),'-PgBin',bin,'-ApplicationStopped'],
     {encoding:'utf8',windowsHide:true,timeout:120000,
       env:Object.fromEntries(Object.entries(process.env).filter(([key])=>key.toLowerCase()!=='psmodulepath'))});
   assert.equal(backup.status,0,backup.stdout+'\n'+backup.stderr);

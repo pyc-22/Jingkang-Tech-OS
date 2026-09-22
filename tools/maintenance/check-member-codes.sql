@@ -1,7 +1,11 @@
 \set ON_ERROR_STOP on
 -- Run with the same database, login and search_path as the API. No data is changed.
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
-SELECT current_database() AS database, current_user AS login,
+-- The backup operator can also check privileges as the explicitly supplied migration role.
+\if :{?migration_user}
+SET LOCAL ROLE :"migration_user";
+\endif
+SELECT current_database() AS database, session_user AS login, current_user AS migration_role,
        inet_server_addr() AS server_address, inet_server_port() AS server_port,
        current_schema() AS schema, current_setting('search_path') AS search_path,
        to_regclass('member') AS member_table,
@@ -22,6 +26,11 @@ BEGIN
   END IF;
   IF to_regclass('member_code_backup_run') IS NULL OR to_regclass('member_code_backup') IS NULL THEN
     RAISE EXCEPTION 'V101_NOT_READY: backup snapshot tables are missing in this database/search_path. Stop all writers and run backup-member-codes.ps1 against this exact database';
+  END IF;
+  IF NOT has_table_privilege(current_user, 'member_code_backup_run', 'SELECT')
+     OR NOT has_table_privilege(current_user, 'member_code_backup', 'SELECT')
+     OR NOT has_column_privilege(current_user, 'member_code_backup', 'migrated_code', 'UPDATE') THEN
+    RAISE EXCEPTION 'V101_NOT_READY: missing backup table privileges for migration role %. Require SELECT on both backup tables and UPDATE(migrated_code) on member_code_backup', current_user;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM member_code_backup_run WHERE migration_version=101 AND dump_sha256 ~ '^[0-9A-Fa-f]{64}$') THEN
     RAISE EXCEPTION 'V101_NOT_READY: verified full backup metadata is missing';

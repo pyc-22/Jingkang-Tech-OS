@@ -20,10 +20,12 @@ Custom external systems that store member codes must use `member_code_backup` to
 3. Run the bundled backup script before deploying the new JAR:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy RemoteSigned -File .\tools\maintenance\backup-member-codes.ps1 -DatabaseHost 127.0.0.1 -Port 5432 -Database massage_platform -User postgres -BackupDirectory C:\wwwroot\jingkang-platform\backup -ApplicationStopped
+powershell -NoProfile -ExecutionPolicy RemoteSigned -File .\tools\maintenance\backup-member-codes.ps1 -DatabaseHost 127.0.0.1 -Port 5432 -Database massage_platform -User postgres -MigrationUser massage_app -BackupDirectory C:\wwwroot\jingkang-platform\backup -ApplicationStopped
 ```
 
 The script creates a full custom-format dump, validates its archive directory, computes SHA256, stores a pre-migration member snapshot, and exports that mapping separately. Retain the entire timestamped backup directory off-server. Restrict it to database operators: it contains personal and financial data.
+
+With the v4 tools, `-MigrationUser` is required: use the actual Flyway database login (confirmed production value: `massage_app`). See `20260922-member-backup-permissions-v4.md` for the current deployment procedure and cross-account permissions.
 
 4. Restore the full dump into a separate test database first (`createdb` followed by `pg_restore --exit-on-error -d TEST_DATABASE DUMP_PATH`). Run the backup script against that restored database, then start this JAR against it and verify the new codes, balances, order history and reports.
 5. Deploy the JAR and frontend together, keeping traffic closed. Flyway applies V101 in one transaction. Existing member data without a matching backup snapshot causes startup to stop; investigate or take a fresh backup rather than bypassing the check. Empty installations require no historical backup.

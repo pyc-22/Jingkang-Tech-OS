@@ -3,6 +3,7 @@ param(
   [int]$Port = 5432,
   [string]$Database = 'massage_platform',
   [string]$User = 'postgres',
+  [Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$MigrationUser,
   [Parameter(Mandatory=$true)][string]$BackupDirectory,
   [string]$PgBin = 'C:\Program Files\PostgreSQL\16\bin',
   [switch]$ApplicationStopped
@@ -20,14 +21,14 @@ if ($LASTEXITCODE -ne 0 -or (Get-Item -LiteralPath $dump).Length -eq 0) { throw 
 & "$PgBin\pg_restore.exe" --list $dump | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Backup archive validation failed.' }
 $hash = (Get-FileHash -LiteralPath $dump -Algorithm SHA256).Hash
-& "$PgBin\psql.exe" @connection -X -v ON_ERROR_STOP=1 -v "dump_file=$dump" -v "dump_sha256=$hash" -f "$PSScriptRoot\backup-member-codes.sql"
+& "$PgBin\psql.exe" @connection -X -v ON_ERROR_STOP=1 -v "migration_user=$MigrationUser" -v "dump_file=$dump" -v "dump_sha256=$hash" -f "$PSScriptRoot\backup-member-codes.sql"
 if ($LASTEXITCODE -ne 0) { throw 'Member code snapshot failed. Keep the application stopped.' }
-& "$PgBin\psql.exe" @connection -X -v ON_ERROR_STOP=1 -f "$PSScriptRoot\check-member-codes.sql"
+& "$PgBin\psql.exe" @connection -X -v ON_ERROR_STOP=1 -v "migration_user=$MigrationUser" -f "$PSScriptRoot\check-member-codes.sql"
 if ($LASTEXITCODE -ne 0) { throw 'Member code backup preflight failed. Keep the application stopped.' }
 # The full dump predates the snapshot tables; preserve those separately as well.
 & "$PgBin\pg_dump.exe" @connection --format=custom --table=member_code_backup --table=member_code_backup_run --file="$output\member-code-map.dump"
 if ($LASTEXITCODE -ne 0) { throw 'Member code map export failed.' }
-[pscustomobject]@{ databaseHost=$DatabaseHost; port=$Port; database=$Database; user=$User;
+[pscustomobject]@{ databaseHost=$DatabaseHost; port=$Port; database=$Database; user=$User; migrationUser=$MigrationUser;
   backup=$dump; sha256=$hash; createdAt=(Get-Date).ToUniversalTime().ToString('o') } |
   ConvertTo-Json | Set-Content -LiteralPath "$output\manifest.json" -Encoding utf8
 Write-Output "Backup ready: $dump"

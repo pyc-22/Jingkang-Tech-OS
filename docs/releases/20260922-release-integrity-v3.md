@@ -1,5 +1,8 @@
 # 20260922-release-integrity-v3
 
+Historical release notes. For the confirmed cross-account V101 permission failure
+and current deployment commands, use `20260922-member-backup-permissions-v4.md`.
+
 ## Scope and Evidence
 
 This complete release includes the member-code feature, V101, backup/rollback tools,
@@ -50,7 +53,7 @@ end with `RELEASE_JAR_OK` and `RELEASE_FILES_OK` and exit code zero.
 3. Retain the current JAR/frontend/configuration. Back up the **current database**
    again: the earlier backup predates subsequent business on the rolled-back app.
    Follow `20260922-member-codes-technician-ui-v1.md` and run
-   `backup-member-codes.ps1 -ApplicationStopped` against the database actually used
+   `backup-member-codes.ps1 -MigrationUser massage_app -ApplicationStopped` against the database actually used
    by the service. Rehearse on a separately restored database first. Preserve all
    backup files off-server. If V101 is already applied, inspect its successful
    Flyway entry and mapping; do not rerun or edit migration history.
@@ -61,7 +64,7 @@ end with `RELEASE_JAR_OK` and `RELEASE_FILES_OK` and exit code zero.
    still stopped, run this using the API's actual database role and schema:
 
    ```powershell
-   & 'C:\Program Files\PostgreSQL\16\bin\psql.exe' -X -h 127.0.0.1 -p 5432 -U postgres -d massage_platform -v ON_ERROR_STOP=1 -f "$package\tools\maintenance\check-member-codes.sql"
+   & 'C:\Program Files\PostgreSQL\16\bin\psql.exe' -X -h 127.0.0.1 -p 5432 -U massage_app -d massage_platform -v ON_ERROR_STOP=1 -f "$package\tools\maintenance\check-member-codes.sql"
    ```
 
    Expected: `V101_BACKUP_READY` (historical members), `V101_READY_EMPTY`, or

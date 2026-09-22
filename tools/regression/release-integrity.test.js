@@ -10,7 +10,7 @@ const java = process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin/java.
 const jarPath = 'services/massage-api/target/massage-api-0.1.0.jar';
 const jar = path.join(runtime, jarPath);
 const verifier = path.join(root, 'tools/release/VerifyReleaseJar.java');
-const release = '20260922-release-integrity-v3';
+const release = '20260922-member-backup-permissions-v4';
 let dir;
 test.before(() => { dir = fs.mkdtempSync(path.join(root, '.artifacts/release-integrity-')); });
 test.after(() => fs.rmSync(dir, {recursive:true, force:true}));
