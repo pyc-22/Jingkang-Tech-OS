@@ -16,6 +16,9 @@ try {
       throw "Required download APK is missing or empty: $apk"
     }
   }
+  $java = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin/java.exe' } else { 'java' }
+  & $java --class-path $jar 'tools/release/VerifyReleaseJar.java' $jar $version
+  if ($LASTEXITCODE -ne 0) { throw 'Executable JAR verification failed. Run a clean build before packaging.' }
   # APKs are ignored build outputs, so include only the two published downloads explicitly.
   $files = @(git ls-files apps/massage-console services/massage-api/src/main/resources/db/migration |
     Where-Object { $_ -notlike '*/tests/*' })
@@ -29,22 +32,27 @@ try {
     'docs/releases/20260918-expense-workspace-v1.md',
     'docs/releases/20260919-expense-sync-fix-v1.md',
     'docs/releases/20260922-member-codes-technician-ui-v1.md',
+    'docs/releases/20260922-release-integrity-v3.md',
+    'tools/release/verify-release.ps1', 'tools/release/VerifyReleaseJar.java',
     'tools/maintenance/backup-member-codes.ps1',
     'tools/maintenance/backup-member-codes.sql',
+    'tools/maintenance/check-member-codes.sql',
     'tools/maintenance/rollback-member-codes.sql')
   foreach ($file in $files) {
     $target = Join-Path $output $file
     New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $root $file) -Destination $target
   }
+  Copy-Item -LiteralPath (Join-Path $root 'docs/releases/20260922-release-integrity-v3.md') -Destination (Join-Path $output 'UPDATE-README.md')
   $revision = git rev-parse HEAD
   if ($LASTEXITCODE -ne 0) { throw 'Source revision lookup failed.' }
   [pscustomobject]@{release=$version; sourceCommit=$revision; builtAt=(Get-Date).ToUniversalTime().ToString('o');
-    files=$files.Count} | ConvertTo-Json | Set-Content (Join-Path $output 'release.json') -Encoding utf8
+    files=$files.Count+1} | ConvertTo-Json | Set-Content (Join-Path $output 'release.json') -Encoding utf8
   Get-ChildItem -LiteralPath $output -Recurse -File | Sort-Object FullName | ForEach-Object {
     '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash,
       $_.FullName.Substring($output.Length+1).Replace('\','/')
   } | Set-Content (Join-Path $output 'SHA256SUMS.txt') -Encoding utf8
+  & (Join-Path $output 'tools/release/verify-release.ps1') -ReleaseDirectory $output -Java $java
   $zip = "$output.zip"
   Compress-Archive -Path (Join-Path $output '*') -DestinationPath $zip
   Get-FileHash -LiteralPath $zip -Algorithm SHA256 | Format-List

@@ -8,7 +8,8 @@ const {once} = require('node:events');
 const {JSDOM} = require('jsdom');
 const {chromium} = require('playwright');
 const root = path.resolve(__dirname,'../..');
-const source = fs.readFileSync(path.join(root,'apps/massage-console/app.js'),'utf8');
+const runtimeRoot = process.env.REVIEW_RELEASE_DIR || root;
+const source = fs.readFileSync(path.join(runtimeRoot,'apps/massage-console/app.js'),'utf8');
 function functionSource(name) {
   const start=source.indexOf(`function ${name}(`);
   assert.ok(start>=0,name);
@@ -21,7 +22,7 @@ test.before(async()=>{
   const port=reservation.address().port;
   await new Promise(resolve=>reservation.close(resolve));
   base=`http://127.0.0.1:${port}`;
-  server=spawn(process.execPath,[path.join(root,'server.massage.js')],{windowsHide:true,stdio:['ignore','pipe','pipe'],
+  server=spawn(process.execPath,[path.join(runtimeRoot,'server.massage.js')],{windowsHide:true,stdio:['ignore','pipe','pipe'],
     env:{...process.env,MASSAGE_ADDRESS:'127.0.0.1',MASSAGE_PORT:String(port)}});
   await once(server.stdout,'data');
   browser=await chromium.launch({channel:'msedge',headless:true});
@@ -35,7 +36,7 @@ for(const width of [1920,1440,1200,390]) {
     const page=await browser.newPage({viewport:{width,height:1000}});
     try {
       await page.route('**/index.html',async route=>{
-        const dom=new JSDOM(fs.readFileSync(path.join(root,'apps/massage-console/index.html'),'utf8'));
+        const dom=new JSDOM(fs.readFileSync(path.join(runtimeRoot,'apps/massage-console/index.html'),'utf8'));
         dom.window.document.querySelectorAll('script').forEach(script=>script.remove());
         await route.fulfill({contentType:'text/html',body:dom.serialize()});
         dom.window.close();

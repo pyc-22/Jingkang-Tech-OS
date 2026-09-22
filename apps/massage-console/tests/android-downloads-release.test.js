@@ -22,8 +22,10 @@ function fixture(t, script) {
     'docs/releases/20260918-expense-workspace-v1.md',
     'docs/releases/20260919-expense-sync-fix-v1.md',
     'docs/releases/20260922-member-codes-technician-ui-v1.md',
+    'docs/releases/20260922-release-integrity-v3.md',
+    'tools/release/VerifyReleaseJar.java', 'tools/release/verify-release.ps1',
     'tools/maintenance/backup-member-codes.ps1', 'tools/maintenance/backup-member-codes.sql',
-    'tools/maintenance/rollback-member-codes.sql',
+    'tools/maintenance/rollback-member-codes.sql', 'tools/maintenance/check-member-codes.sql',
     ...qualityDocs.map(name => `docs/reviews/2026-09-16/${name}`), 'tools/release/' + script];
   for (const file of files) {
     const target = path.join(dir, file);
@@ -31,6 +33,11 @@ function fixture(t, script) {
     if (file.endsWith('.ps1')) fs.copyFileSync(path.join(root, file), target);
     else fs.writeFileSync(target, `fixture ${file}`);
   }
+  // These tests cover package inventory. Real JAR loading is tested by release-integrity.test.js.
+  fs.writeFileSync(path.join(dir, 'services/massage-api/target/massage-api-0.1.0.jar'),
+    Buffer.from('504b0506000000000000000000000000000000000000', 'hex'));
+  fs.writeFileSync(path.join(dir, 'tools/release/VerifyReleaseJar.java'),
+    'class VerifyReleaseJar { public static void main(String[] args) {} }');
   const home = path.join(dir, 'services/massage-api/src/main/java/com/chengxin/massage/HomeController.java');
   fs.mkdirSync(path.dirname(home), { recursive: true });
   fs.writeFileSync(home, 'RELEASE = "fixture-release"');
@@ -92,3 +99,14 @@ for (const script of ['package-android-downloads.ps1', 'package-quality-release.
     assert.equal(fs.existsSync(path.join(dir, '.artifacts/releases')), false);
   });
 }
+
+test('package-quality-release.ps1: failed JAR verification stops before copying payload', { skip: process.platform !== 'win32' }, t => {
+  const script = 'package-quality-release.ps1';
+  const dir = fixture(t, script);
+  fs.writeFileSync(path.join(dir, 'tools/release/VerifyReleaseJar.java'),
+    'class VerifyReleaseJar { public static void main(String[] args) { System.exit(1); } }');
+  const result = run(dir, script);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Executable JAR verification failed/);
+  assert.equal(fs.existsSync(path.join(dir, '.artifacts/releases')), false);
+});

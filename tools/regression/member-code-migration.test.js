@@ -79,6 +79,8 @@ test.after(()=>{if(started) command('pg_ctl',['-D',path.join(dir,'pgdata'),'-m',
 test('historical migration requires a verified backup, preserves all business data and rolls back',()=>{
   const membersBefore=sql('SELECT jsonb_agg(to_jsonb(m) ORDER BY id) FROM member m;');
   const businessBefore=businessSnapshot();
+  const preflight=fileSql(path.join(maintenance,'check-member-codes.sql'));
+  fails(preflight,/V101_NOT_READY: backup snapshot tables are missing/);
   fails('BEGIN;\n'+fileSql(path.join(migrations,'V101__member_store_codes.sql')),/Run backup-member-codes/);
   assert.equal(sql("SELECT count(*) FROM information_schema.columns WHERE table_name='store' AND column_name='member_code_prefix';"),'0');
   const backup=spawnSync('powershell.exe',['-NoProfile','-ExecutionPolicy','RemoteSigned','-File',path.join(maintenance,'backup-member-codes.ps1'),
@@ -86,15 +88,20 @@ test('historical migration requires a verified backup, preserves all business da
     {encoding:'utf8',windowsHide:true,timeout:120000,
       env:Object.fromEntries(Object.entries(process.env).filter(([key])=>key.toLowerCase()!=='psmodulepath'))});
   assert.equal(backup.status,0,backup.stdout+'\n'+backup.stderr);
+  assert.match(backup.stdout,/member_codes/);
+  assert.match(backup.stderr,/V101_BACKUP_READY/);
+  sql(preflight);
   const dump=path.join(dir,'backups',fs.readdirSync(path.join(dir,'backups'))[0],'before-member-codes.dump');
   command('createdb',['-h','127.0.0.1','-p',String(port),'-U','postgres','restore_check']);
   command('pg_restore',['-h','127.0.0.1','-p',String(port),'-U','postgres','-d','restore_check','--exit-on-error',dump]);
   assert.equal(command('psql',['-X','-h','127.0.0.1','-p',String(port),'-U','postgres','-d','restore_check','-Atqc','SELECT jsonb_agg(to_jsonb(m) ORDER BY id) FROM member m;']),membersBefore);
   sql(`UPDATE member SET code='changed-after-backup' WHERE id='${member}';`);
+  fails(preflight,/V101_NOT_READY: member data changed since backup/);
   fails('BEGIN;\n'+fileSql(path.join(migrations,'V101__member_store_codes.sql')),/Member data changed since backup/);
   sql(`UPDATE member SET code='A00002' WHERE id='${member}';`);
   migrate();
   sql("INSERT INTO flyway_schema_history VALUES(101,'101',true);");
+  sql(preflight);
   assert.equal(sql('SELECT string_agg(code,\',\' ORDER BY id) FROM member;'),'A00001,A00002,B00001');
   assert.equal(sql(`SELECT member_code_next_number FROM store WHERE id='${store}';`),'3');
   assert.deepEqual(businessSnapshot(),businessBefore);
