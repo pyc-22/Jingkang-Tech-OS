@@ -144,7 +144,7 @@ public class MemberRechargeRefundController {
           and b.transaction_type='BONUS' and b.wallet_id=wt.wallet_id and b.member_id=wt.member_id
           and b.store_id=wt.store_id and b.tenant_id=wt.tenant_id),0) bonus_amount_cents
       from wallet_transaction wt where wt.id=:transaction and wt.store_id=:store
-        and wt.tenant_id=:tenant and wt.member_id=:member and wt.transaction_type='RECHARGE'
+        and wt.tenant_id=:tenant and wt.member_id=:member and wt.transaction_type='RECHARGE' and not wt.report_excluded
       for update of wt
       """).param("transaction", transaction).param("store", store).param("tenant", TENANT_ID)
       .param("member", member).query(RechargeTransaction.class).optional()

@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..', '..', '..');
 const controller = fs.readFileSync(path.join(root, 'services/massage-api/src/main/java/com/chengxin/massage/member/MemberController.java'), 'utf8');
@@ -90,4 +91,30 @@ test('open card, renewal and recharge submit technician and employee independent
 
 test('member center search also matches phone numbers', () => {
   assert.match(controller, /m\.code ilike :q or m\.name ilike :q or m\.phone ilike :q/);
+});
+
+test('card sales display omits cleared test recharges but uses corrected amounts for normal members', async () => {
+  const nodes = new Map();
+  const context = {
+    document:{querySelector:selector=>{
+      if(!nodes.has(selector)) nodes.set(selector,{value:'2025-07-03',innerHTML:'',classList:{add(){},remove(){}}});
+      return nodes.get(selector);
+    }},
+    setupMemberSalesStats(){},localDateValue:()=> '2025-07-03',storeContextHeaders:()=>({}),
+    memberBusinessEscape:value=>value,money:value=>String(value),
+    fetch:async()=>({ok:true,json:async()=>[
+      {transactionType:'RECHARGE',amountCents:128800,openingRecharge:true,reportExcluded:true,technicianNameSnapshot:'Excluded technician'},
+      {transactionType:'RECHARGE',amountCents:5000,rechargeAmountCents:6000,openingRecharge:true,reportExcluded:false,technicianNameSnapshot:'Normal technician'},
+      {transactionType:'CONSUMPTION',amountCents:-2000,reportExcluded:false}
+    ]})
+  };
+  const fn=app.split(/\r?\n/).find(line=>line.startsWith('async function loadMemberSalesStats()'));
+  await vm.runInNewContext(fn+'\nloadMemberSalesStats();',context);
+  assert.match(nodes.get('#member-sales-cards').innerHTML, /开卡数量<\/span><strong>1<\/strong>/);
+  assert.match(nodes.get('#member-sales-cards').innerHTML, /售卡金额<\/span><strong>60<\/strong>/);
+  assert.match(nodes.get('#member-sales-cards').innerHTML, /卡耗金额<\/span><strong>20<\/strong>/);
+  assert.doesNotMatch(nodes.get('#member-sales-tech').innerHTML,/Excluded technician/);
+  assert.match(nodes.get('#member-sales-tech').innerHTML,/Normal technician/);
+  // The audit ledger still reads posted wallet rows, not the reporting-only view.
+  assert.match(walletController,/from wallet_transaction wt join member/);
 });

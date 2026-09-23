@@ -592,7 +592,7 @@ public class DailyOperatingReportController {
         consumption = Math.addExact(consumption, metrics.consumptionAmountCents());
         rechargeNet = Math.addExact(rechargeNet, metrics.rechargeNetCents());
       }
-      Long cancellation = jdbc.sql("select coalesce(sum(amount_cents),0) from member_recharge_refund where store_id=:store and status='COMPLETED' and business_date between :from and :to")
+      Long cancellation = jdbc.sql("select coalesce(sum(amount_cents),0) from member_recharge_refund where store_id=:store and status='COMPLETED' and business_date between :from and :to and original_transaction_id in (select id from reporting_wallet_transaction)")
         .param("store", storeId).param("from", from).param("to", to).query(Long.class).single();
       return new CardActivity(openCents, openCount, renewCents, cancellation, consumption, rechargeNet);
     }
@@ -600,18 +600,18 @@ public class DailyOperatingReportController {
       with ranked_recharges as (
         select wt.store_id,wt.member_id,wt.business_date,coalesce(wt.corrected_amount_cents,wt.amount_cents) amount_cents,
           row_number() over(partition by wt.store_id,wt.member_id order by wt.created_at,wt.id) recharge_number
-        from wallet_transaction wt
+        from reporting_wallet_transaction wt
         where wt.transaction_type='RECHARGE'
       )
       select
         coalesce((select sum(amount_cents) from ranked_recharges where store_id=:store and business_date between :from and :to and recharge_number=1),0) open_cents,
         coalesce((select count(*) from ranked_recharges where store_id=:store and business_date between :from and :to and recharge_number=1),0) open_count,
         coalesce((select sum(amount_cents) from ranked_recharges where store_id=:store and business_date between :from and :to and recharge_number>1),0) renew_cents,
-        coalesce((select sum(amount_cents) from member_recharge_refund where store_id=:store and status='COMPLETED' and business_date between :from and :to),0) cancellation_cents,
+        coalesce((select sum(amount_cents) from member_recharge_refund where store_id=:store and status='COMPLETED' and business_date between :from and :to and original_transaction_id in (select id from reporting_wallet_transaction)),0) cancellation_cents,
         coalesce((select sum(-amount_cents) from wallet_transaction where store_id=:store and transaction_type='CONSUMPTION' and business_date between :from and :to),0) consumption_debit_cents,
         coalesce((select sum(amount_cents) from wallet_transaction where store_id=:store and transaction_type='REFUND' and source in ('ORDER_REFUND','ORDER_CORRECTION') and business_date between :from and :to),0) consumption_refund_cents,
-        coalesce((select sum(coalesce(corrected_amount_cents,amount_cents)) from wallet_transaction where store_id=:store and transaction_type='RECHARGE' and business_date between :from and :to),0)
-          + coalesce((select sum(amount_cents) from wallet_transaction where store_id=:store and transaction_type='ADJUSTMENT' and source='RECHARGE_REFUND' and business_date between :from and :to),0) recharge_net_cents
+        coalesce((select sum(coalesce(corrected_amount_cents,amount_cents)) from reporting_wallet_transaction where store_id=:store and transaction_type='RECHARGE' and business_date between :from and :to),0)
+          + coalesce((select sum(amount_cents) from reporting_wallet_transaction where store_id=:store and transaction_type='ADJUSTMENT' and source='RECHARGE_REFUND' and business_date between :from and :to),0) recharge_net_cents
       """).param("store", storeId).param("from", from).param("to", to).query(CardActivityRaw.class).single();
     return new CardActivity(raw.openCents(), raw.openCount(), raw.renewCents(), raw.cancellationCents(),
       cardConsumptionCents(raw.consumptionDebitCents(), raw.consumptionRefundCents()), raw.rechargeNetCents());
@@ -662,7 +662,7 @@ public class DailyOperatingReportController {
       select coalesce(payment.payment_method,'UNSPECIFIED') code,
              coalesce(max(payment.payment_method_name_snapshot),case when payment.payment_method is null then '未指定' else payment.payment_method end) name,
              coalesce(sum(coalesce(payment.corrected_amount_cents,payment.amount_cents)),0) amount_cents
-      from wallet_transaction payment
+      from reporting_wallet_transaction payment
       where payment.store_id=:store and payment.transaction_type='RECHARGE'
         and payment.business_date between :from and :to
       group by payment.payment_method
@@ -671,7 +671,7 @@ public class DailyOperatingReportController {
       select coalesce(payment.payment_method,'UNSPECIFIED') code,
              coalesce(max(payment.payment_method_name_snapshot),case when payment.payment_method is null then '未指定' else payment.payment_method end) name,
              coalesce(sum(-payment.amount_cents),0) amount_cents
-      from wallet_transaction payment
+      from reporting_wallet_transaction payment
       where payment.store_id=:store and payment.transaction_type='ADJUSTMENT' and payment.source='RECHARGE_REFUND'
         and payment.business_date between :from and :to
       group by payment.payment_method

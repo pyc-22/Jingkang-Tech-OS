@@ -40,13 +40,15 @@ public class MemberController {
   private final StoreContextService storeContext;
   private final AuditService audits;
   private final BusinessClockService businessClock;
+  private final MemberCleanupReportService cleanupReports;
 
-  MemberController(JdbcClient jdbc, AdminSessionService adminSessions, StoreContextService storeContext, AuditService audits, BusinessClockService businessClock) {
+  MemberController(JdbcClient jdbc, AdminSessionService adminSessions, StoreContextService storeContext, AuditService audits, BusinessClockService businessClock, MemberCleanupReportService cleanupReports) {
     this.jdbc = jdbc;
     this.adminSessions = adminSessions;
     this.storeContext = storeContext;
     this.audits = audits;
     this.businessClock = businessClock;
+    this.cleanupReports = cleanupReports;
   }
 
   @GetMapping
@@ -189,6 +191,7 @@ public class MemberController {
     UUID transactionStoreId = storeContext.currentStore(authorization, requestedStoreId);
     Member beforeMember = member(id);
     Wallet wallet = wallet(id);
+    if (!jdbc.sql("select active from member where id=:id").param("id", id).query(Boolean.class).single()) throw conflict("会员已归档，请先核实会员状态");
     PaymentMethod paymentMethod = paymentMethod(transactionStoreId, input.paymentMethod());
     if (!"EXTERNAL".equals(paymentMethod.methodKind())) throw bad("Member balance cannot be used for recharge");
     Technician technician = input.technicianId() == null ? null : technician(transactionStoreId, input.technicianId());
@@ -262,14 +265,17 @@ public class MemberController {
   }
 
   @PostMapping("/{id}/clear-test-balance-and-archive")
-  @Transactional
+  @Transactional(isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
   ResponseEntity<Map<String, String>> clearTestBalanceAndArchive(@PathVariable UUID id,
       @Valid @RequestBody TestBalanceCleanupInput input,
       @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
       @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     adminSessions.requireTenantAdmin(authorization);
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    // Serialize with recharge/reactivation before capturing the affected report dates.
+    lockMember(id);
     Member before = member(id);
+    List<MemberCleanupReportService.Report> affectedReports = cleanupReports.lockReports(TENANT_ID, id);
     Wallet wallet = wallet(id);
     if (wallet.balanceCents() <= 0) return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", "会员余额已为零，请直接停用归档"));
     boolean unsettled = jdbc.sql("select exists(select 1 from sales_order where member_id=:member and status not in ('SETTLED','CANCELLED'))")
@@ -285,6 +291,7 @@ public class MemberController {
       .param("member", id).param("tenant", TENANT_ID).update();
     audits.record(authorization, storeId, "MEMBER", "MEMBER_TEST_BALANCE_CLEARED_AND_DEACTIVATED", "member", id,
       "系统管理员清理测试余额并停用归档", before, Map.of("balanceCents", 0, "active", false, "reason", input.reason().trim()));
+    cleanupReports.exclude(TENANT_ID, id, affectedReports, adminSessions.requireAuthenticatedUserId(authorization));
     return ResponseEntity.ok(Map.of("message", "测试余额已清零，会员已停用归档"));
   }
 
@@ -328,8 +335,14 @@ public class MemberController {
   }
 
   private Wallet wallet(UUID memberId) {
+    lockMember(memberId);
     return jdbc.sql("select w.id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.member_id=:member and m.tenant_id=:tenant for update")
       .param("member", memberId).param("tenant", TENANT_ID).query(Wallet.class).single();
+  }
+
+  private void lockMember(UUID memberId) {
+    jdbc.sql("select id from member where id=:member and tenant_id=:tenant for update")
+      .param("member", memberId).param("tenant", TENANT_ID).query(UUID.class).optional().orElseThrow(() -> notFound("Member not found"));
   }
 
   private String memberCenterSql(String memberFilter) {

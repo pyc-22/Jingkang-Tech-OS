@@ -53,7 +53,7 @@ public class MemberRechargeCorrectionController {
       select id,wallet_id,business_date,payment_method,payment_method_name_snapshot,
         coalesce(corrected_amount_cents,amount_cents) amount_cents,correction_version
       from wallet_transaction where id=:id and member_id=:member and store_id=:store
-        and tenant_id=:tenant and transaction_type='RECHARGE' for update
+        and tenant_id=:tenant and transaction_type='RECHARGE' and not report_excluded for update
       """).param("id", rechargeId).param("member", memberId).param("store", storeId).param("tenant", TENANT_ID)
       .query(Recharge.class).optional().orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Recharge not found"));
     if (before.correctionVersion() != input.version()) throw conflict("Recharge changed; refresh before correcting");

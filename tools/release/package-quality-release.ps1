@@ -34,6 +34,7 @@ try {
     'docs/releases/20260922-member-codes-technician-ui-v1.md',
     'docs/releases/20260922-release-integrity-v3.md',
     'docs/releases/20260922-member-backup-permissions-v4.md',
+    'docs/releases/20260923-member-cleanup-reports-v1.md',
     'tools/release/verify-release.ps1', 'tools/release/VerifyReleaseJar.java',
     'tools/maintenance/backup-member-codes.ps1',
     'tools/maintenance/backup-member-codes.sql',
@@ -44,7 +45,7 @@ try {
     New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $root $file) -Destination $target
   }
-  Copy-Item -LiteralPath (Join-Path $root 'docs/releases/20260922-member-backup-permissions-v4.md') -Destination (Join-Path $output 'UPDATE-README.md')
+  Copy-Item -LiteralPath (Join-Path $root 'docs/releases/20260923-member-cleanup-reports-v1.md') -Destination (Join-Path $output 'UPDATE-README.md')
   $revision = git rev-parse HEAD
   if ($LASTEXITCODE -ne 0) { throw 'Source revision lookup failed.' }
   [pscustomobject]@{release=$version; sourceCommit=$revision; builtAt=(Get-Date).ToUniversalTime().ToString('o');

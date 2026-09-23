@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.ResponseBody;
 
 @Controller
 public class HomeController {
-  private static final String RELEASE = "20260922-member-backup-permissions-v4";
+  private static final String RELEASE = "20260923-member-cleanup-reports-v1";
   private final JdbcClient jdbc;
 
   HomeController(JdbcClient jdbc) {

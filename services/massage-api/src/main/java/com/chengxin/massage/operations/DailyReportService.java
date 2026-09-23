@@ -50,13 +50,13 @@ public class DailyReportService {
       with ranked_recharges as (
         select wt.store_id,wt.member_id,wt.business_date,coalesce(wt.corrected_amount_cents,wt.amount_cents) amount_cents,
                row_number() over(partition by wt.tenant_id,wt.member_id order by wt.created_at,wt.id) recharge_number
-        from wallet_transaction wt
+        from reporting_wallet_transaction wt
         where wt.tenant_id=:tenant and wt.transaction_type='RECHARGE'
       )
       select
-        coalesce((select sum(coalesce(wt.corrected_amount_cents,wt.amount_cents)) from wallet_transaction wt
+        coalesce((select sum(coalesce(wt.corrected_amount_cents,wt.amount_cents)) from reporting_wallet_transaction wt
           where wt.store_id=:store and wt.business_date=:date and wt.transaction_type='RECHARGE'),0)::bigint recharge_amount_cents,
-        coalesce((select sum(wt.amount_cents) from wallet_transaction wt
+        coalesce((select sum(wt.amount_cents) from reporting_wallet_transaction wt
           where wt.store_id=:store and wt.business_date=:date and (wt.transaction_type='BONUS'
             or (wt.transaction_type='ADJUSTMENT' and wt.source='RECHARGE_REFUND_BONUS'))),0)::bigint bonus_amount_cents,
         coalesce((select sum(abs(wt.amount_cents)) from wallet_transaction wt
@@ -134,7 +134,7 @@ public class DailyReportService {
       select coalesce(wt.payment_method,'UNSPECIFIED') code,
              coalesce(max(wt.payment_method_name_snapshot),case when wt.payment_method is null then '未指定' else wt.payment_method end) name,
              coalesce(sum(coalesce(wt.corrected_amount_cents,wt.amount_cents)),0)::bigint amount_cents
-      from wallet_transaction wt
+      from reporting_wallet_transaction wt
       where wt.store_id=:store and wt.business_date=:date and wt.transaction_type='RECHARGE'
       group by wt.payment_method
       """).param("store", storeId).param("date", date).query(NamedAmount.class).list().forEach(row -> {
@@ -146,7 +146,7 @@ public class DailyReportService {
       select coalesce(wt.payment_method,'UNSPECIFIED') code,
              coalesce(max(wt.payment_method_name_snapshot),case when wt.payment_method is null then '未指定' else wt.payment_method end) name,
              coalesce(sum(-wt.amount_cents),0)::bigint amount_cents
-      from wallet_transaction wt
+      from reporting_wallet_transaction wt
       where wt.store_id=:store and wt.business_date=:date and wt.transaction_type='ADJUSTMENT' and wt.source='RECHARGE_REFUND'
       group by wt.payment_method
       """).param("store", storeId).param("date", date).query(NamedAmount.class).list().forEach(row -> {
