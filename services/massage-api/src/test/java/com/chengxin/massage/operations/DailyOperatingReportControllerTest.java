@@ -11,14 +11,24 @@ class DailyOperatingReportControllerTest {
     new DailyOperatingReportController(null, null, null, null, null, null);
 
   @Test
-  void calculatesCombinedExtensionAndCallRateUsingTotalServiceCount() {
-    assertThat(controller.serviceClockRate(80, 10, 10))
-      .isEqualByComparingTo(new BigDecimal("20.00"));
+  void calculatesDailyServiceRatesUsingCustomerCount() {
+    assertThat(controller.serviceClockRate(18, 1, 0)).isEqualByComparingTo(new BigDecimal("5.56"));
+    assertThat(controller.serviceClockRate(18, 0, 7)).isEqualByComparingTo(new BigDecimal("38.89"));
+    assertThat(controller.serviceClockRate(18, 1, 7)).isEqualByComparingTo(new BigDecimal("44.44"));
+  }
+
+  @Test
+  void calculatesMonthlyServiceRatesUsingCustomerCount() {
+    assertThat(controller.serviceClockRate(439, 62, 0)).isEqualByComparingTo(new BigDecimal("14.12"));
+    assertThat(controller.serviceClockRate(439, 0, 95)).isEqualByComparingTo(new BigDecimal("21.64"));
+    assertThat(controller.serviceClockRate(439, 62, 95)).isEqualByComparingTo(new BigDecimal("35.76"));
   }
 
   @Test
   void returnsZeroRateWhenThereIsNoServiceActivity() {
     assertThat(controller.serviceClockRate(0, 0, 0))
+      .isEqualByComparingTo(new BigDecimal("0.00"));
+    assertThat(controller.serviceClockRate(0, 1, 7))
       .isEqualByComparingTo(new BigDecimal("0.00"));
   }
 

@@ -24,6 +24,7 @@ function fixture(t, script) {
     'docs/releases/20260922-member-codes-technician-ui-v1.md',
     'docs/releases/20260922-release-integrity-v3.md',
     'docs/releases/20260922-member-backup-permissions-v4.md',
+    'docs/releases/20260923-member-cleanup-reports-v1.md',
     'tools/release/VerifyReleaseJar.java', 'tools/release/verify-release.ps1',
     'tools/maintenance/backup-member-codes.ps1', 'tools/maintenance/backup-member-codes.sql',
     'tools/maintenance/rollback-member-codes.sql', 'tools/maintenance/check-member-codes.sql',

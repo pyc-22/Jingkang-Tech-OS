@@ -25,7 +25,7 @@
       <section class="daily-report-query panel"><div class="daily-report-query-fields"><label>门店<select id="daily-report-store"></select></label><label>营业日期<input id="daily-operating-report-date" type="date"></label></div><div class="daily-report-status"><span id="daily-report-status" class="record-type consumption">未创建</span><small>日报提交后将保留最后编辑人与修改记录</small></div></section>
       <section class="daily-report-overview" id="daily-report-overview"></section>
       <section class="panel daily-report-refunds hidden" id="daily-report-refunds"><div class="daily-report-section-heading"><div><p class="eyebrow">退款发生明细</p><h2>当日已完成退款</h2></div><span>按原订单营业日归集</span></div><div id="daily-report-refund-list" class="daily-report-refund-list"></div></section>
-      <section class="panel daily-service-panel"><div class="daily-report-section-heading"><div><p class="eyebrow">服务客流</p><h2>加钟与点钟结构</h2></div><span class="daily-service-formula">按总服务次数计算</span></div><div class="daily-service-groups"><section><div class="daily-service-group-heading"><b>当日服务结构</b><small>当前营业日期</small></div><div class="daily-service-grid" id="daily-service-daily"></div></section><section><div class="daily-service-group-heading"><b>本月服务结构</b><small>本月累计至当前日期</small></div><div class="daily-service-grid" id="daily-service-monthly"></div></section></div></section>
+      <section class="panel daily-service-panel"><div class="daily-report-section-heading"><div><p class="eyebrow">服务客流</p><h2>加钟与点钟结构</h2></div><span class="daily-service-formula">比率按总客流计算</span></div><div class="daily-service-groups"><section><div class="daily-service-group-heading"><b>当日服务结构</b><small>当前营业日期</small></div><div class="daily-service-grid" id="daily-service-daily"></div></section><section><div class="daily-service-group-heading"><b>本月服务结构</b><small>本月累计至当前日期</small></div><div class="daily-service-grid" id="daily-service-monthly"></div></section></div></section>
       <div class="daily-report-layout"><section class="panel daily-report-data-panel"><div class="daily-report-section-heading"><div><p class="eyebrow">月度累计</p><h2>本月经营进度</h2></div><span id="daily-report-month-rate" class="daily-rate">--</span></div><div class="daily-report-table-wrap"><table><tbody id="daily-report-monthly-records"></tbody></table></div></section><section class="panel daily-report-payment-panel"><div class="daily-report-section-heading"><div><p class="eyebrow">当日收款</p><h2>支付渠道净实收</h2></div><strong id="daily-report-payment-total">¥0.00</strong></div><div id="daily-report-payment-bars" class="daily-payment-bars"></div></section></div>
       <form id="daily-report-form" class="daily-report-form"><section class="panel"><div class="daily-report-section-heading"><div><p class="eyebrow">当日经营</p><h2>当日数据填报</h2></div><button class="button primary" type="submit">保存日报</button></div><div class="daily-report-fields">
         <label>当日目标（元）<input name="dailyTargetCents" type="number" min="0" step="0.01"></label><label>当日营业额（元）<input name="dailySalesAmountCents" type="number" min="0" step="0.01"></label><label>当日现金流（元）<input name="dailyCashFlowCents" type="number" min="0" step="0.01"></label><label>当日售卡（元）<input name="dailyCardSaleCents" type="number" min="0" step="0.01"></label><label>当日开卡数量（张）<input name="dailyCardOpenCount" type="number" min="0" step="1"></label><label hidden>当日开卡金额（兼容）<input name="dailyCardOpenCents" type="number" min="0" step="0.01"></label><label>当日续卡（元）<input name="dailyCardRenewCents" type="number" min="0" step="0.01"></label><label>当日销卡（元）<input name="dailyCardCancellationCents" type="number" min="0" step="0.01"></label><label>当日卡耗（元）<input name="dailyCardConsumptionCents" type="number" min="0" step="0.01"></label><label class="daily-customer-count-field"><span>当日总客流</span><div class="daily-customer-count-control"><input name="dailyCustomerCount" type="number" min="0" step="1"><button class="button secondary daily-customer-count-edit" id="daily-customer-count-edit" type="button">修改</button><button class="button secondary daily-customer-count-reset" id="daily-customer-count-reset" type="button">恢复自动</button></div><small id="daily-customer-count-meta">按有效订单自动统计</small></label><label>当日加钟<input name="dailyExtensionCount" type="number" min="0" step="1"></label><label>当日点钟<input name="dailyCallClockCount" type="number" min="0" step="1"></label><div id="daily-report-payment-fields" class="daily-report-payment-fields form-full" aria-live="polite"></div>
@@ -103,13 +103,17 @@
       serviceMetric('dailyCustomerCount', '当日总客流', values.dailyCustomerCount, 'count', 'traffic'),
       serviceMetric('dailyExtensionCount', '当日加钟', values.dailyExtensionCount, 'count', 'extension'),
       serviceMetric('dailyCallClockCount', '当日点钟', values.dailyCallClockCount, 'count', 'call'),
+      serviceMetric('dailyExtensionRate', '当日加钟率', derived.dailyExtensionRate, 'percent', 'rate'),
+      serviceMetric('dailyCallClockRate', '当日点钟率', derived.dailyCallClockRate, 'percent', 'rate'),
       serviceMetric('dailyServiceClockRate', '当日加点钟率', derived.dailyServiceClockRate, 'percent', 'rate')
     ].join('');
     document.querySelector('#daily-service-monthly').innerHTML = [
       serviceMetric('customerCount', '当月总客流', monthly.customerCount, 'count', 'traffic'),
       serviceMetric('extensionCount', '累计加钟', monthly.extensionCount, 'count', 'extension'),
       serviceMetric('callClockCount', '累计点钟', monthly.callClockCount, 'count', 'call'),
-      serviceMetric('serviceClockRate', '加点钟率', derived.monthlyServiceClockRate, 'percent', 'rate')
+      serviceMetric('monthlyExtensionRate', '累计加钟率', derived.monthlyExtensionRate, 'percent', 'rate'),
+      serviceMetric('monthlyCallClockRate', '累计点钟率', derived.monthlyCallClockRate, 'percent', 'rate'),
+      serviceMetric('serviceClockRate', '累计加点钟率', derived.monthlyServiceClockRate, 'percent', 'rate')
     ].join('');
   }
   function renderRefundOccurrences(items) {
@@ -124,12 +128,13 @@
     const customers = Number(form.elements.dailyCustomerCount.value || 0);
     const extensions = Number(form.elements.dailyExtensionCount.value || 0);
     const calls = Number(form.elements.dailyCallClockCount.value || 0);
-    const total = customers + extensions + calls;
-    const dailyRate = total > 0 ? (extensions + calls) * 100 / total : 0;
+    const dailyRate = customers > 0 ? (extensions + calls) * 100 / customers : 0;
+    const extensionRate = customers > 0 ? extensions * 100 / customers : 0;
+    const callRate = customers > 0 ? calls * 100 / customers : 0;
     renderServiceStructure(
       { ...(data.currentValues || {}), dailyCustomerCount: customers, dailyExtensionCount: extensions, dailyCallClockCount: calls },
       data.monthly || {},
-      { ...(data.derived || {}), dailyServiceClockRate: dailyRate }
+      { ...(data.derived || {}), dailyServiceClockRate: dailyRate, dailyExtensionRate: extensionRate, dailyCallClockRate: callRate }
     );
   }
   function renderSettings(settings) {

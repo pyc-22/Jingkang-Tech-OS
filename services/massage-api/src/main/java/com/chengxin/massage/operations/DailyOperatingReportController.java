@@ -499,13 +499,17 @@ public class DailyOperatingReportController {
       average(monthly.salesAmountCents(), (int) monthly.customerCount()),
       average(values.dailySalesCents(), values.dailyCustomerCount()),
       serviceClockRate(values.dailyCustomerCount(), values.dailyExtensionCount(), values.dailyCallClockCount()),
-      serviceClockRate(monthly.customerCount(), monthly.extensionCount(), monthly.callClockCount()));
+      serviceClockRate(monthly.customerCount(), monthly.extensionCount(), monthly.callClockCount()),
+      serviceClockRate(values.dailyCustomerCount(), values.dailyExtensionCount(), 0),
+      serviceClockRate(values.dailyCustomerCount(), 0, values.dailyCallClockCount()),
+      serviceClockRate(monthly.customerCount(), monthly.extensionCount(), 0),
+      serviceClockRate(monthly.customerCount(), 0, monthly.callClockCount()));
   }
 
   private BigDecimal rate(long value, long target) { return target <= 0 ? BigDecimal.ZERO.setScale(2) : BigDecimal.valueOf(value * 100.0 / target).setScale(2, RoundingMode.HALF_UP); }
   private BigDecimal average(long value, int count) { return count <= 0 ? BigDecimal.ZERO.setScale(2) : BigDecimal.valueOf(value).divide(BigDecimal.valueOf(count), 2, RoundingMode.HALF_UP); }
   BigDecimal serviceClockRate(long customers, long extensions, long calls) {
-    return rate(extensions + calls, customers + extensions + calls);
+    return rate(extensions + calls, customers);
   }
 
   private ReportValues autoValues(UUID storeId, LocalDate date) {
@@ -807,7 +811,9 @@ public class DailyOperatingReportController {
   public record DerivedMetrics(BigDecimal dailyTargetCompletionRate, BigDecimal monthlyTargetCompletionRate,
                                long paymentChannelTotalCents, BigDecimal averageCustomerSpendCents,
                                BigDecimal dailyAverageCustomerSpendCents, BigDecimal dailyServiceClockRate,
-                               BigDecimal monthlyServiceClockRate) {}
+                               BigDecimal monthlyServiceClockRate, BigDecimal dailyExtensionRate,
+                               BigDecimal dailyCallClockRate, BigDecimal monthlyExtensionRate,
+                               BigDecimal monthlyCallClockRate) {}
   public record RevisionView(Integer revisionNo, String action, String afterData, UUID actorUserId, OffsetDateTime createdAt, String actorName) {}
   public record DailyReportRow(UUID id, LocalDate businessDate, String status, Long dailyTargetCents, Long dailySalesAmountCents, Long dailyCashFlowCents, Long dailyCardSaleCents, Long dailyCardOpenCents, Long dailyCardRenewCents, Long dailyCardCancellationCents, Long dailyCardConsumptionCents, Integer dailyCustomerCount, Integer dailyExtensionCount, Integer dailyCallClockCount, Long dailyCashCents, Long dailyAlipayCents, Long dailyDouyinCents, Long dailyMeituanCents, Long dailyFreeOrderCents, Long dailyEntertainmentCents, Integer managerCount, Integer cashierCount, Integer technicianCount, Integer chefCount, Integer cleanerCount, String incidentNote, String extendedShiftNote, Integer nextDayRestCount, Integer customerLossCount, String nextDayImprovementNote, UUID createdByUserId, UUID updatedByUserId, UUID publishedByUserId, OffsetDateTime createdAt, OffsetDateTime lastSavedAt, OffsetDateTime publishedAt, OffsetDateTime updatedAt, Long version, String createdByName, String updatedByName, String publishedByName) {
     ReportValues values() { return new ReportValues(dailyTargetCents, dailySalesAmountCents, dailyCashFlowCents, dailyCardSaleCents, dailyCardOpenCents, 0, dailyCardRenewCents, dailyCardCancellationCents, dailyCardConsumptionCents, dailyCustomerCount, dailyExtensionCount, dailyCallClockCount, dailyCashCents, dailyAlipayCents, dailyDouyinCents, dailyMeituanCents, dailyFreeOrderCents, dailyEntertainmentCents, managerCount, cashierCount, technicianCount, chefCount, cleanerCount, incidentNote, extendedShiftNote, nextDayRestCount, customerLossCount, nextDayImprovementNote); }
