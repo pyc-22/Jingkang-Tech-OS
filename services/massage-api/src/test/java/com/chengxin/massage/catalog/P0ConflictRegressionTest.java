@@ -65,6 +65,40 @@ class P0ConflictRegressionTest {
   }
 
   @Test
+  void roomTransfersUseBedCapacityAndReservePendingTargets() throws Exception {
+    String source = Files.readString(Path.of("src/main/java/com/chengxin/massage/catalog/ServiceRoomTransferController.java"));
+
+    assertThat(source).contains("ensureRoomCapacity(storeId, targetRoomId, pendingTransferCount(storeId, targetRoomId))");
+    assertThat(source).contains("pendingTransferCountExcluding(storeId, transfer.toRoomId(), transfer.id())");
+    assertThat(source).contains("select count(*) from room_bed where store_id=:store and room_id=:room and active=true");
+    assertThat(source).contains("occupied + pendingTransferReservations >= capacity");
+    assertThat(source).contains("limit 1 offset :reserved for update of b");
+    assertThat(source).contains("acceptsAnotherService");
+  }
+
+  @Test
+  void roomStateRecomputesMultiBedOccupancyAfterAServiceMoves() throws Exception {
+    String source = Files.readString(Path.of("src/main/java/com/chengxin/massage/catalog/RoomStateService.java"));
+
+    assertThat(source).contains("status='IN_SERVICE'");
+    assertThat(source).contains("if (occupancy.inService()) status = \"IN_SERVICE\";");
+    assertThat(source).contains("else if (occupancy.pending()");
+  }
+
+  @Test
+  void technicianReplacementStaysInOneSessionAndSettlementIsIdempotent() throws Exception {
+    String participant = Files.readString(Path.of("src/main/java/com/chengxin/massage/catalog/ServiceParticipantController.java"));
+    String sales = Files.readString(Path.of("src/main/java/com/chengxin/massage/sales/SalesOrderController.java"));
+
+    assertThat(participant).contains("status='COMPLETED',service_ended_at=:ended");
+    assertThat(participant).contains("participation_type,allocation_bp,status,joined_at,accepted_at,service_started_at,replaced_participant_id");
+    assertThat(participant).contains("replaced_participant_id");
+    assertThat(sales).contains("findExistingSettledOrder(storeId, input.lines())");
+    assertThat(sales).contains("where link.service_session_id=:session and linked_order.status <> 'CANCELLED' and linked_order.refund_status <> 'FULL'");
+    assertThat(sales).contains("validateSettlementParticipants(participants)");
+  }
+
+  @Test
   void roomStatusReadsUseEventIdAsStableTieBreaker() throws Exception {
     String mobile = Files.readString(Path.of("src/main/java/com/chengxin/massage/mobile/TechnicianMobileController.java"));
     String operations = Files.readString(Path.of("src/main/java/com/chengxin/massage/operations/OperationsReportController.java"));

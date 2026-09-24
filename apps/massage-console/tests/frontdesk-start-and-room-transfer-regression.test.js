@@ -21,6 +21,21 @@ const controller = fs.readFileSync(path.resolve(
   'catalog',
   'ServiceSessionController.java'
 ), 'utf8');
+const roomTransferController = fs.readFileSync(path.resolve(
+  root,
+  '..',
+  '..',
+  'services',
+  'massage-api',
+  'src',
+  'main',
+  'java',
+  'com',
+  'chengxin',
+  'massage',
+  'catalog',
+  'ServiceRoomTransferController.java'
+), 'utf8');
 const participantController = fs.readFileSync(path.resolve(
   root,
   '..',
@@ -95,7 +110,7 @@ test('pending technician card exposes a direct start-service action', () => {
 });
 
 test('front desk loads the updated application script without stale browser cache', () => {
-  assert.match(index, /app\.js\?v=20260922-technician-cards-v2/);
+  assert.match(index, /app\.js\?v=20260924-room-transfer-tech-replacement-v1/);
 });
 
 test('technician-card and settlement room-transfer dialogs have unique ids', () => {
@@ -117,4 +132,35 @@ test('replaced technicians are removed from live front-desk state while history 
   assert.match(participantController, /slot_no=:slot and status='IN_SERVICE' for update/);
   assert.match(participantController, /activeSlotParticipants\.size\(\) != 1/);
   assert.match(participantController, /activeSlotCount != 1/);
+});
+
+test('room transfer targets use free bed capacity and exclude the source room', () => {
+  assert.match(app, /const occupiedBedCount = roomList\.length/);
+  assert.match(app, /availableBedCount\|\|0\)>0&&\['idle','reserved','serving'\]\.includes\(room\.status\)/);
+  assert.match(app, /String\(room\.apiId\)!==String\(session\?\.roomId\)/);
+  assert.match(app, /function renderFrontdeskRoomTransferRooms\(\)/);
+  assert.match(app, /没有其他房间可用/);
+  assert.match(roomTransferController, /pendingTransferCountExcluding\(storeId, transfer\.toRoomId\(\), transfer\.id\(\)/);
+  assert.match(roomTransferController, /occupied \+ pendingTransferReservations >= capacity/);
+  assert.match(roomTransferController, /limit 1 offset :reserved for update of b/);
+});
+
+test('room transfer keeps the room state derived from remaining services', () => {
+  const roomState = fs.readFileSync(path.resolve(
+    root,
+    '..',
+    '..',
+    'services',
+    'massage-api',
+    'src',
+    'main',
+    'java',
+    'com',
+    'chengxin',
+    'massage',
+    'catalog',
+    'RoomStateService.java'
+  ), 'utf8');
+  assert.match(roomState, /exists\(select 1 from service_session where store_id=:store and room_id=:room and status='IN_SERVICE'\)/);
+  assert.match(roomState, /if \(occupancy\.inService\(\)\) status = "IN_SERVICE"/);
 });

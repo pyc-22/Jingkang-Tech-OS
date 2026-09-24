@@ -93,8 +93,9 @@ public class ServiceRoomTransferController {
     if (!canTransfer(service.status())) throw conflict("Only a pending, accepted, or in-service session can be transferred");
     if (!transfer.fromRoomId().equals(service.roomId())) throw conflict("Service room has changed; refresh the request");
     lockRooms(storeId, transfer.fromRoomId(), transfer.toRoomId());
-    ensureApprovalTargetAvailable(storeId, transfer.id(), transfer.toRoomId());
-    UUID targetBed = targetBedForUpdate(storeId, transfer.toRoomId());
+    int pendingTransferReservations = pendingTransferCountExcluding(storeId, transfer.toRoomId(), transfer.id());
+    ensureApprovalTargetAvailable(storeId, transfer.id(), transfer.toRoomId(), pendingTransferReservations);
+    UUID targetBed = targetBedForUpdate(storeId, transfer.toRoomId(), pendingTransferReservations);
 
     int updated = jdbc.sql("update service_session set room_id=:toRoom,bed_id=:bed,updated_at=now(),version=version+1 where id=:id and store_id=:store and status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE') and room_id=:fromRoom and version=:version")
       .param("id", service.id()).param("store", storeId).param("toRoom", transfer.toRoomId()).param("bed", targetBed)
@@ -150,7 +151,7 @@ public class ServiceRoomTransferController {
     lockRooms(storeId, service.roomId(), input.toRoomId());
     String expectedRoomStatus = "IN_SERVICE".equals(service.status()) ? "IN_SERVICE" : "RESERVED";
     if (!expectedRoomStatus.equals(latestRoomStatus(storeId, service.roomId()))) throw conflict("Current room status does not match the service state");
-    ensureTargetRoomAvailable(storeId, input.toRoomId(), service.roomId());
+    ensureTargetRoomAvailable(storeId, input.toRoomId());
     UUID id = UUID.randomUUID();
     jdbc.sql("insert into service_room_transfer(id,tenant_id,store_id,service_session_id,from_room_id,to_room_id,status,reason,requested_by_user_id,requested_by_name_snapshot) values(:id,:tenant,:store,:session,:fromRoom,:toRoom,'REQUESTED',:reason,:user,:name)")
       .param("id", id).param("tenant", TENANT_ID).param("store", storeId).param("session", input.serviceSessionId())
@@ -187,22 +188,46 @@ public class ServiceRoomTransferController {
     if (locked.size() != 2) throw badRequest("Both rooms must belong to the selected store");
   }
 
-  private void ensureTargetRoomAvailable(UUID storeId, UUID targetRoomId, UUID currentRoomId) {
+  private void ensureTargetRoomAvailable(UUID storeId, UUID targetRoomId) {
     boolean active = jdbc.sql("select active from room where id=:room and store_id=:store")
       .param("room", targetRoomId).param("store", storeId).query(Boolean.class).optional().orElse(false);
     if (!active) throw conflict("Target room is unavailable");
-    if (!"IDLE".equals(latestRoomStatus(storeId, targetRoomId))) throw conflict("Target room is not idle");
-    if (hasActiveSession(storeId, targetRoomId)) throw conflict("Target room already has an active service");
+    ensureRoomBeds(storeId, targetRoomId);
+    if (!acceptsAnotherService(latestRoomStatus(storeId, targetRoomId))) throw conflict("Target room is not available");
+    ensureRoomCapacity(storeId, targetRoomId, pendingTransferCount(storeId, targetRoomId));
   }
 
-  private void ensureApprovalTargetAvailable(UUID storeId, UUID transferId, UUID targetRoomId) {
+  private void ensureApprovalTargetAvailable(UUID storeId, UUID transferId, UUID targetRoomId, int pendingTransferReservations) {
     boolean active = jdbc.sql("select active from room where id=:room and store_id=:store")
       .param("room", targetRoomId).param("store", storeId).query(Boolean.class).optional().orElse(false);
     if (!active) throw conflict("Target room is unavailable");
+    ensureRoomBeds(storeId, targetRoomId);
     RoomStatusEvent status = latestRoomStatusEvent(storeId, targetRoomId);
     boolean reservedByThisRequest = isTransferReservation(status, transferId);
-    if (!"IDLE".equals(status.status()) && !reservedByThisRequest) throw conflict("Target room is no longer idle");
-    if (hasActiveSession(storeId, targetRoomId)) throw conflict("Target room already has an active service");
+    if (!acceptsAnotherService(status.status()) && !reservedByThisRequest) throw conflict("Target room is no longer available");
+    ensureRoomCapacity(storeId, targetRoomId, pendingTransferReservations);
+  }
+
+  private boolean acceptsAnotherService(String status) {
+    return "IDLE".equals(status) || "RESERVED".equals(status) || "IN_SERVICE".equals(status);
+  }
+
+  private void ensureRoomCapacity(UUID storeId, UUID roomId, int pendingTransferReservations) {
+    long capacity = jdbc.sql("select count(*) from room_bed where store_id=:store and room_id=:room and active=true")
+      .param("store", storeId).param("room", roomId).query(Long.class).single();
+    long occupied = jdbc.sql("select count(*) from service_session where store_id=:store and room_id=:room and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE')")
+      .param("store", storeId).param("room", roomId).query(Long.class).single();
+    if (occupied + pendingTransferReservations >= capacity) throw conflict("Target room has no available bed");
+  }
+
+  private int pendingTransferCount(UUID storeId, UUID roomId) {
+    return jdbc.sql("select count(*) from service_room_transfer where store_id=:store and to_room_id=:room and status='REQUESTED'")
+      .param("store", storeId).param("room", roomId).query(Integer.class).single();
+  }
+
+  private int pendingTransferCountExcluding(UUID storeId, UUID roomId, UUID transferId) {
+    return jdbc.sql("select count(*) from service_room_transfer where store_id=:store and to_room_id=:room and status='REQUESTED' and id<>:transfer")
+      .param("store", storeId).param("room", roomId).param("transfer", transferId).query(Integer.class).single();
   }
 
   private boolean hasActiveSession(UUID storeId, UUID roomId) {
@@ -232,21 +257,24 @@ public class ServiceRoomTransferController {
     roomStates.record(storeId, roomId, status, reason, source);
   }
 
-  private UUID targetBedForUpdate(UUID storeId, UUID roomId) {
+  private void ensureRoomBeds(UUID storeId, UUID roomId) {
     jdbc.sql("""
       insert into room_bed(id,tenant_id,store_id,room_id,code,name,sort_order)
       select gen_random_uuid(),r.tenant_id,r.store_id,r.id,left(r.code||'-'||n,40),left(r.name||' bed '||n,80),n
       from room r cross join lateral generate_series(1,r.bed_count) n
       where r.id=:room and r.store_id=:store
         and not exists(select 1 from room_bed b where b.room_id=r.id)
-      on conflict (room_id,code) do nothing
-      """).param("room", roomId).param("store", storeId).update();
+       on conflict (room_id,code) do nothing
+       """).param("room", roomId).param("store", storeId).update();
+  }
+
+  private UUID targetBedForUpdate(UUID storeId, UUID roomId, int pendingTransferReservations) {
     return jdbc.sql("""
       select b.id from room_bed b where b.room_id=:room and b.store_id=:store and b.active=true
         and not exists(select 1 from service_session s where s.bed_id=b.id
           and s.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'))
-      order by b.sort_order,b.id limit 1 for update of b
-      """).param("room", roomId).param("store", storeId).query(UUID.class).optional()
+       order by b.sort_order,b.id limit 1 offset :reserved for update of b
+       """).param("room", roomId).param("store", storeId).param("reserved", pendingTransferReservations).query(UUID.class).optional()
       .orElseThrow(() -> conflict("Target room has no available bed"));
   }
 
