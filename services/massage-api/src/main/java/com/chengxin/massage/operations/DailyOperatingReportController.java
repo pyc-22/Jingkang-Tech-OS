@@ -486,7 +486,7 @@ public class DailyOperatingReportController {
       .param("store", storeId).param("month", month).query(Long.class).optional().orElse(0L);
     DailyFinancialPolicy.Totals totals = financialTotals(channels, cards.rechargeNetCents());
     return new MonthlySummary(target, totals.turnoverCents(), totals.cashFlowCents(),
-      cards.openCents() + cards.renewCents(), cards.openCents(), cards.openCount(), cards.renewCents(), cards.consumptionCents(),
+      cards.rechargeNetCents(), cards.openCents(), cards.openCount(), cards.renewCents(), cards.consumptionCents(),
       customerCount, extensions, channelNet(channels, "CASH"), channelNet(channels, "ALIPAY"),
       channelNet(channels, "DOUYIN"), channelNet(channels, "MEITUAN"), channelNet(channels, "FREE_ORDER"),
       channelNet(channels, "ENTERTAINMENT"), channelRefundTotal(channels), calls);
@@ -535,7 +535,7 @@ public class DailyOperatingReportController {
       .param("store", storeId).param("date", date).query(Integer.class).single();
     CardActivity cards = cardActivity(storeId, date, date);
     DailyFinancialPolicy.Totals totals = financialTotals(channels, cards.rechargeNetCents());
-    return ReportValues.defaults(totals.turnoverCents(), totals.cashFlowCents(), cards.openCents(), cards.openCount().intValue(), cards.renewCents(),
+    return ReportValues.defaults(totals.turnoverCents(), totals.cashFlowCents(), cards.rechargeNetCents(), cards.openCents(), cards.openCount().intValue(), cards.renewCents(),
       cards.cancellationCents(), cards.consumptionCents(), customerCount, extensions, calls,
       channelNet(channels, "CASH"), channelNet(channels, "ALIPAY"), channelNet(channels, "DOUYIN"),
       channelNet(channels, "MEITUAN"), channelNet(channels, "FREE_ORDER"), channelNet(channels, "ENTERTAINMENT"));
@@ -829,10 +829,10 @@ public class DailyOperatingReportController {
         managerCount, cashierCount, technicianCount, chefCount, cleanerCount, incidentNote, extendedShiftNote, nextDayRestCount,
         customerLossCount, nextDayImprovementNote);
     }
-    static ReportValues defaults(long sales, long cashFlow, long cardOpen, int cardOpenCount, long cardRenew, long cardCancellation,
+    static ReportValues defaults(long sales, long cashFlow, long cardSale, long cardOpen, int cardOpenCount, long cardRenew, long cardCancellation,
                                  long cardConsumption, int customers, int extensions, int calls, long cash, long alipay,
                                  long douyin, long meituan, long freeOrder, long entertainment) {
-      return new ReportValues(0,sales,cashFlow,cardOpen+cardRenew,cardOpen,cardOpenCount,cardRenew,cardCancellation,cardConsumption,
+      return new ReportValues(0,sales,cashFlow,cardSale,cardOpen,cardOpenCount,cardRenew,cardCancellation,cardConsumption,
         customers,extensions,calls,cash,alipay,douyin,meituan,freeOrder,entertainment,0,0,0,0,0,null,null,0,0,null);
     }
     Map<String,Object> params() { Map<String,Object> p=new HashMap<>(); p.put("dailyTarget",dailyTargetCents);p.put("dailySales",Math.max(0,dailySalesCents));p.put("dailyCashFlow",Math.max(0,dailyCashFlowCents));p.put("dailyCardSale",dailyCardSaleCents);p.put("dailyCardOpen",dailyCardOpenCents);p.put("dailyCardRenew",dailyCardRenewCents);p.put("dailyCardCancellation",dailyCardCancellationCents);p.put("dailyCardConsumption",dailyCardConsumptionCents);p.put("dailyCustomerCount",dailyCustomerCount);p.put("dailyExtensionCount",dailyExtensionCount);p.put("dailyCallClockCount",dailyCallClockCount);p.put("dailyCash",Math.max(0,dailyCashCents));p.put("dailyAlipay",Math.max(0,dailyAlipayCents));p.put("dailyDouyin",Math.max(0,dailyDouyinCents));p.put("dailyMeituan",Math.max(0,dailyMeituanCents));p.put("dailyFreeOrder",Math.max(0,dailyFreeOrderCents));p.put("dailyEntertainment",Math.max(0,dailyEntertainmentCents));p.put("managerCount",managerCount);p.put("cashierCount",cashierCount);p.put("technicianCount",technicianCount);p.put("chefCount",chefCount);p.put("cleanerCount",cleanerCount);p.put("incidentNote",incidentNote);p.put("extendedShiftNote",extendedShiftNote);p.put("nextDayRestCount",nextDayRestCount);p.put("customerLossCount",customerLossCount);p.put("nextDayImprovement",nextDayImprovementNote);return p; }

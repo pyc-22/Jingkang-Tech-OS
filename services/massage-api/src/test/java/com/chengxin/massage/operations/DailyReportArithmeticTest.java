@@ -63,4 +63,11 @@ class DailyReportArithmeticTest {
     assertThatThrownBy(() -> DailyReportService.cardConsumptionCents(0, -1))
       .isInstanceOf(IllegalArgumentException.class);
   }
+
+  @Test
+  void rechargeNetSubtractsCompletedRechargeRefunds() {
+    assertThat(DailyReportService.rechargeNetCents(10_000, 3_000)).isEqualTo(7_000);
+    assertThat(DailyReportService.rechargeNetCents(0, 5_000)).isEqualTo(-5_000);
+    assertThat(DailyReportService.rechargeNetCents(10_000, 0)).isEqualTo(10_000);
+  }
 }

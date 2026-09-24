@@ -14,7 +14,8 @@ class CompleteReleaseRegressionTest {
     String source = normalized("src/main/java/com/chengxin/massage/operations/DailyReportService.java");
 
     assertThat(source).contains("longnetSales=Math.subtractExact(orders.salesAmountCents(),refunds.refundAmountCents())");
-    assertThat(source).contains("orders.salesAmountCents(),wallet.rechargeAmountCents()");
+    assertThat(source).contains("orders.salesAmountCents(),rechargeNetCents(wallet.rechargeAmountCents(),wallet.rechargeRefundAmountCents())");
+    assertThat(source).contains("transaction_type='ADJUSTMENT'andwt.source='RECHARGE_REFUND'");
     assertThat(source).doesNotContain("sales_order_service_session");
     assertThat(source).doesNotContain("status<>'VOIDED'");
   }

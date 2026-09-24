@@ -56,6 +56,8 @@ public class DailyReportService {
       select
         coalesce((select sum(coalesce(wt.corrected_amount_cents,wt.amount_cents)) from reporting_wallet_transaction wt
           where wt.store_id=:store and wt.business_date=:date and wt.transaction_type='RECHARGE'),0)::bigint recharge_amount_cents,
+        coalesce((select sum(-wt.amount_cents) from reporting_wallet_transaction wt
+          where wt.store_id=:store and wt.business_date=:date and wt.transaction_type='ADJUSTMENT' and wt.source='RECHARGE_REFUND'),0)::bigint recharge_refund_amount_cents,
         coalesce((select sum(wt.amount_cents) from reporting_wallet_transaction wt
           where wt.store_id=:store and wt.business_date=:date and (wt.transaction_type='BONUS'
             or (wt.transaction_type='ADJUSTMENT' and wt.source='RECHARGE_REFUND_BONUS'))),0)::bigint bonus_amount_cents,
@@ -97,7 +99,7 @@ public class DailyReportService {
       """).param("store", storeId).param("date", businessDate).query(RefundOccurrence.class).list();
     long cashFlow = Math.addExact(externalCash, rechargeNet);
     return new DailyMetrics(businessDate, orders.settledOrderCount(), customerCount, orders.customerCount(), orders.salesAmountCents(),
-      wallet.rechargeAmountCents(), wallet.bonusAmountCents(), consumption, refunds.refundAmountCents(), netSales,
+      rechargeNetCents(wallet.rechargeAmountCents(), wallet.rechargeRefundAmountCents()), wallet.bonusAmountCents(), consumption, refunds.refundAmountCents(), netSales,
       wallet.cardOpenCents(), wallet.cardOpenCount(), wallet.cardRenewCents(), rechargeNet, externalCash, cashFlow,
       channels, refundOccurrences);
   }
@@ -164,6 +166,10 @@ public class DailyReportService {
     return Math.subtractExact(consumptionDebitCents, eligibleRefundCents);
   }
 
+  static long rechargeNetCents(long rechargeCents, long refundCents) {
+    return Math.subtractExact(rechargeCents, refundCents);
+  }
+
   public record DailyMetrics(LocalDate businessDate, long settledOrderCount, long customerCount,
                              long automaticCustomerCount, long salesAmountCents,
                              long rechargeAmountCents, long bonusAmountCents, long consumptionAmountCents,
@@ -192,7 +198,7 @@ public class DailyReportService {
                                  LocalDate originalOrderBusinessDate) {}
   private record OrderTotals(Long settledOrderCount, Long customerCount, Long salesAmountCents) {}
   private record RefundTotals(Long refundAmountCents) {}
-  private record WalletTotals(Long rechargeAmountCents, Long bonusAmountCents, Long consumptionDebitCents,
+  private record WalletTotals(Long rechargeAmountCents, Long rechargeRefundAmountCents, Long bonusAmountCents, Long consumptionDebitCents,
                               Long consumptionRefundCents, Long cardOpenCents, Long cardRenewCents, Long cardOpenCount) {}
   private record NamedAmount(String code, String name, Long amountCents) {}
   private record ChannelDefinition(String code, String name, String methodKind, Boolean active, Boolean cashCounted, Short sortOrder) {}

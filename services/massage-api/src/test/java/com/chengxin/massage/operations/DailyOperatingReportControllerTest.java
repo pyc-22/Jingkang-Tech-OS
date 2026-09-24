@@ -95,6 +95,14 @@ class DailyOperatingReportControllerTest {
   }
 
   @Test
+  void dailyAndMonthlyCardSalesUseNetRechargeAmounts() throws Exception {
+    String source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/java/com/chengxin/massage/operations/DailyOperatingReportController.java"))
+      .replaceAll("\\s+", "");
+    assertThat(source).contains("newMonthlySummary(target,totals.turnoverCents(),totals.cashFlowCents(),cards.rechargeNetCents(),cards.openCents()");
+    assertThat(source).contains("ReportValues.defaults(totals.turnoverCents(),totals.cashFlowCents(),cards.rechargeNetCents(),cards.openCents()");
+  }
+
+  @Test
   void customerCountExcludesFullyVoidedServiceOrdersButKeepsMixedAndUnlinkedOrders() throws Exception {
     String source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/java/com/chengxin/massage/operations/DailyOperatingReportController.java"))
       .replaceAll("\\s+", "");
