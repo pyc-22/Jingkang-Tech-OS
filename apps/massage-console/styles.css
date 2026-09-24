@@ -1372,3 +1372,91 @@ dialog > .dialog-card {
     flex:1 1 130px;
   }
 }
+
+/* Front-desk room and technician card presentation. */
+.room-panel .room-grid {
+  grid-template-columns:repeat(auto-fill,minmax(170px,1fr));
+  gap:12px;
+}
+.room-panel .room {
+  min-height:132px;
+}
+.room-panel .room.serving,
+.room-panel .room.pending-payment,
+.room-panel .room.reserved {
+  color:#fff;
+  border-color:transparent;
+}
+.room-panel .room.serving { background:#dc2626; border-color:#dc2626; }
+.room-panel .room.pending-payment { background:#7c3aed; border-color:#7c3aed; }
+.room-panel .room.reserved { background:#2563eb; border-color:#2563eb; }
+.room-panel .room.serving .room-top,
+.room-panel .room.pending-payment .room-top,
+.room-panel .room.reserved .room-top,
+.room-panel .room.serving > .room-card > strong,
+.room-panel .room.pending-payment > .room-card > strong,
+.room-panel .room.reserved > .room-card > strong,
+.room-panel .room.serving > .room-card > small,
+.room-panel .room.pending-payment > .room-card > small,
+.room-panel .room.reserved > .room-card > small,
+.room-panel .room.serving .room-service-main b,
+.room-panel .room.pending-payment .room-service-main b,
+.room-panel .room.reserved .room-service-main b,
+.room-panel .room.serving .room-service-main small,
+.room-panel .room.pending-payment .room-service-main small,
+.room-panel .room.reserved .room-service-main small,
+.room-panel .room.serving .room-service-state,
+.room-panel .room.pending-payment .room-service-state,
+.room-panel .room.reserved .room-service-state {
+  color:#fff;
+}
+.room-panel .room.serving > .room-card > strong,
+.room-panel .room.pending-payment > .room-card > strong,
+.room-panel .room.reserved > .room-card > strong,
+.room-panel .room-service-main b {
+  font-weight:700;
+  text-shadow:0 1px 2px rgba(0,0,0,.23);
+}
+.room-panel .room.serving .room-service-timer,
+.room-panel .room.pending-payment .room-service-timer,
+.room-panel .room.reserved .room-service-timer {
+  color:#fef08a;
+  font-weight:700;
+  text-shadow:0 1px 2px rgba(0,0,0,.23);
+}
+.room-panel .room.serving .room-actions > .room-transfer-tech-action,
+.room-panel .room.pending-payment .room-actions > .room-paid-action,
+.room-panel .room.reserved .room-actions > button {
+  color:inherit;
+  background:#fff;
+  font-weight:700;
+}
+.room-panel .room.serving .room-actions > .room-transfer-tech-action { color:#dc2626; }
+.room-panel .room.pending-payment .room-actions > .room-paid-action { color:#7c3aed; }
+.room-panel .room.serving .room-actions > .room-status-action,
+.room-panel .room.pending-payment .room-actions > .room-status-action,
+.room-panel .room.reserved .room-actions > .room-status-action {
+  color:#fff;
+  border-color:rgba(255,255,255,.55);
+  background:rgba(255,255,255,.2);
+}
+.room-panel .room-services { border-top-color:rgba(255,255,255,.32); }
+.room-panel .room-service-row { grid-template-columns:minmax(0,1fr) auto; display:grid; align-items:center; }
+.room-panel .room-service-main b,
+.room-panel .room-service-main small { overflow:visible; text-overflow:clip; white-space:normal; }
+
+.technician-panel .tech-card-controls { min-width:96px; }
+.technician-panel .tech-card-controls .tech-action { min-width:96px; min-height:44px; }
+.technician-panel .tech-expected-end {
+  color:#6f7b77;
+  font-size:11px;
+  line-height:1.2;
+  white-space:nowrap;
+}
+.technician-panel .tech-card.state-serving .tech-expected-end { color:#6f7b77; }
+
+@media (max-width:640px) {
+  .room-panel .room-grid { grid-template-columns:1fr; }
+  .room-panel .room { min-height:132px; }
+  .technician-panel .technician-list { grid-template-columns:1fr; }
+}

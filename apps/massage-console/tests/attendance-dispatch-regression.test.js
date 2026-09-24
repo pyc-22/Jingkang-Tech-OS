@@ -108,7 +108,7 @@ test('dispatch choices keep full long codes and names, with an explicit missing-
 });
 
 test('compact queue cards preserve actions, status, statistics and useful service context', () => {
-  const { context, elements } = harness(['roomTransferEscape', 'renderTechnicians'], { clockTypeLabels:{ QUEUE:'排钟' } });
+  const { context, elements } = harness(['roomTransferEscape', 'renderTechnicians'], { clockTypeLabels:{ QUEUE:'排钟' }, state:{ technicians:[], rooms:[], services:[], activeSessions:[] } });
   context.state.technicians = ['available','pending','accepted','serving','reassign','off'].map((state,index) => ({
     ...technician, id:state, state, queue:index+1, queueCount:2, callCount:3, extensionCount:1,
     detail:state==='available' ? '可立即安排服务' : state==='serving' ? '101 房' : '排班状态说明',
@@ -123,12 +123,13 @@ test('compact queue cards preserve actions, status, statistics and useful servic
     assert.doesNotMatch(dom.window.document.body.textContent,/可立即安排服务/);
     assert.equal(dom.window.document.querySelector('img'),null);
     assert.equal(cards[0].querySelector('.technician-full-name').textContent,'<img src=x onerror=alert(1)>');
-    assert.deepEqual([...cards].map(card => card.querySelector('[data-tech]').textContent),['上钟','开始服务','开始服务','下钟','待重派','不可上钟']);
+    assert.deepEqual([...cards].map(card => card.querySelector('[data-tech]')?.textContent || null),['安排服务','开始服务','开始服务','下钟',null,null]);
     for (const [index,card] of [...cards].entries()) {
       const controls = card.querySelector('.tech-card-controls');
-      assert.equal(controls.children[0].dataset.tech,card.dataset.techCard);
-      assert.ok(controls.children[1].classList.contains('tech-state'));
-      assert.equal(controls.children[0].disabled,index>=4);
+      if (index < 4) {
+        assert.equal(controls.children[0].dataset.tech,card.dataset.techCard);
+        assert.ok(controls.children[1].classList.contains('tech-state'));
+      } else assert.equal(controls.querySelector('[data-tech]'),null);
       assert.match(card.querySelector('.tech-card-meta').textContent,/排钟 2 · 点钟 3 · 加钟 1/);
       assert.match(card.querySelector('.tech-card-meta').textContent,new RegExp('轮排 0'+(index+1)));
       assert.equal(card.querySelector('.technician-name b'),null);

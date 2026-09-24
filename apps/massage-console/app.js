@@ -524,11 +524,13 @@ function renderRooms() {
       ? `<span class="room-pending-summary"><b>${roomTransferEscape(primaryPending.technicianName)}${pendingTechnician?.code ? `（${roomTransferEscape(pendingTechnician.code)}）` : ''}${pendingSessions.length > 1 ? roomTransferEscape(`等 ${pendingSessions.length} 人`) : ''}</b><small>${roomTransferEscape(primaryPending.serviceNameSnapshot)}${pendingSessions.length > 1 ? roomTransferEscape(` 等 ${pendingSessions.length} 项`) : ''}</small></span>`
       : '';
     const serviceRows = (room.services || []).map(service => {
+      const serviceTechnician = state.technicians.find(technician => String(technician.id) === String(service.technicianId));
+      const technicianLabel = serviceTechnician?.code || service.technicianName || '待派单';
       const timer = service.status === 'IN_SERVICE' && service.expectedEndAt
         ? `<span class="room-service-timer" data-room-countdown="${roomTransferEscape(service.expectedEndAt)}">${formatRoomCountdown(service.expectedEndAt)}</span>`
         : `<span class="room-service-state">${service.status === 'PENDING_ACCEPTANCE' ? '待接单' : service.status === 'ACCEPTED' ? '待开始' : ''}</span>`;
       const extension = service.extensionSummary ? ` · 加钟：${service.extensionSummary}` : '';
-      return `<span class="room-service-row"><span class="room-service-main"><b>${roomTransferEscape(service.technicianName)}</b><small>${roomTransferEscape(service.serviceName)}${roomTransferEscape(extension)} · ${Number(service.plannedDurationMinutes || 0)} 分钟</small></span>${timer}</span>`;
+      return `<span class="room-service-row"><span class="room-service-main"><b>${roomTransferEscape(technicianLabel)}</b><small>${roomTransferEscape(service.serviceName)}${roomTransferEscape(extension)} · ${Number(service.plannedDurationMinutes || 0)} 分钟</small></span>${timer}</span>`;
     }).join('');
     const exceptionActions = room.exceptionSessionId && room.apiId ? `<button class="room-dispatch-action" data-dispatch-reassignment="${roomTransferEscape(room.exceptionSessionId)}" type="button">重新派单</button>${room.exceptionStatus === 'REASSIGNMENT_REQUIRED' ? `<button class="room-dispatch-action danger" data-dispatch-cancellation="${roomTransferEscape(room.exceptionSessionId)}" type="button">取消派单</button>` : ''}` : '';
     return `<article class="room ${roomTransferEscape(room.status)}"><div class="room-card" data-room="${roomTransferEscape(room.id)}" role="button" tabindex="0"><span class="room-top"><span class="dot ${roomTransferEscape(room.status)}"></span><span>${roomTransferEscape(room.label)}</span></span><strong>${roomTransferEscape(room.id)}</strong><small>${roomTransferEscape(room.detail || '可立即安排服务')}</small>${pendingSummary}${serviceRows ? `<span class="room-services">${serviceRows}</span>` : ''}</div><div class="room-actions">${exceptionActions}${room.status === 'serving' && room.apiId ? `<button class="room-transfer-tech-action" data-transfer-technician="${roomTransferEscape(room.id)}" type="button">换技师</button>` : ''}${room.status === 'pending-payment' && room.apiId ? `<button class="room-paid-action" data-confirm-payment="${roomTransferEscape(room.id)}" type="button">已付款</button>` : ''}${room.status === 'cleaning' && room.apiId ? `<button class="room-clean-action" data-complete-cleaning="${roomTransferEscape(room.id)}" type="button">完成清洁</button>` : ''}${room.apiId ? `<button class="room-status-action" data-room-status="${roomTransferEscape(room.id)}" type="button">状态</button>` : ''}</div></article>`;
@@ -542,6 +544,12 @@ function renderRooms() {
   document.querySelectorAll('#room-grid [data-dispatch-cancellation]').forEach(button => {
     button.addEventListener('click', event => { console.log('dispatch button clicked', event.target); event.preventDefault(); event.stopPropagation(); dispatchReassignmentSessionId = button.dataset.dispatchCancellation; openDispatchCancellation(); });
   });
+}
+function formatExpectedClockTime(expectedEndAt) {
+  if (!expectedEndAt) return '';
+  const date = new Date(expectedEndAt);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 const dispatchEscape = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[character]));
@@ -1220,12 +1228,16 @@ function renderTechnicians() {
   document.querySelector('#technician-list').innerHTML = sorted.map(tech => {
     const unavailable = !['available', 'serving', 'pending', 'accepted'].includes(tech.state);
     const label = tech.state === 'available' ? '可派钟' : tech.state === 'serving' ? '服务中' : tech.state === 'pending' ? '待接单' : tech.state === 'accepted' ? '待服务' : tech.state === 'reassign' ? '待重新派单' : '休息 / 下班';
-    const action = tech.state === 'available' ? '上钟' : tech.state === 'serving' ? '下钟' : ['pending', 'accepted'].includes(tech.state) ? '开始服务' : tech.state === 'reassign' ? '待重派' : '不可上钟';
+    const action = tech.state === 'available' ? '安排服务' : tech.state === 'serving' ? '下钟' : ['pending', 'accepted'].includes(tech.state) ? '开始服务' : '';
     const room = /([^\s·]+)\s*房/.exec(tech.detail||'')?.[1] || '';
     const next = tech.nextReservation ? `<small class="tech-next-service">下一单：${roomTransferEscape(clockTypeLabels[tech.nextReservation.reservationType] || tech.nextReservation.reservationType)} · ${roomTransferEscape(tech.nextReservation.roomCode)}房</small>` : '';
+    const activeSession = tech.state === 'serving' ? (state.activeSessions || []).find(item => sessionParticipantIds(item).some(id => String(id) === String(tech.id))) : null;
+    const expectedClock = activeSession?.expectedEndAt ? formatExpectedClockTime(activeSession.expectedEndAt) : '';
+    const expectedEnd = expectedClock ? `<small class="tech-expected-end">预计下钟：${roomTransferEscape(expectedClock)}</small>` : '';
+    const actionButton = action ? `<button class="tech-action" data-tech="${roomTransferEscape(tech.id)}">${action}</button>` : '';
     const code = tech.code ? roomTransferEscape(tech.code) : '未设置工号';
     const detail = tech.state === 'available' ? '' : room ? `房间 ${room}` : tech.detail;
-    return `<article class="technician tech-card state-${roomTransferEscape(tech.state)} ${unavailable ? 'unavailable' : ''}" data-tech-card="${roomTransferEscape(tech.id)}"><div class="tech-card-main"><span class="tech-avatar" title="${code}" style="font-size:${Math.min(18, Math.floor(36 / Math.ceil(Math.sqrt(String(tech.code || '').length || 1))))}px">${tech.code ? code : '-'}</span><span class="technician-name"><span class="technician-full-name">${roomTransferEscape(tech.name)}</span>${!tech.code ? '<small>未设置工号</small>' : ''}${detail && detail !== label ? `<small>${roomTransferEscape(detail)}</small>` : ''}</span><div class="tech-card-controls"><button class="tech-action" data-tech="${roomTransferEscape(tech.id)}"${unavailable ? ' disabled title="当前不可上钟"' : ''}>${action}</button><span class="tech-state ${roomTransferEscape(tech.state)}">${label}</span></div></div><div class="tech-card-meta"><span>排钟 <b>${roomTransferEscape(tech.queueCount)}</b> · 点钟 <b>${roomTransferEscape(tech.callCount)}</b> · 加钟 <b>${roomTransferEscape(tech.extensionCount)}</b></span><span>轮排 ${roomTransferEscape(String(tech.queue).padStart(2, '0'))}</span></div>${next}</article>`;
+    return `<article class="technician tech-card state-${roomTransferEscape(tech.state)} ${unavailable ? 'unavailable' : ''}" data-tech-card="${roomTransferEscape(tech.id)}"><div class="tech-card-main"><span class="tech-avatar" title="${code}" style="font-size:${Math.min(18, Math.floor(36 / Math.ceil(Math.sqrt(String(tech.code || '').length || 1))))}px">${tech.code ? code : '-'}</span><span class="technician-name"><span class="technician-full-name">${roomTransferEscape(tech.name)}</span>${!tech.code ? '<small>未设置工号</small>' : ''}${detail && detail !== label ? `<small>${roomTransferEscape(detail)}</small>` : ''}</span><div class="tech-card-controls">${expectedEnd}${actionButton}<span class="tech-state ${roomTransferEscape(tech.state)}">${label}</span></div></div><div class="tech-card-meta"><span>排钟 <b>${roomTransferEscape(tech.queueCount)}</b> · 点钟 <b>${roomTransferEscape(tech.callCount)}</b> · 加钟 <b>${roomTransferEscape(tech.extensionCount)}</b></span><span>轮排 ${roomTransferEscape(String(tech.queue).padStart(2, '0'))}</span></div>${next}</article>`;
   }).join('');
   document.querySelector('#clocked-in-tech-count').textContent = state.technicians.filter(tech => tech.clockedIn).length;
   document.querySelector('#total-tech-count').textContent = state.technicians.length;
