@@ -1481,23 +1481,28 @@ dialog > .dialog-card {
 #frontdesk-view .room.serving { background:#dc2626; border-color:#dc2626; color:#fff; }
 #frontdesk-view .room.pending-payment { background:#7c3aed; border-color:#7c3aed; color:#fff; }
 #frontdesk-view .room.reserved { background:#2563eb; border-color:#2563eb; color:#fff; }
+#frontdesk-view .room.cleaning { background:#ca8a04; border-color:#ca8a04; color:#fff; }
 #frontdesk-view .room-card { flex:1; padding:0; }
 #frontdesk-view .room-top { margin-bottom:10px; font-size:12px; }
 #frontdesk-view .room-top .dot { width:8px; height:8px; margin:0; }
 #frontdesk-view .room.serving .room-top .dot,
 #frontdesk-view .room.pending-payment .room-top .dot,
-#frontdesk-view .room.reserved .room-top .dot { background:#fff; }
+#frontdesk-view .room.reserved .room-top .dot,
+#frontdesk-view .room.cleaning .room-top .dot { background:#fff; }
 #frontdesk-view .room.serving .room-top,
 #frontdesk-view .room.pending-payment .room-top,
-#frontdesk-view .room.reserved .room-top { color:rgba(255,255,255,.9); }
+#frontdesk-view .room.reserved .room-top,
+#frontdesk-view .room.cleaning .room-top { color:rgba(255,255,255,.9); }
 #frontdesk-view .room > .room-card > strong { margin:0 0 8px; font-size:24px; line-height:1.2; }
 #frontdesk-view .room.serving > .room-card > strong,
 #frontdesk-view .room.pending-payment > .room-card > strong,
-#frontdesk-view .room.reserved > .room-card > strong { color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.25); }
+#frontdesk-view .room.reserved > .room-card > strong,
+#frontdesk-view .room.cleaning > .room-card > strong { color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.25); }
 #frontdesk-view .room .room-beds { display:block; margin-bottom:8px; overflow:visible; color:#4b5563; font-size:13px; line-height:1.5; text-overflow:clip; white-space:normal; }
 #frontdesk-view .room.serving .room-beds,
 #frontdesk-view .room.pending-payment .room-beds,
-#frontdesk-view .room.reserved .room-beds { color:rgba(255,255,255,.95); }
+#frontdesk-view .room.reserved .room-beds,
+#frontdesk-view .room.cleaning .room-beds { color:rgba(255,255,255,.95); }
 #frontdesk-view .room-services { display:grid; gap:4px; margin:0 0 8px; padding:0; border:0; }
 #frontdesk-view .room-service-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:6px; min-width:0; font-size:12px; }
 #frontdesk-view .room-service-row b { color:inherit; font-size:12px; text-shadow:0 1px 2px rgba(0,0,0,.2); }
@@ -1513,9 +1518,11 @@ dialog > .dialog-card {
 #frontdesk-view .room.pending-payment .room-paid-action { border-color:#fff; background:#fff; font-weight:700; }
 #frontdesk-view .room.serving .room-transfer-tech-action { color:#dc2626; }
 #frontdesk-view .room.pending-payment .room-paid-action { color:#7c3aed; }
+#frontdesk-view .room.cleaning .room-clean-action { border-color:#fff; background:#fff; color:#ca8a04; font-weight:700; }
 #frontdesk-view .room.serving .room-status-action,
 #frontdesk-view .room.pending-payment .room-status-action,
 #frontdesk-view .room.reserved .room-status-action { border-color:rgba(255,255,255,.3); background:rgba(255,255,255,.2); color:#fff; }
+#frontdesk-view .room.cleaning .room-status-action { border-color:rgba(255,255,255,.55); background:rgba(255,255,255,.2); color:#fff; }
 #frontdesk-view .legend { gap:20px; margin:15px 20px 0; padding:15px 0 20px; border-color:#f3f4f6; font-size:12px; }
 #frontdesk-view .legend .dot.idle { background:#16a34a; }
 #frontdesk-view .legend .dot.serving { background:#dc2626; }

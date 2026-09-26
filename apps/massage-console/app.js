@@ -346,7 +346,7 @@ async function loadFoundationData({ silent = false } = {}) {
       });
       const occupiedBedCount = roomList.length;
       const bedText = `${occupiedBedCount}/${capacity} 床已用 · 余 ${Math.max(0, capacity - occupiedBedCount)} 床`;
-      const details = roomList.length ? bedText : `${bedText}${current?.reason ? ` · ${current.reason}` : ''}`;
+      const details = bedText;
       const exceptionSession = roomList.find(item => ['REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED'].includes(item.status));
       return { id: room.code, apiId: room.id, sessionId: session?.id || null, exceptionSessionId: exceptionSession?.id || null, exceptionStatus: exceptionSession?.status || null, status, label, detail: details, services, expectedEndAt: session?.expectedEndAt, bedCount: capacity, occupiedBedCount, availableBedCount: Math.max(0, capacity - occupiedBedCount) };
     });

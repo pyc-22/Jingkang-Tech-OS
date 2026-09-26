@@ -50,3 +50,16 @@ test('existing cashier actions retain their original event routes', () => {
   assert.match(app, /await openParticipantTransfer\(room\.sessionId\)/);
   assert.match(app, /openClockOutConfirmation\(session, tech\)/);
 });
+
+test('cleaning room cards use the frontdesk yellow style and preserve actions', () => {
+  assert.match(css, /#frontdesk-view \.room\.cleaning \{ background:#ca8a04; border-color:#ca8a04; color:#fff; \}/);
+  assert.match(css, /#frontdesk-view \.room\.cleaning \.room-clean-action \{[^}]*background:#fff;[^}]*color:#ca8a04;/s);
+  assert.match(css, /#frontdesk-view \.room\.cleaning \.room-status-action \{[^}]*background:rgba\(255,255,255,\.2\);[^}]*color:#fff;/s);
+  assert.match(app, /room\.status === 'cleaning' && room\.apiId \? `<button class="room-clean-action" data-complete-cleaning=/);
+});
+
+test('room card details contain bed occupancy only, not historical status remarks', () => {
+  assert.match(app, /const details = bedText;/);
+  assert.match(app, /const bedText = `\$\{occupiedBedCount\}\/\$\{capacity\} 床已用 · 余 \$\{Math\.max\(0, capacity - occupiedBedCount\)\} 床`;/);
+  assert.doesNotMatch(app, /const details = .*current\?\.reason/);
+});
