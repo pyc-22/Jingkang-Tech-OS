@@ -108,7 +108,7 @@ test('dispatch choices keep full long codes and names, with an explicit missing-
 });
 
 test('compact queue cards preserve actions, status, statistics and useful service context', () => {
-  const { context, elements } = harness(['roomTransferEscape', 'renderTechnicians'], { clockTypeLabels:{ QUEUE:'排钟' }, state:{ technicians:[], rooms:[], services:[], activeSessions:[] } });
+  const { context, elements } = harness(['roomTransferEscape', 'formatExpectedClockTime', 'renderTechnicians'], { clockTypeLabels:{ QUEUE:'排钟' }, sessionParticipantIds:session => [session.technicianId], state:{ technicians:[], rooms:[], services:[], activeSessions:[{ technicianId:'serving', expectedEndAt:'2026-09-24T16:48:00+08:00' }] } });
   context.state.technicians = ['available','pending','accepted','serving','reassign','off'].map((state,index) => ({
     ...technician, id:state, state, queue:index+1, queueCount:2, callCount:3, extensionCount:1,
     detail:state==='available' ? '可立即安排服务' : state==='serving' ? '101 房' : '排班状态说明',
@@ -127,16 +127,39 @@ test('compact queue cards preserve actions, status, statistics and useful servic
     for (const [index,card] of [...cards].entries()) {
       const controls = card.querySelector('.tech-card-controls');
       if (index < 4) {
-        assert.equal(controls.children[0].dataset.tech,card.dataset.techCard);
-        assert.ok(controls.children[1].classList.contains('tech-state'));
+        assert.equal(controls.querySelector('[data-tech]').dataset.tech,card.dataset.techCard);
+        assert.ok(card.querySelector('.technician-name .tech-state'));
       } else assert.equal(controls.querySelector('[data-tech]'),null);
-      assert.match(card.querySelector('.tech-card-meta').textContent,/排钟 2 · 点钟 3 · 加钟 1/);
+      if (index < 5) assert.match(card.querySelector('.tech-card-meta').textContent,/排钟 2 · 点钟 3 · 加钟 1/);
+      else assert.doesNotMatch(card.querySelector('.tech-card-meta').textContent,/排钟/);
       assert.match(card.querySelector('.tech-card-meta').textContent,new RegExp('轮排 0'+(index+1)));
       assert.equal(card.querySelector('.technician-name b'),null);
     }
-    assert.match(cards[3].textContent,/房间 101/);
+    assert.match(cards[3].textContent,/预计下钟：\d\d:\d\d/);
     assert.match(cards[3].textContent,/下一单：排钟 · 102房/);
     assert.match(cards[5].textContent,/排班状态说明/);
+  } finally { dom.window.close(); }
+});
+
+test('frontdesk room summary counts only idle rooms and their free beds', () => {
+  const { context, elements } = harness(['roomTransferEscape', 'formatRoomCountdown', 'renderRooms'], {
+    state:{ rooms:[
+      { id:'001', apiId:'r1', status:'idle', label:'空闲', detail:'0/2 床已用 · 余 2 床', availableBedCount:2 },
+      { id:'002', apiId:'r2', status:'idle', label:'空闲', detail:'0/1 床已用 · 余 1 床', availableBedCount:1 },
+      { id:'003', apiId:'r3', status:'serving', label:'服务中', detail:'1/2 床已用 · 余 1 床', availableBedCount:1, services:[{ technicianId:'t1', technicianName:'技师甲', serviceName:'轻舒', status:'IN_SERVICE', expectedEndAt:'2099-01-01T09:00:00+08:00' }] },
+      { id:'004', apiId:'r4', status:'reserved', label:'已预留', detail:'1/2 床已用 · 余 1 床', availableBedCount:1, services:[] }
+    ], technicians:[{ ...technician, id:'t1', code:'99' }], pendingServiceSessions:[] }
+  });
+  context.renderRooms();
+  assert.equal(elements.get('#idle-room-count').textContent,2);
+  assert.equal(elements.get('#available-room-count').textContent,3);
+  const dom = new JSDOM(elements.get('#room-grid').innerHTML);
+  try {
+    assert.equal(dom.window.document.querySelectorAll('.room').length,4);
+    assert.match(dom.window.document.querySelector('.room.serving').textContent,/99.*轻舒.*\d\d:\d\d:\d\d/s);
+    assert.match(dom.window.document.querySelector('.room.serving .room-service-timer').dataset.roomCountdown,/2099/);
+    assert.equal(dom.window.document.querySelector('.room.serving [data-transfer-technician]').textContent,'换技师');
+    assert.equal(dom.window.document.querySelector('.room.serving [data-room-status]').textContent,'状态');
   } finally { dom.window.close(); }
 });
 

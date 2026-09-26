@@ -13,7 +13,7 @@ test('order detail remains readable after adding more actions', () => {
   assert.doesNotMatch(css, /\.order-detail-card\s*\{[^}]*width:510px/);
   assert.match(css, /\.order-detail-actions\s*\{[^}]*flex-wrap:wrap/);
   assert.match(css, /\.order-detail-list \.member-result\s*\{[^}]*grid-template-columns:minmax\(0,1fr\) auto/);
-  assert.match(html, /app\.js\?v=20260924-room-transfer-tech-replacement-v1/);
+  assert.match(html, /app\.js\?v=20260924-frontdesk-preview-v2/);
 });
 
 test('order detail opens a read-only full reversal covering every remaining item', () => {

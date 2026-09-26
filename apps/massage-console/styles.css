@@ -1460,3 +1460,107 @@ dialog > .dialog-card {
   .room-panel .room { min-height:132px; }
   .technician-panel .technician-list { grid-template-columns:1fr; }
 }
+
+/* Front-desk layout follows the room and queue preview without changing other views. */
+#frontdesk-view { background:#f5f7f5; }
+#frontdesk-view .page-heading { align-items:center; margin-bottom:20px; }
+#frontdesk-view .page-heading h1 { font-size:24px; }
+#frontdesk-view .page-actions { align-items:center; }
+#frontdesk-view .page-actions button,
+#frontdesk-view .panel-heading button { min-height:44px; }
+#frontdesk-view .operational-refresh { min-width:44px; }
+#frontdesk-view .operational-sync-status { color:#16a34a; font-size:13px; }
+#frontdesk-view .operational-sync-status.stale { color:#a15d1c; }
+#frontdesk-view .frontdesk-layout { display:flex; flex-direction:column; min-height:0; gap:20px; }
+#frontdesk-view .room-panel,
+#frontdesk-view .technician-panel { display:block; width:100%; min-height:0; align-self:auto; border-color:#e5e7eb; border-radius:10px; box-shadow:none; }
+#frontdesk-view .panel-heading { min-height:0; padding:20px 20px 0; border:0; align-items:center; }
+#frontdesk-view .panel-heading p { margin-top:3px; font-size:13px; }
+#frontdesk-view .room-grid { grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:12px; max-height:none; padding:15px 20px 0; overflow:visible; }
+#frontdesk-view .room { display:flex; flex-direction:column; min-width:0; min-height:180px; padding:12px; border:1px solid #e5e7eb; border-radius:8px; background:#fff; color:#1a1a1a; }
+#frontdesk-view .room.serving { background:#dc2626; border-color:#dc2626; color:#fff; }
+#frontdesk-view .room.pending-payment { background:#7c3aed; border-color:#7c3aed; color:#fff; }
+#frontdesk-view .room.reserved { background:#2563eb; border-color:#2563eb; color:#fff; }
+#frontdesk-view .room-card { flex:1; padding:0; }
+#frontdesk-view .room-top { margin-bottom:10px; font-size:12px; }
+#frontdesk-view .room-top .dot { width:8px; height:8px; margin:0; }
+#frontdesk-view .room.serving .room-top .dot,
+#frontdesk-view .room.pending-payment .room-top .dot,
+#frontdesk-view .room.reserved .room-top .dot { background:#fff; }
+#frontdesk-view .room.serving .room-top,
+#frontdesk-view .room.pending-payment .room-top,
+#frontdesk-view .room.reserved .room-top { color:rgba(255,255,255,.9); }
+#frontdesk-view .room > .room-card > strong { margin:0 0 8px; font-size:24px; line-height:1.2; }
+#frontdesk-view .room.serving > .room-card > strong,
+#frontdesk-view .room.pending-payment > .room-card > strong,
+#frontdesk-view .room.reserved > .room-card > strong { color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.25); }
+#frontdesk-view .room .room-beds { display:block; margin-bottom:8px; overflow:visible; color:#4b5563; font-size:13px; line-height:1.5; text-overflow:clip; white-space:normal; }
+#frontdesk-view .room.serving .room-beds,
+#frontdesk-view .room.pending-payment .room-beds,
+#frontdesk-view .room.reserved .room-beds { color:rgba(255,255,255,.95); }
+#frontdesk-view .room-services { display:grid; gap:4px; margin:0 0 8px; padding:0; border:0; }
+#frontdesk-view .room-service-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:6px; min-width:0; font-size:12px; }
+#frontdesk-view .room-service-row b { color:inherit; font-size:12px; text-shadow:0 1px 2px rgba(0,0,0,.2); }
+#frontdesk-view .room-service-row small { overflow-wrap:anywhere; color:inherit; font-size:12px; opacity:.92; }
+#frontdesk-view .room-service-timer { margin:0; color:#fef08a; font-size:12px; text-shadow:0 1px 2px rgba(0,0,0,.2); }
+#frontdesk-view .room-service-timer.overtime { color:#fef08a; }
+#frontdesk-view .room-pending-summary { gap:3px; margin:0 0 8px; padding:0; border:0; }
+#frontdesk-view .room-pending-summary b,
+#frontdesk-view .room-pending-summary small { overflow:visible; color:inherit; font-size:13px; text-overflow:clip; white-space:normal; }
+#frontdesk-view .room-actions { margin-top:auto; padding:0; gap:8px; }
+#frontdesk-view .room-actions > button { flex:1; min-width:0; min-height:44px; padding:8px; border-radius:4px; font-size:13px; }
+#frontdesk-view .room.serving .room-transfer-tech-action,
+#frontdesk-view .room.pending-payment .room-paid-action { border-color:#fff; background:#fff; font-weight:700; }
+#frontdesk-view .room.serving .room-transfer-tech-action { color:#dc2626; }
+#frontdesk-view .room.pending-payment .room-paid-action { color:#7c3aed; }
+#frontdesk-view .room.serving .room-status-action,
+#frontdesk-view .room.pending-payment .room-status-action,
+#frontdesk-view .room.reserved .room-status-action { border-color:rgba(255,255,255,.3); background:rgba(255,255,255,.2); color:#fff; }
+#frontdesk-view .legend { gap:20px; margin:15px 20px 0; padding:15px 0 20px; border-color:#f3f4f6; font-size:12px; }
+#frontdesk-view .legend .dot.idle { background:#16a34a; }
+#frontdesk-view .legend .dot.serving { background:#dc2626; }
+#frontdesk-view .legend .dot.pending-payment { background:#7c3aed; }
+#frontdesk-view .legend .dot.cleaning { background:#ca8a04; }
+#frontdesk-view .legend .dot.reserved { background:#2563eb; }
+#frontdesk-view .queue-summary { gap:20px; flex-wrap:wrap; padding:12px 20px; border:0; background:transparent; font-size:12px; }
+#frontdesk-view .technician-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; padding:0 20px 20px; width:100%; }
+#frontdesk-view .tech-card { display:flex; flex-direction:column; align-items:stretch; min-width:0; min-height:166px; padding:12px; border:1px solid #e5e7eb; border-left:3px solid #16a34a; border-radius:8px; background:#fff; }
+#frontdesk-view .tech-card.state-serving { border-left-color:#dc2626; background:#fff; }
+#frontdesk-view .tech-card.state-off { border-left-color:#9ca3af; background:#fff; }
+#frontdesk-view .tech-card-main { display:flex; align-items:center; gap:10px; }
+#frontdesk-view .tech-card .tech-avatar { flex:0 0 42px; width:42px; height:42px; padding:4px; background:#16a34a; }
+#frontdesk-view .tech-card.state-serving .tech-avatar { background:#dc2626; }
+#frontdesk-view .tech-card.state-off .tech-avatar { color:#fff; background:#9ca3af; }
+#frontdesk-view .tech-card .technician-name { display:grid; gap:2px; min-width:0; text-align:left; }
+#frontdesk-view .tech-card .technician-full-name { font-size:15px; font-weight:600; }
+#frontdesk-view .tech-card .tech-state { padding:0; border:0; background:transparent; color:#6b7280; font-size:12px; font-weight:400; text-align:left; }
+#frontdesk-view .tech-card .tech-state.available { color:#16a34a; }
+#frontdesk-view .tech-card .tech-state.serving { color:#dc2626; }
+#frontdesk-view .tech-card-controls { display:grid; justify-items:stretch; gap:6px; margin-top:auto; min-width:0; }
+#frontdesk-view .tech-card-controls:empty { display:none; }
+#frontdesk-view .tech-expected-end { color:#6b7280; font-size:11px; }
+#frontdesk-view .tech-card-controls .tech-action { width:100%; min-width:0; min-height:44px; padding:6px; border:1px solid #d1d5db; border-radius:4px; background:#fff; font-size:12px; }
+#frontdesk-view .tech-card.state-available .tech-action { border-color:#0d9488; background:#0d9488; color:#fff; }
+#frontdesk-view .tech-card-meta { flex-wrap:wrap; gap:4px; margin-top:10px; padding-top:8px; border-top:1px dashed #e5e7eb; color:#6b7280; font-size:11px; }
+#frontdesk-view .tech-card-meta b { color:#374151; }
+#frontdesk-view .tech-card-meta span:last-child { color:#9ca3af; }
+
+@media (max-width:640px) {
+  body:has(#frontdesk-view:not(.hidden)) { min-width:0; }
+  body:has(#frontdesk-view:not(.hidden)) .sidebar { width:56px; padding:12px 6px; }
+  body:has(#frontdesk-view:not(.hidden)) .sidebar .brand,
+  body:has(#frontdesk-view:not(.hidden)) .sidebar .nav-item { font-size:0; }
+  body:has(#frontdesk-view:not(.hidden)) .sidebar .nav-item span { font-size:11px; }
+  body:has(#frontdesk-view:not(.hidden)) .sidebar .nav-section-label,
+  body:has(#frontdesk-view:not(.hidden)) .sidebar .sidebar-footer { display:none; }
+  body:has(#frontdesk-view:not(.hidden)) .sidebar .nav-group summary { font-size:0; }
+  body:has(#frontdesk-view:not(.hidden)) .sidebar .nav-group summary i { font-size:14px; }
+  body:has(#frontdesk-view:not(.hidden)) .workspace { margin-left:56px; }
+  body:has(#frontdesk-view:not(.hidden)) .topbar { padding:0 10px; }
+  body:has(#frontdesk-view:not(.hidden)) .topbar-actions { display:none; }
+  #frontdesk-view { padding:16px; }
+  #frontdesk-view .page-heading { align-items:flex-start; flex-wrap:wrap; gap:12px; }
+  #frontdesk-view .page-actions { flex-wrap:wrap; }
+  #frontdesk-view .room-grid,
+  #frontdesk-view .technician-list { grid-template-columns:1fr; }
+}

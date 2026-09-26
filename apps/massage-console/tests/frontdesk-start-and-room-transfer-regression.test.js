@@ -110,7 +110,7 @@ test('pending technician card exposes a direct start-service action', () => {
 });
 
 test('front desk loads the updated application script without stale browser cache', () => {
-  assert.match(index, /app\.js\?v=20260924-room-transfer-tech-replacement-v1/);
+  assert.match(index, /app\.js\?v=20260924-frontdesk-preview-v2/);
 });
 
 test('technician-card and settlement room-transfer dialogs have unique ids', () => {

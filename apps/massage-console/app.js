@@ -133,7 +133,7 @@ function formatRoomCountdown(expectedEndAt) {
   const hours = String(Math.floor(absolute / 3600)).padStart(2, '0');
   const minutes = String(Math.floor((absolute % 3600) / 60)).padStart(2, '0');
   const remainingSeconds = String(absolute % 60).padStart(2, '0');
-  return `${seconds >= 0 ? '剩余' : '超时'} ${hours}:${minutes}:${remainingSeconds}`;
+  return `${seconds >= 0 ? '' : '超时 '}${hours}:${minutes}:${remainingSeconds}`;
 }
 function refreshRoomServiceTimers() {
   document.querySelectorAll('[data-room-countdown]').forEach(element => {
@@ -525,17 +525,20 @@ function renderRooms() {
       : '';
     const serviceRows = (room.services || []).map(service => {
       const serviceTechnician = state.technicians.find(technician => String(technician.id) === String(service.technicianId));
-      const technicianLabel = serviceTechnician?.code || service.technicianName || '待派单';
+      const technicianLabel = room.status === 'reserved' ? service.technicianName : serviceTechnician?.code || service.technicianName || '待派单';
       const timer = service.status === 'IN_SERVICE' && service.expectedEndAt
         ? `<span class="room-service-timer" data-room-countdown="${roomTransferEscape(service.expectedEndAt)}">${formatRoomCountdown(service.expectedEndAt)}</span>`
         : `<span class="room-service-state">${service.status === 'PENDING_ACCEPTANCE' ? '待接单' : service.status === 'ACCEPTED' ? '待开始' : ''}</span>`;
       const extension = service.extensionSummary ? ` · 加钟：${service.extensionSummary}` : '';
-      return `<span class="room-service-row"><span class="room-service-main"><b>${roomTransferEscape(technicianLabel)}</b><small>${roomTransferEscape(service.serviceName)}${roomTransferEscape(extension)} · ${Number(service.plannedDurationMinutes || 0)} 分钟</small></span>${timer}</span>`;
+      const duration = room.status === 'serving' ? '' : ` · ${Number(service.plannedDurationMinutes || 0)} 分钟`;
+      return `<span class="room-service-row"><b>${roomTransferEscape(technicianLabel)}</b><small>${roomTransferEscape(service.serviceName)}${roomTransferEscape(extension)}${duration}</small>${timer}</span>`;
     }).join('');
     const exceptionActions = room.exceptionSessionId && room.apiId ? `<button class="room-dispatch-action" data-dispatch-reassignment="${roomTransferEscape(room.exceptionSessionId)}" type="button">重新派单</button>${room.exceptionStatus === 'REASSIGNMENT_REQUIRED' ? `<button class="room-dispatch-action danger" data-dispatch-cancellation="${roomTransferEscape(room.exceptionSessionId)}" type="button">取消派单</button>` : ''}` : '';
-    return `<article class="room ${roomTransferEscape(room.status)}"><div class="room-card" data-room="${roomTransferEscape(room.id)}" role="button" tabindex="0"><span class="room-top"><span class="dot ${roomTransferEscape(room.status)}"></span><span>${roomTransferEscape(room.label)}</span></span><strong>${roomTransferEscape(room.id)}</strong><small>${roomTransferEscape(room.detail || '可立即安排服务')}</small>${pendingSummary}${serviceRows ? `<span class="room-services">${serviceRows}</span>` : ''}</div><div class="room-actions">${exceptionActions}${room.status === 'serving' && room.apiId ? `<button class="room-transfer-tech-action" data-transfer-technician="${roomTransferEscape(room.id)}" type="button">换技师</button>` : ''}${room.status === 'pending-payment' && room.apiId ? `<button class="room-paid-action" data-confirm-payment="${roomTransferEscape(room.id)}" type="button">已付款</button>` : ''}${room.status === 'cleaning' && room.apiId ? `<button class="room-clean-action" data-complete-cleaning="${roomTransferEscape(room.id)}" type="button">完成清洁</button>` : ''}${room.apiId ? `<button class="room-status-action" data-room-status="${roomTransferEscape(room.id)}" type="button">状态</button>` : ''}</div></article>`;
+    return `<article class="room ${roomTransferEscape(room.status)}"><div class="room-card" data-room="${roomTransferEscape(room.id)}" role="button" tabindex="0"><span class="room-top"><span class="dot ${roomTransferEscape(room.status)}"></span><span>${roomTransferEscape(room.label)}</span></span><strong>${roomTransferEscape(room.id)}</strong><small class="room-beds">${roomTransferEscape(room.detail || '')}</small>${pendingSummary}${serviceRows ? `<span class="room-services">${serviceRows}</span>` : ''}</div><div class="room-actions">${exceptionActions}${room.status === 'serving' && room.apiId ? `<button class="room-transfer-tech-action" data-transfer-technician="${roomTransferEscape(room.id)}" type="button">换技师</button>` : ''}${room.status === 'pending-payment' && room.apiId ? `<button class="room-paid-action" data-confirm-payment="${roomTransferEscape(room.id)}" type="button">已付款</button>` : ''}${room.status === 'cleaning' && room.apiId ? `<button class="room-clean-action" data-complete-cleaning="${roomTransferEscape(room.id)}" type="button">完成清洁</button>` : ''}${room.apiId ? `<button class="room-status-action" data-room-status="${roomTransferEscape(room.id)}" type="button">状态</button>` : ''}</div></article>`;
   }).join('');
-  document.querySelector('#available-room-count').textContent = state.rooms.reduce((total, room) => total + Number(room.availableBedCount || 0), 0);
+  const idleRooms = state.rooms.filter(room => room.status === 'idle');
+  document.querySelector('#idle-room-count').textContent = idleRooms.length;
+  document.querySelector('#available-room-count').textContent = idleRooms.reduce((total, room) => total + Number(room.availableBedCount || 0), 0);
   const reassignmentButtons = document.querySelectorAll('#room-grid [data-dispatch-reassignment]');
   console.log('found buttons', reassignmentButtons.length);
   reassignmentButtons.forEach(button => {
@@ -1227,7 +1230,7 @@ function renderTechnicians() {
   const sorted = [...state.technicians].sort((a, b) => (stateOrder[a.state] ?? 9) - (stateOrder[b.state] ?? 9) || a.queue - b.queue || String(a.code||'').localeCompare(String(b.code||'')));
   document.querySelector('#technician-list').innerHTML = sorted.map(tech => {
     const unavailable = !['available', 'serving', 'pending', 'accepted'].includes(tech.state);
-    const label = tech.state === 'available' ? '可派钟' : tech.state === 'serving' ? '服务中' : tech.state === 'pending' ? '待接单' : tech.state === 'accepted' ? '待服务' : tech.state === 'reassign' ? '待重新派单' : '休息 / 下班';
+    const label = tech.state === 'available' ? '可派钟' : tech.state === 'serving' ? '服务中' : tech.state === 'pending' ? '待接单' : tech.state === 'accepted' ? '待服务' : tech.state === 'reassign' ? '待重新派单' : String(tech.detail || '').includes('休息') ? '休息' : tech.clockedIn ? '休息 / 下班' : '未打卡';
     const action = tech.state === 'available' ? '安排服务' : tech.state === 'serving' ? '下钟' : ['pending', 'accepted'].includes(tech.state) ? '开始服务' : '';
     const room = /([^\s·]+)\s*房/.exec(tech.detail||'')?.[1] || '';
     const next = tech.nextReservation ? `<small class="tech-next-service">下一单：${roomTransferEscape(clockTypeLabels[tech.nextReservation.reservationType] || tech.nextReservation.reservationType)} · ${roomTransferEscape(tech.nextReservation.roomCode)}房</small>` : '';
@@ -1237,7 +1240,7 @@ function renderTechnicians() {
     const actionButton = action ? `<button class="tech-action" data-tech="${roomTransferEscape(tech.id)}">${action}</button>` : '';
     const code = tech.code ? roomTransferEscape(tech.code) : '未设置工号';
     const detail = tech.state === 'available' ? '' : room ? `房间 ${room}` : tech.detail;
-    return `<article class="technician tech-card state-${roomTransferEscape(tech.state)} ${unavailable ? 'unavailable' : ''}" data-tech-card="${roomTransferEscape(tech.id)}"><div class="tech-card-main"><span class="tech-avatar" title="${code}" style="font-size:${Math.min(18, Math.floor(36 / Math.ceil(Math.sqrt(String(tech.code || '').length || 1))))}px">${tech.code ? code : '-'}</span><span class="technician-name"><span class="technician-full-name">${roomTransferEscape(tech.name)}</span>${!tech.code ? '<small>未设置工号</small>' : ''}${detail && detail !== label ? `<small>${roomTransferEscape(detail)}</small>` : ''}</span><div class="tech-card-controls">${expectedEnd}${actionButton}<span class="tech-state ${roomTransferEscape(tech.state)}">${label}</span></div></div><div class="tech-card-meta"><span>排钟 <b>${roomTransferEscape(tech.queueCount)}</b> · 点钟 <b>${roomTransferEscape(tech.callCount)}</b> · 加钟 <b>${roomTransferEscape(tech.extensionCount)}</b></span><span>轮排 ${roomTransferEscape(String(tech.queue).padStart(2, '0'))}</span></div>${next}</article>`;
+    return `<article class="technician tech-card state-${roomTransferEscape(tech.state)} ${unavailable ? 'unavailable' : ''}" data-tech-card="${roomTransferEscape(tech.id)}"><div class="tech-card-main"><span class="tech-avatar" title="${code}" style="font-size:${Math.min(18, Math.floor(36 / Math.ceil(Math.sqrt(String(tech.code || '').length || 1))))}px">${tech.code ? code : '-'}</span><span class="technician-name"><span class="technician-full-name">${roomTransferEscape(tech.name)}</span><span class="tech-state ${roomTransferEscape(tech.state)}">${label}</span>${!tech.code ? '<small>未设置工号</small>' : ''}${detail && detail !== label && tech.state !== 'serving' ? `<small>${roomTransferEscape(detail)}</small>` : ''}</span></div><div class="tech-card-controls">${expectedEnd}${actionButton}</div><div class="tech-card-meta">${tech.state === 'off' ? '' : `<span>排钟 <b>${roomTransferEscape(tech.queueCount)}</b> · 点钟 <b>${roomTransferEscape(tech.callCount)}</b> · 加钟 <b>${roomTransferEscape(tech.extensionCount)}</b></span>`}<span>轮排 ${roomTransferEscape(String(tech.queue).padStart(2, '0'))}</span></div>${next}</article>`;
   }).join('');
   document.querySelector('#clocked-in-tech-count').textContent = state.technicians.filter(tech => tech.clockedIn).length;
   document.querySelector('#total-tech-count').textContent = state.technicians.length;

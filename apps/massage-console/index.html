@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>靖康科技运营</title>
-    <link rel="stylesheet" href="./styles.css?v=20260924-room-transfer-tech-replacement-v1" />
+    <link rel="stylesheet" href="./styles.css?v=20260924-frontdesk-preview-v2" />
     <link rel="stylesheet" href="./technician-accounts.css?v=20260915-next-optimization-v5" />
     <link rel="stylesheet" href="./frontdesk-cleaning.css?v=20260915-next-optimization-v5" />
     <link rel="stylesheet" href="./room-payment.css?v=20260915-next-optimization-v5" />
@@ -72,13 +72,13 @@
         </header>
         <section class="view frontdesk-view" id="frontdesk-view">
           <div class="page-heading">
-            <div><p class="eyebrow">当班运营</p><h1>前台收银</h1></div>
+            <div><h1>前台收银</h1></div>
             <div class="page-actions"><span class="operational-sync-status" id="operational-sync-status">正在同步</span><button class="icon-button operational-refresh" id="refresh-state" title="同步门店状态" aria-label="同步门店状态">↻</button><button class="button secondary" id="current-order" type="button" aria-controls="member-business-dialog">开卡</button><button class="button primary" id="new-order" type="button" aria-controls="frontdesk-settlement-actions-dialog">结算</button></div>
           </div>
 
           <div class="frontdesk-layout">
             <section class="panel room-panel">
-              <div class="panel-heading"><div><h2>房间状态</h2><p><span class="dot idle"></span><span id="available-room-count">6</span> 间可用</p></div><button class="text-button" id="room-filter">仅看可用</button></div>
+              <div class="panel-heading"><div><h2>房间状态</h2><p>空闲 <span id="idle-room-count">0</span> 间 · 余床 <span id="available-room-count">0</span> 位</p></div><button class="text-button" id="room-filter">仅看可用</button></div>
               <div class="room-grid" id="room-grid"></div>
               <div class="legend"><span><i class="dot idle"></i>空闲</span><span><i class="dot serving"></i>服务中</span><span><i class="dot pending-payment"></i>待付款</span><span><i class="dot cleaning"></i>清洁中</span><span><i class="dot reserved"></i>已预留</span></div>
             </section>
@@ -288,7 +288,7 @@
     <div class="toast hidden" id="toast"></div>
     <dialog id="finance-batch-dialog"><form id="finance-batch-form" class="dialog-card compact"><div class="dialog-heading"><h2 id="finance-batch-title">批量审核</h2><button type="button" class="icon-button" id="finance-batch-close" aria-label="关闭">×</button></div><p id="finance-batch-summary"></p><label>统一审核意见<textarea name="comment" rows="3" maxlength="2000" required></textarea></label><div class="dialog-actions"><button class="button primary" type="submit">确认审核</button></div></form></dialog>
     <script src="./expense-ui.js?v=20260919-expense-sync-fix-v1"></script>
-    <script src="./app.js?v=20260924-room-transfer-tech-replacement-v1"></script>
+    <script src="./app.js?v=20260924-frontdesk-preview-v2"></script>
     <script src="./daily-report.js?v=20260923-service-rates-v1"></script>
     <script src="./monthly-targets.js?v=20260915-next-optimization-v5"></script>
     <script src="./offline-sync.js?v=20260915-next-optimization-v5"></script>
