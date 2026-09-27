@@ -2,7 +2,7 @@
 
 body.login-portal-page,
 body.frontdesk-auth-locked {
-  background: #031337 url('./assets/jingkang-login-background.png') center / cover fixed no-repeat;
+  background: #031337;
 }
 
 .login-portal-surface {
