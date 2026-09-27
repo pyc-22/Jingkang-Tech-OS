@@ -1,9 +1,3 @@
-const browserFetch = window.fetch.bind(window);
-window.fetch = (input, init) => browserFetch(
-  typeof input === 'string' ? input.replace('http://localhost:8080', '') : input,
-  init
-);
-
 const state = {
   rooms: [
     { id: '201', status: 'idle', label: '空闲' }, { id: '202', status: 'serving', label: '服务中', detail: '周悦 · 42 分钟' },
@@ -46,6 +40,183 @@ const state = {
   queueEvents: [],
   dispatchTransferRequests: []
 };
+
+const adminTokenKey = 'chengxin-admin-access-token';
+const adminRolesKey = 'chengxin-admin-roles';
+const adminPermissionsKey = 'chengxin-admin-permissions';
+const currentStoreKey = 'chengxin-current-store-id';
+const defaultStoreId = '22222222-2222-2222-2222-222222222222';
+const adminHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem(adminTokenKey)}` });
+const adminJsonHeaders = () => ({ ...adminHeaders(), 'Content-Type': 'application/json' });
+const adminRoles = () => { try { return JSON.parse(localStorage.getItem(adminRolesKey) || '[]'); } catch { return []; } };
+const adminPermissions = () => { try { return JSON.parse(localStorage.getItem(adminPermissionsKey) || '[]'); } catch { return []; } };
+const isTenantAdmin = () => adminRoles().includes('TENANT_ADMIN');
+const hasAdminPermission = permission => isTenantAdmin() || adminPermissions().includes(permission);
+const clearAdminSession = () => {
+  localStorage.removeItem(adminTokenKey);
+  localStorage.removeItem(adminRolesKey);
+  localStorage.removeItem(adminPermissionsKey);
+  localStorage.removeItem(currentStoreKey);
+  extensionSyncSnapshot = new Map();
+  extensionSyncInitialized = false;
+};
+const storeContextHeaders = (json = false) => {
+  const token = localStorage.getItem(adminTokenKey);
+  const storeId = localStorage.getItem(currentStoreKey);
+  return {
+    ...(token && storeId ? { Authorization: `Bearer ${token}`, 'X-Store-Id': storeId } : {}),
+    ...(json ? { 'Content-Type': 'application/json' } : {})
+  };
+};
+
+let frontdeskLoginRequired = false;
+let unauthorizedPromptPending = false;
+try { frontdeskLoginRequired = !localStorage.getItem(adminTokenKey); } catch { frontdeskLoginRequired = true; }
+
+function ensureAdminLoginDialog() {
+  if (document.querySelector('#admin-login-dialog') || !document.body) return;
+  document.body.insertAdjacentHTML('beforeend', '<dialog id="admin-login-dialog"><form id="admin-login-form" class="dialog-card compact"><div class="dialog-heading"><div><p class="eyebrow">管理端验证</p><h2>登录后管理门店权限</h2></div><button class="icon-button" type="button" id="close-admin-login" title="关闭">×</button></div><div class="form-grid"><label class="form-full">账号<input name="loginName" autocomplete="username" required></label><label class="form-full">密码<input name="password" type="password" autocomplete="current-password" minlength="8" required></label></div><div class="dialog-actions"><button class="button primary" type="submit">登录</button></div></form></dialog>');
+}
+const showAdminLogin = () => {
+  const dialog = document.querySelector('#admin-login-dialog');
+  if (!dialog) return;
+  dialog.querySelector('form')?.reset();
+  if (typeof dialog.showModal === 'function' && !dialog.open) dialog.showModal();
+};
+const requireFrontdeskLogin = () => {
+  frontdeskLoginRequired = true;
+  document.body?.classList.add('frontdesk-auth-locked');
+  const dialog = document.querySelector('#admin-login-dialog');
+  if (!dialog) return;
+  dialog.classList.add('login-portal-dialog');
+  const form = dialog.querySelector('form');
+  if (!form) return showAdminLogin();
+  form.classList.add('login-portal-surface');
+  if (!form.querySelector('.login-portal-brand')) form.insertAdjacentHTML('afterbegin', '<div class="login-portal-brand"><span class="login-portal-mark">JK</span><h1>靖康科技运营</h1><span class="login-portal-role">店长端</span><p>门店运营、前台收银与经营管理</p></div>');
+  showAdminLogin();
+};
+
+const apiPath = /(?:^|\/)api\/v1\//;
+const loginApi = /\/api\/v1\/admin\/auth\/(?:login|logout)(?:\/|\?|$)/;
+function handleUnauthorizedResponse() {
+  if (unauthorizedPromptPending && frontdeskLoginRequired) return;
+  unauthorizedPromptPending = true;
+  clearAdminSession();
+  currentAdminSession = null;
+  frontdeskOperationalReady = false;
+  requireFrontdeskLogin();
+}
+const nativeFetch = window.fetch.bind(window);
+window.fetch = async (input, init = {}) => {
+  const originalUrl = typeof input === 'string' ? input : input?.url;
+  const url = typeof originalUrl === 'string' ? originalUrl.replace(/^http:\/\/localhost:8080(?=\/api\/)/, '') : originalUrl;
+  const requestInit = { ...(init || {}) };
+  if (apiPath.test(url || '') && !loginApi.test(url || '')) {
+    const headers = new Headers(storeContextHeaders());
+    new Headers(requestInit.headers || {}).forEach((value, key) => headers.set(key, value));
+    requestInit.headers = headers;
+  }
+  const response = await nativeFetch(typeof input === 'string' ? url : input, requestInit);
+  if (response.status === 401 && apiPath.test(url || '') && !loginApi.test(url || '')) handleUnauthorizedResponse();
+  return response;
+};
+
+async function handleAdminLoginSubmit(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  try {
+    const response = await fetch('/api/v1/admin/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ loginName: form.get('loginName'), password: form.get('password') })
+    });
+    if (!response.ok) return toast('管理账号或密码错误');
+    const session = await response.json();
+    localStorage.setItem(adminTokenKey, session.accessToken);
+    localStorage.setItem(adminRolesKey, JSON.stringify(session.roles || []));
+    localStorage.setItem(adminPermissionsKey, JSON.stringify(session.permissions || []));
+    try {
+      await initializeAdminSession();
+      frontdeskLoginRequired = false;
+      document.body?.classList.remove('frontdesk-auth-locked');
+      await initializeFrontdeskWorkspace();
+      if (frontdeskLoginRequired) throw new Error('FRONTDESK_SESSION_INVALID');
+    } catch {
+      clearAdminSession();
+      requireFrontdeskLogin();
+      return toast('账号会话初始化失败');
+    }
+    document.querySelector('#admin-login-dialog')?.close();
+    const preferredView = isTenantAdmin() ? 'management' : 'frontdesk';
+    const target = document.querySelector(`[data-view="${preferredView}"]`);
+    (target && !target.hidden ? target : [...document.querySelectorAll('.nav-item[data-view]')].find(button => !button.hidden))?.click();
+    toast(`已登录：${session.displayName}`);
+  } catch {
+    toast('登录服务连接失败，请检查接口服务是否已启动');
+  }
+}
+function bindAdminLogin() {
+  const dialog = document.querySelector('#admin-login-dialog');
+  const form = document.querySelector('#admin-login-form');
+  if (!dialog || !form || form.dataset.bound === 'true') return;
+  form.dataset.bound = 'true';
+  document.querySelector('#close-admin-login')?.addEventListener('click', () => { if (!frontdeskLoginRequired) dialog.close(); });
+  dialog.addEventListener('cancel', event => { if (frontdeskLoginRequired) event.preventDefault(); });
+  form.addEventListener('submit', handleAdminLoginSubmit);
+}
+ensureAdminLoginDialog();
+bindAdminLogin();
+if (frontdeskLoginRequired) requireFrontdeskLogin();
+window.setTimeout(() => restoreFrontdeskSession(), 0);
+
+function safeRender(name, renderer, ...args) {
+  try {
+    const result = renderer(...args);
+    if (result && typeof result.catch === 'function') {
+      return result.catch(error => {
+        console.warn(`${name} failed`, error);
+        return undefined;
+      });
+    }
+    return result;
+  } catch (error) {
+    console.warn(`${name} failed`, error);
+    return undefined;
+  }
+}
+
+const renderGuardNames = [
+  'renderQueueEvents','renderReservations','renderRooms','renderDispatchReassignmentPanel','renderDispatchTransferRequests',
+  'renderFrontdeskExtensionPreview','renderServiceItemChangeOptions','renderTechnicians','renderManagedTechnicians',
+  'renderManagedEmployees','renderEmployeeAccounts','renderEmployeeAttendance','renderManagedServiceItems',
+  'renderManagedPaymentMethods','renderSettlementPaymentMethods','renderPrintSetting','renderPrintContentOptions',
+  'renderPrintPreview','renderOrder','renderPendingServiceSessions','renderMemberCard','renderSettlementMember',
+  'renderMemberResults','renderHistoricalBackfillLines','renderHistoricalBackfillPayments','renderHistoricalBackfillSummary',
+  'renderHistoricalBackfillMember','renderFrontdeskHistoricalBackfills','renderHistoricalBackfillManagers',
+  'renderHistoricalBackfillRows','renderTechnicianSchedules','renderTechnicianLeaves','renderStoreComparison',
+  'renderStoreAlerts','renderCrossStoreTransactions','renderStoreSelector','renderCurrentOperator',
+  'renderHeadquartersOverview','renderMemberCenter','renderMemberProfile','renderMemberRechargeHistory',
+  'renderManagementOverview','renderAccess','renderRolePermissions','renderRefundHistory','renderBusinessCorrections',
+  'renderServiceChangeStoreOptions','renderServiceSessions','renderOrderCommissionRecords','renderOrderCommissionAdjustments',
+  'renderMonthlyCommissionTierPolicy','renderOrderServiceCatalog','renderManualServiceTechnicians',
+  'renderDispatchServiceCatalog','renderDispatchSelection','renderFinanceStoreFilter','renderFinanceApplicantFilter',
+  'renderFinanceClaims','renderFinanceReport','renderFinanceDetail','renderTechnicianCommissionSummary',
+  'renderSingleRoomServiceSelection','renderMemberConsumeOrders','renderSingleRoomSettlementSelection',
+  'renderMergeMember','renderMergePaymentMethods','renderMergeSettlement','renderFrontdeskRoomTransferRooms',
+  'renderFrontdeskRoomTransferPreview','renderFrontdeskStatusActions','renderFinanceExpenseCategories'
+];
+function installRenderGuards() {
+  renderGuardNames.forEach(name => {
+    const renderer = globalThis[name];
+    if (typeof renderer !== 'function' || renderer.__renderGuarded) return;
+    const guarded = (...args) => safeRender(name, renderer, ...args);
+    guarded.__renderGuarded = true;
+    globalThis[name] = guarded;
+  });
+}
+// Function declarations are hoisted in this classic script, so every later
+// event binding resolves to the guarded renderer even when a panel is absent.
+installRenderGuards();
 
 let clockingTechIds = [];
 // Each selected technician owns an independent dispatch choice.  Keep this
@@ -291,6 +462,10 @@ async function loadServiceExtensionIntents() {
 }
 
 async function loadFoundationData({ silent = false } = {}) {
+  if (!localStorage.getItem(adminTokenKey) || frontdeskLoginRequired) {
+    updateOperationalSyncStatus(false);
+    return false;
+  }
   try {
     const base = 'http://localhost:8080/api/v1/foundation';
     const [technicians, rooms, services, serviceCategories, statuses, sessions, pendingAcceptance, reassignment, dispatchCancelled, accepted, eligibility, queueSnapshot, allSessions, waitingReservations] = await Promise.all([`${base}/technicians`, `${base}/rooms`, `${base}/service-items`, 'http://localhost:8080/api/v1/service-categories', 'http://localhost:8080/api/v1/rooms/statuses', 'http://localhost:8080/api/v1/service-sessions?status=IN_SERVICE', 'http://localhost:8080/api/v1/service-sessions?status=PENDING_ACCEPTANCE', 'http://localhost:8080/api/v1/service-sessions?status=REASSIGNMENT_REQUIRED', 'http://localhost:8080/api/v1/service-sessions?status=DISPATCH_CANCELLED', 'http://localhost:8080/api/v1/service-sessions?status=ACCEPTED', 'http://localhost:8080/api/v1/technician-schedules/clock-eligibility', 'http://localhost:8080/api/v1/technician-queue', 'http://localhost:8080/api/v1/service-sessions', 'http://localhost:8080/api/v1/service-reservations?status=WAITING'].map(url => fetch(url, { headers: storeContextHeaders() }).then(response => { if (!response.ok) throw new Error(response.status); return response.json(); })));
@@ -380,10 +555,12 @@ async function loadFoundationData({ silent = false } = {}) {
       });
     });
     frontdeskOperationalReady = true;
-    renderRooms(); renderTechnicians(); renderOrder();
+    safeRender('renderRooms', renderRooms);
+    safeRender('renderTechnicians', renderTechnicians);
+    safeRender('renderOrder', renderOrder);
     if (frontdeskPendingPanelsEnabled) {
       await loadServiceExtensionIntents();
-      renderDispatchReassignmentPanel();
+      safeRender('renderDispatchReassignmentPanel', renderDispatchReassignmentPanel);
       await loadDispatchTransferRequests({ silent: true });
     }
     await loadQueueEvents({ silent: true });
@@ -409,10 +586,13 @@ async function loadFoundationData({ silent = false } = {}) {
     state.pendingRoomTransfers = [];
     state.queueEvents = [];
     state.dispatchTransferRequests = [];
-    renderRooms(); renderTechnicians(); renderOrder(); renderMemberCard();
-    renderDispatchReassignmentPanel();
-    renderDispatchTransferRequests();
-    renderQueueEvents();
+    safeRender('renderRooms', renderRooms);
+    safeRender('renderTechnicians', renderTechnicians);
+    safeRender('renderOrder', renderOrder);
+    safeRender('renderMemberCard', renderMemberCard);
+    safeRender('renderDispatchReassignmentPanel', renderDispatchReassignmentPanel);
+    safeRender('renderDispatchTransferRequests', renderDispatchTransferRequests);
+    safeRender('renderQueueEvents', renderQueueEvents);
     updateOperationalSyncStatus(false);
     if (!silent) toast('基础资料服务不可用，已停止收银操作');
     return false;
@@ -436,11 +616,12 @@ function renderQueueEvents() {
   ensureQueueEventPanel();
   const list = document.querySelector('#queue-event-list');
   if (!list) return;
-  list.innerHTML = state.queueEvents.map(item => {
+  const events = Array.isArray(state.queueEvents) ? state.queueEvents.filter(Boolean) : [];
+  try { list.innerHTML = events.map(item => {
     const position = item.toPosition == null ? '' : (item.fromPosition == null ? `\u7b2c ${item.toPosition} \u4f4d` : `\u7b2c ${item.fromPosition} \u4f4d \u2192 \u7b2c ${item.toPosition} \u4f4d`);
     const time = item.occurredAt ? new Date(item.occurredAt).toLocaleTimeString('zh-CN', { hour:'2-digit', minute:'2-digit', hour12:false }) : '';
     return `<article class="queue-event-item"><span><b>${queueEventEscape(queueEventLabels[item.eventType] || item.eventType)}</b><small>${queueEventEscape(item.technicianName || '\u7cfb\u7edf')} ${position}${item.reason ? `\u00b7 ${queueEventEscape(item.reason)}` : ''}</small></span><time>${time}</time></article>`;
-  }).join('') || '<p class="pending-service-empty">\u6682\u65e0\u4eca\u65e5\u8f6e\u949f\u53d8\u52a8</p>';
+  }).join('') || '<p class="pending-service-empty">\u6682\u65e0\u4eca\u65e5\u8f6e\u949f\u53d8\u52a8</p>'; } catch (error) { console.warn('renderQueueEvents failed', error); }
 }
 async function loadQueueEvents({ silent = false } = {}) {
   ensureQueueEventPanel();
@@ -464,7 +645,12 @@ function renderReservations() {
   ensureReservationPanel();
   const list = document.querySelector('#service-reservation-list');
   if (!list) return;
-  list.innerHTML = state.reservations.map(item => { const room = state.rooms.find(candidate => String(candidate.apiId) === String(item.roomId)); const tech = state.technicians.find(candidate => String(candidate.id) === String(item.technicianId)); const busy = tech?.state === 'serving' || tech?.state === 'pending' || tech?.state === 'accepted'; const blocked = room?.status === 'pending-payment' || room?.status === 'cleaning' || room?.status === 'maintenance' || busy && room?.status === 'serving'; const reason = room?.status === 'pending-payment' ? '等待当前订单收款' : room?.status === 'cleaning' ? '等待房间清洁完成' : room?.status === 'maintenance' ? '房间维修中' : busy ? '等待当前服务结束' : '可确认派单'; return `<article class="pending-service-item"><span><b>${roomTransferEscape(clockTypeLabels[item.reservationType] || item.reservationType)} · ${roomTransferEscape(item.roomCode)} 房</b><small>${roomTransferEscape(item.serviceNameSnapshot)} · ${roomTransferEscape(item.technicianName || '待指定技师')} · ${roomTransferEscape(item.plannedDurationMinutes)} 分钟 · ${reason}</small></span><button class="record-delete edit-technician" type="button" data-reservation-dispatch="${roomTransferEscape(item.id)}" ${blocked ? 'disabled' : ''}>${blocked ? reason : '确认派单'}</button></article>`; }).join('') || '<p class="pending-service-empty">暂无待派预约</p>';
+  const reservations = Array.isArray(state.reservations) ? state.reservations.filter(Boolean) : [];
+  const rooms = Array.isArray(state.rooms) ? state.rooms : [];
+  const technicians = Array.isArray(state.technicians) ? state.technicians : [];
+  try {
+    list.innerHTML = reservations.map(item => { const room = rooms.find(candidate => String(candidate.apiId) === String(item.roomId)); const tech = technicians.find(candidate => String(candidate.id) === String(item.technicianId)); const busy = tech?.state === 'serving' || tech?.state === 'pending' || tech?.state === 'accepted'; const blocked = room?.status === 'pending-payment' || room?.status === 'cleaning' || room?.status === 'maintenance' || busy && room?.status === 'serving'; const reason = room?.status === 'pending-payment' ? '等待当前订单收款' : room?.status === 'cleaning' ? '等待房间清洁完成' : room?.status === 'maintenance' ? '房间维修中' : busy ? '等待当前服务结束' : '可确认派单'; return `<article class="pending-service-item"><span><b>${roomTransferEscape(clockTypeLabels[item.reservationType] || item.reservationType)} · ${roomTransferEscape(item.roomCode)} 房</b><small>${roomTransferEscape(item.serviceNameSnapshot)} · ${roomTransferEscape(item.technicianName || '待指定技师')} · ${roomTransferEscape(item.plannedDurationMinutes)} 分钟 · ${reason}</small></span><button class="record-delete edit-technician" type="button" data-reservation-dispatch="${roomTransferEscape(item.id)}" ${blocked ? 'disabled' : ''}>${blocked ? reason : '确认派单'}</button></article>`; }).join('') || '<p class="pending-service-empty">暂无待派预约</p>';
+  } catch (error) { console.warn('renderReservations failed', error); }
 }
 
 async function loadReservations({ silent = false } = {}) {
@@ -510,21 +696,25 @@ window.setInterval(refreshRoomServiceTimers, 1000);
 document.addEventListener('visibilitychange', syncFrontdeskWhenVisible);
 
 function renderRooms() {
-  console.log('renderRooms called', state.rooms.length);
-  document.querySelector('#room-grid').innerHTML = state.rooms.map(room => {
+  const grid = document.querySelector('#room-grid');
+  const rooms = (Array.isArray(state.rooms) ? state.rooms : []).filter(Boolean);
+  const pendingServiceSessions = Array.isArray(state.pendingServiceSessions) ? state.pendingServiceSessions : [];
+  const technicians = Array.isArray(state.technicians) ? state.technicians : [];
+  try {
+    if (grid) grid.innerHTML = rooms.map(room => {
     const pendingSessions = room.status === 'pending-payment'
-      ? state.pendingServiceSessions.filter(session => String(session.roomId) === String(room.apiId))
+      ? pendingServiceSessions.filter(session => String(session.roomId) === String(room.apiId))
       : [];
     const primaryPending = pendingSessions[0];
     const pendingTechnician = primaryPending
-      ? state.technicians.find(technician => String(technician.id) === String(primaryPending.technicianId))
-        || state.technicians.find(technician => technician.name === primaryPending.technicianName)
+      ? technicians.find(technician => String(technician.id) === String(primaryPending.technicianId))
+        || technicians.find(technician => technician.name === primaryPending.technicianName)
       : null;
     const pendingSummary = primaryPending
       ? `<span class="room-pending-summary"><b>${roomTransferEscape(primaryPending.technicianName)}${pendingTechnician?.code ? `（${roomTransferEscape(pendingTechnician.code)}）` : ''}${pendingSessions.length > 1 ? roomTransferEscape(`等 ${pendingSessions.length} 人`) : ''}</b><small>${roomTransferEscape(primaryPending.serviceNameSnapshot)}${pendingSessions.length > 1 ? roomTransferEscape(` 等 ${pendingSessions.length} 项`) : ''}</small></span>`
       : '';
     const serviceRows = (room.services || []).map(service => {
-      const serviceTechnician = state.technicians.find(technician => String(technician.id) === String(service.technicianId));
+      const serviceTechnician = technicians.find(technician => String(technician.id) === String(service.technicianId));
       const technicianLabel = room.status === 'reserved' ? service.technicianName : serviceTechnician?.code || service.technicianName || '待派单';
       const timer = service.status === 'IN_SERVICE' && service.expectedEndAt
         ? `<span class="room-service-timer" data-room-countdown="${roomTransferEscape(service.expectedEndAt)}">${formatRoomCountdown(service.expectedEndAt)}</span>`
@@ -535,17 +725,21 @@ function renderRooms() {
     }).join('');
     const exceptionActions = room.exceptionSessionId && room.apiId ? `<button class="room-dispatch-action" data-dispatch-reassignment="${roomTransferEscape(room.exceptionSessionId)}" type="button">重新派单</button>${room.exceptionStatus === 'REASSIGNMENT_REQUIRED' ? `<button class="room-dispatch-action danger" data-dispatch-cancellation="${roomTransferEscape(room.exceptionSessionId)}" type="button">取消派单</button>` : ''}` : '';
     return `<article class="room ${roomTransferEscape(room.status)}"><div class="room-card" data-room="${roomTransferEscape(room.id)}" role="button" tabindex="0"><span class="room-top"><span class="dot ${roomTransferEscape(room.status)}"></span><span>${roomTransferEscape(room.label)}</span></span><strong>${roomTransferEscape(room.id)}</strong><small class="room-beds">${roomTransferEscape(room.detail || '')}</small>${pendingSummary}${serviceRows ? `<span class="room-services">${serviceRows}</span>` : ''}</div><div class="room-actions">${exceptionActions}${room.status === 'serving' && room.apiId ? `<button class="room-transfer-tech-action" data-transfer-technician="${roomTransferEscape(room.id)}" type="button">换技师</button>` : ''}${room.status === 'pending-payment' && room.apiId ? `<button class="room-paid-action" data-confirm-payment="${roomTransferEscape(room.id)}" type="button">已付款</button>` : ''}${room.status === 'cleaning' && room.apiId ? `<button class="room-clean-action" data-complete-cleaning="${roomTransferEscape(room.id)}" type="button">完成清洁</button>` : ''}${room.apiId ? `<button class="room-status-action" data-room-status="${roomTransferEscape(room.id)}" type="button">状态</button>` : ''}</div></article>`;
-  }).join('');
-  const idleRooms = state.rooms.filter(room => room.status === 'idle');
-  document.querySelector('#idle-room-count').textContent = idleRooms.length;
-  document.querySelector('#available-room-count').textContent = idleRooms.reduce((total, room) => total + Number(room.availableBedCount || 0), 0);
-  const reassignmentButtons = document.querySelectorAll('#room-grid [data-dispatch-reassignment]');
-  console.log('found buttons', reassignmentButtons.length);
+    }).join('');
+  } catch (error) {
+    console.warn('renderRooms failed', error);
+  }
+  const idleRooms = rooms.filter(room => room.status === 'idle');
+  const idleCount = document.querySelector('#idle-room-count');
+  const availableCount = document.querySelector('#available-room-count');
+  if (idleCount) idleCount.textContent = idleRooms.length;
+  if (availableCount) availableCount.textContent = idleRooms.reduce((total, room) => total + Number(room.availableBedCount || 0), 0);
+  const reassignmentButtons = grid?.querySelectorAll?.('[data-dispatch-reassignment]') || [];
   reassignmentButtons.forEach(button => {
-    button.addEventListener('click', event => { console.log('dispatch button clicked', event.target); event.preventDefault(); event.stopPropagation(); openDispatchReassignment(button.dataset.dispatchReassignment); });
+    button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); openDispatchReassignment(button.dataset.dispatchReassignment); });
   });
-  document.querySelectorAll('#room-grid [data-dispatch-cancellation]').forEach(button => {
-    button.addEventListener('click', event => { console.log('dispatch button clicked', event.target); event.preventDefault(); event.stopPropagation(); dispatchReassignmentSessionId = button.dataset.dispatchCancellation; openDispatchCancellation(); });
+  grid?.querySelectorAll?.('[data-dispatch-cancellation]').forEach(button => {
+    button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); dispatchReassignmentSessionId = button.dataset.dispatchCancellation; openDispatchCancellation(); });
   });
 }
 function formatExpectedClockTime(expectedEndAt) {
@@ -1226,9 +1420,13 @@ async function submitTechnicianRoomTransfer(event) {
 }
 
 function renderTechnicians() {
+  const target = document.querySelector('#technician-list');
+  const technicians = Array.isArray(state.technicians) ? state.technicians.filter(Boolean) : [];
+  if (!target) return;
   const stateOrder = { available:0, pending:1, accepted:2, serving:3, reassign:4, off:5 };
-  const sorted = [...state.technicians].sort((a, b) => (stateOrder[a.state] ?? 9) - (stateOrder[b.state] ?? 9) || a.queue - b.queue || String(a.code||'').localeCompare(String(b.code||'')));
-  document.querySelector('#technician-list').innerHTML = sorted.map(tech => {
+  try {
+    const sorted = [...technicians].sort((a, b) => (stateOrder[a.state] ?? 9) - (stateOrder[b.state] ?? 9) || a.queue - b.queue || String(a.code||'').localeCompare(String(b.code||'')));
+    target.innerHTML = sorted.map(tech => {
     const unavailable = !['available', 'serving', 'pending', 'accepted'].includes(tech.state);
     const label = tech.state === 'available' ? '可派钟' : tech.state === 'serving' ? '服务中' : tech.state === 'pending' ? '待接单' : tech.state === 'accepted' ? '待服务' : tech.state === 'reassign' ? '待重新派单' : String(tech.detail || '').includes('休息') ? '休息' : tech.clockedIn ? '休息 / 下班' : '未打卡';
     const action = tech.state === 'available' ? '安排服务' : tech.state === 'serving' ? '下钟' : ['pending', 'accepted'].includes(tech.state) ? '开始服务' : '';
@@ -1241,12 +1439,16 @@ function renderTechnicians() {
     const code = tech.code ? roomTransferEscape(tech.code) : '未设置工号';
     const detail = tech.state === 'available' ? '' : room ? `房间 ${room}` : tech.detail;
     return `<article class="technician tech-card state-${roomTransferEscape(tech.state)} ${unavailable ? 'unavailable' : ''}" data-tech-card="${roomTransferEscape(tech.id)}"><div class="tech-card-main"><span class="tech-avatar" title="${code}" style="font-size:${Math.min(18, Math.floor(36 / Math.ceil(Math.sqrt(String(tech.code || '').length || 1))))}px">${tech.code ? code : '-'}</span><span class="technician-name"><span class="technician-full-name">${roomTransferEscape(tech.name)}</span><span class="tech-state ${roomTransferEscape(tech.state)}">${label}</span>${!tech.code ? '<small>未设置工号</small>' : ''}${detail && detail !== label && tech.state !== 'serving' ? `<small>${roomTransferEscape(detail)}</small>` : ''}</span></div><div class="tech-card-controls">${expectedEnd}${actionButton}</div><div class="tech-card-meta">${tech.state === 'off' ? '' : `<span>排钟 <b>${roomTransferEscape(tech.queueCount)}</b> · 点钟 <b>${roomTransferEscape(tech.callCount)}</b> · 加钟 <b>${roomTransferEscape(tech.extensionCount)}</b></span>`}<span>轮排 ${roomTransferEscape(String(tech.queue).padStart(2, '0'))}</span></div>${next}</article>`;
-  }).join('');
-  document.querySelector('#clocked-in-tech-count').textContent = state.technicians.filter(tech => tech.clockedIn).length;
-  document.querySelector('#total-tech-count').textContent = state.technicians.length;
-  document.querySelector('#on-duty-count').textContent = state.technicians.filter(tech => tech.state !== 'off').length;
-  document.querySelector('#available-tech-count').textContent = state.technicians.filter(tech => tech.state === 'available').length;
-  document.querySelector('#serving-tech-count').textContent = state.technicians.filter(tech => tech.state === 'serving').length;
+    }).join('');
+    const count = (selector, value) => { const element = document.querySelector(selector); if (element) element.textContent = value; };
+    count('#clocked-in-tech-count', technicians.filter(tech => tech.clockedIn).length);
+    count('#total-tech-count', technicians.length);
+    count('#on-duty-count', technicians.filter(tech => tech.state !== 'off').length);
+    count('#available-tech-count', technicians.filter(tech => tech.state === 'available').length);
+    count('#serving-tech-count', technicians.filter(tech => tech.state === 'serving').length);
+  } catch (error) {
+    console.warn('renderTechnicians failed', error);
+  }
 }
 
 async function loadManagedTechnicians() {
@@ -1989,29 +2191,35 @@ function openTechnicianDialog(technician) {
 
 function renderOrder() {
   const list = document.querySelector('#order-lines');
+  const orderItems = Array.isArray(state.orderItems) ? state.orderItems.filter(Boolean) : [];
   const correctionBanner = orderCorrectionContext ? `<div class="order-line order-correction-banner"><span><b>正在修正 ${memberBusinessEscape(orderCorrectionContext.originalOrderNo)}</b><small>${memberBusinessEscape(orderCorrectionContext.reason)}</small></span><button type="button" data-cancel-order-correction>取消修正</button></div>` : '';
-  list.innerHTML = correctionBanner + (state.orderItems.length ? state.orderItems.map(item => `<div class="order-line"><span><b>${memberBusinessEscape(item.name)}</b><small>${memberBusinessEscape(item.duration)}${item.manualService ? roomTransferEscape(` · ${clockTypeLabels[item.manualService.clockType] || item.manualService.clockType} · ${item.manualService.technicians.length} 位技师`) : ''}</small></span><span><b>${money(item.price)}</b><button data-remove="${roomTransferEscape(item.lineId)}">移除</button></span></div>`).join('') : '<p class="empty-state">请选择服务项目</p>');
+  if (list) list.innerHTML = correctionBanner + (orderItems.length ? orderItems.map(item => `<div class="order-line"><span><b>${memberBusinessEscape(item.name)}</b><small>${memberBusinessEscape(item.duration)}${item.manualService ? roomTransferEscape(` · ${clockTypeLabels[item.manualService.clockType] || item.manualService.clockType} · ${item.manualService.technicians.length} 位技师`) : ''}</small></span><span><b>${money(item.price)}</b><button data-remove="${roomTransferEscape(item.lineId)}">移除</button></span></div>`).join('') : '<p class="empty-state">请选择服务项目</p>');
   const review = document.querySelector('#settlement-order-review-list');
-  if (review) review.innerHTML = state.orderItems.length ? state.orderItems.map(item => `<article><span><b>${memberBusinessEscape(item.name)}</b><small>${memberBusinessEscape(item.roomCode ? `${item.roomCode} 房 · ${item.serviceNo || ''}` : item.duration)}</small></span><strong>${money(item.price)}</strong></article>`).join('') : '<p class="empty-state">尚未选择待结算服务</p>';
-  const total = state.orderItems.reduce((sum, item) => sum + item.price, 0);
-  document.querySelector('#order-total').textContent = money(total);
-  document.querySelector('#settlement-total').textContent = total.toFixed(2);
-  document.querySelector('#new-order').disabled = !frontdeskOperationalReady;
-  document.querySelector('#settle-order').disabled = !frontdeskOperationalReady || total === 0;
-  const selectedSessionItems=state.orderItems.filter(item=>item.serviceSessionId);const selectedRoom=selectedSessionItems.find(item=>item.roomCode)?.roomCode;document.querySelector('#order-number').textContent=orderCorrectionContext?`修正 ${orderCorrectionContext.originalOrderNo}`:state.orderItems.length?(selectedRoom?`${selectedRoom} 房 · ${state.orderItems.length} 项待结算`:`${state.orderItems.length} 项待结算`):'待开单';
-  renderPendingServiceSessions();
+  if (review) review.innerHTML = orderItems.length ? orderItems.map(item => `<article><span><b>${memberBusinessEscape(item.name)}</b><small>${memberBusinessEscape(item.roomCode ? `${item.roomCode} 房 · ${item.serviceNo || ''}` : item.duration)}</small></span><strong>${money(item.price)}</strong></article>`).join('') : '<p class="empty-state">尚未选择待结算服务</p>';
+  const total = orderItems.reduce((sum, item) => sum + Number(item.price || 0), 0);
+  const setText = (selector, value) => { const element = document.querySelector(selector); if (element) element.textContent = value; };
+  setText('#order-total', money(total));
+  setText('#settlement-total', total.toFixed(2));
+  const newOrder = document.querySelector('#new-order');
+  const settleOrder = document.querySelector('#settle-order');
+  if (newOrder) newOrder.disabled = !frontdeskOperationalReady;
+  if (settleOrder) settleOrder.disabled = !frontdeskOperationalReady || total === 0;
+  const selectedSessionItems=orderItems.filter(item=>item.serviceSessionId);const selectedRoom=selectedSessionItems.find(item=>item.roomCode)?.roomCode;setText('#order-number', orderCorrectionContext?`修正 ${orderCorrectionContext.originalOrderNo}`:orderItems.length?(selectedRoom?`${selectedRoom} 房 · ${orderItems.length} 项待结算`:`${orderItems.length} 项待结算`):'待开单');
+  safeRender('renderPendingServiceSessions', renderPendingServiceSessions);
 }
 
 function renderPendingServiceSessions() {
   const list = document.querySelector('#pending-service-list');
   if (!list) return;
   const keyword = document.querySelector('#pending-service-search')?.value.trim().toLowerCase() || '';
-  const sourceSessions = singleRoomSettlementRoomId ? singleRoomSettlementSessions : state.pendingServiceSessions;
-  const sessions = sourceSessions
+  const sourceSessions = (singleRoomSettlementRoomId ? singleRoomSettlementSessions : state.pendingServiceSessions);
+  const sessionsSource = Array.isArray(sourceSessions) ? sourceSessions.filter(Boolean) : [];
+  const orderItems = Array.isArray(state.orderItems) ? state.orderItems : [];
+  const sessions = sessionsSource
     .filter(session => !singleRoomSettlementRoomId || String(session.roomId) === String(singleRoomSettlementRoomId))
     .filter(session => !keyword || `${session.roomCode || ''} ${session.serviceNo || ''} ${session.serviceNameSnapshot || ''} ${session.technicianName || ''}`.toLowerCase().includes(keyword));
   list.innerHTML = sessions.map(session => {
-    const selected = state.orderItems.some(item => item.serviceSessionId === session.id);
+    const selected = orderItems.some(item => item.serviceSessionId === session.id);
   const clockType = clockTypeLabels[session.clockType] || session.clockType;
     const extension = session.extensionSummary ? ` · 加钟：${session.extensionSummary}` : '';
     return `<div class="pending-service-row"><button class="pending-service-item" type="button" data-pending-service="${roomTransferEscape(session.id)}" ${selected ? 'disabled' : ''}><span><b>${memberBusinessEscape(session.serviceNameSnapshot)}</b><small>${memberBusinessEscape(session.serviceNo || '')} · ${roomTransferEscape(clockType)} · ${memberBusinessEscape(session.technicianName)} · ${memberBusinessEscape(session.roomCode)} 房 · ${roomTransferEscape(session.plannedDurationMinutes)} 分钟${memberBusinessEscape(extension)}</small></span><em>${selected ? '已加入' : money(session.servicePriceCents / 100)}</em></button><button class="pending-service-void" type="button" data-void-service="${roomTransferEscape(session.id)}" title="作废未结算服务" aria-label="作废 ${memberBusinessEscape(session.serviceNameSnapshot)}">作废</button></div>`;
@@ -2102,12 +2310,23 @@ function addPendingServiceToOrder(sessionId) {
 }
 
 function renderMemberCard() {
-  const member = state.members.find(item => item.id === state.selectedMemberId);
-  if (!member) { document.querySelector('#order-member-avatar').textContent = '会'; document.querySelector('#order-member-name').textContent = '请选择会员'; document.querySelector('#order-member-meta').textContent = '余额支付前需要选择真实会员'; renderSettlementMember(); return; }
-  document.querySelector('#order-member-avatar').textContent = member.name.slice(0, 1);
-  document.querySelector('#order-member-name').textContent = member.name;
-  document.querySelector('#order-member-meta').textContent = `${member.phone}${member.code ? ` · ${member.code}` : ''} · ${member.level}`;
-  renderSettlementMember();
+  try {
+    const member = (Array.isArray(state.members) ? state.members : []).find(item => item.id === state.selectedMemberId);
+    const setText = (selector, value) => { const element = document.querySelector(selector); if (element) element.textContent = value; };
+    if (!member) {
+      setText('#order-member-avatar', '会');
+      setText('#order-member-name', '请选择会员');
+      setText('#order-member-meta', '余额支付前需要选择真实会员');
+      safeRender('renderSettlementMember', renderSettlementMember);
+      return;
+    }
+    setText('#order-member-avatar', member.name?.slice(0, 1) || '会');
+    setText('#order-member-name', member.name || '请选择会员');
+    setText('#order-member-meta', `${member.phone || ''}${member.code ? ` · ${member.code}` : ''} · ${member.level || ''}`);
+    safeRender('renderSettlementMember', renderSettlementMember);
+  } catch (error) {
+    console.warn('renderMemberCard failed', error);
+  }
 }
 
 function renderSettlementMember() {
@@ -2533,20 +2752,7 @@ async function loadHistoricalBackfillRows(){const storeId=document.querySelector
 function exportHistoricalBackfills(){const columns=['营业日期','门店编码','门店名称','订单号','结算单号','应收分','实收分','收款方式','操作人','状态','退款状态'];const rows=historicalBackfillRows.map(row=>[row.backfillDate,row.storeCode,row.storeName,row.orderNo,row.settlementNo,row.receivableCents,row.paidCents,row.paymentMethods,row.backfillByName,row.status,row.refundStatus]);const csv='\ufeff'+[columns,...rows].map(row=>row.map(value=>`"${String(value??'').replace(/"/g,'""')}"`).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const anchor=document.createElement('a');anchor.href=url;anchor.download=`historical-backfills-${localDateValue()}.csv`;anchor.click();URL.revokeObjectURL(url);}
 function syncHistoricalBackfillAccessStores(){const options=accessStores.filter(store=>store.active).map(store=>`<option value="${roomTransferEscape(store.id)}">${historicalBackfillEscape(store.code)} · ${historicalBackfillEscape(store.name)}</option>`).join('');for(const selector of ['#backfill-access-store','#historical-backfill-filter-store']){const element=document.querySelector(selector);if(!element)continue;const previous=element.value;element.innerHTML=(selector.endsWith('filter-store')?'<option value="">全部门店</option>':'')+options;if([...element.options].some(option=>option.value===previous))element.value=previous;}if(!historicalBackfillStoreId()&&accessStores.some(store=>store.active))document.querySelector('#backfill-access-store').value=accessStores.find(store=>store.active).id;}
 async function loadHistoricalBackfillAccess(){if(!isTenantAdmin())return;syncHistoricalBackfillAccessStores();await Promise.all([loadBackfillManagers(),loadHistoricalBackfillRows()]);}
-document.body.insertAdjacentHTML('beforeend','<dialog id="admin-login-dialog"><form id="admin-login-form" class="dialog-card compact"><div class="dialog-heading"><div><p class="eyebrow">管理端验证</p><h2>登录后管理门店权限</h2></div><button class="icon-button" type="button" id="close-admin-login" title="关闭">×</button></div><div class="form-grid"><label class="form-full">账号<input name="loginName" autocomplete="username" required></label><label class="form-full">密码<input name="password" type="password" autocomplete="current-password" minlength="8" required></label></div><div class="dialog-actions"><button class="button primary" type="submit">登录</button></div></form></dialog>');
-const adminTokenKey='chengxin-admin-access-token';
-const adminRolesKey='chengxin-admin-roles';
-const adminPermissionsKey='chengxin-admin-permissions';
-const currentStoreKey='chengxin-current-store-id';
-const defaultStoreId='22222222-2222-2222-2222-222222222222';
-const adminHeaders=()=>({Authorization:`Bearer ${localStorage.getItem(adminTokenKey)}`});
-const adminJsonHeaders=()=>({...adminHeaders(),'Content-Type':'application/json'});
-const adminRoles=()=>{try{return JSON.parse(localStorage.getItem(adminRolesKey)||'[]');}catch{return [];}};
-const adminPermissions=()=>{try{return JSON.parse(localStorage.getItem(adminPermissionsKey)||'[]');}catch{return [];}};
-const isTenantAdmin=()=>adminRoles().includes('TENANT_ADMIN');
-const hasAdminPermission=permission=>isTenantAdmin()||adminPermissions().includes(permission);
-const clearAdminSession=()=>{localStorage.removeItem(adminTokenKey);localStorage.removeItem(adminRolesKey);localStorage.removeItem(adminPermissionsKey);localStorage.removeItem(currentStoreKey);extensionSyncSnapshot=new Map();extensionSyncInitialized=false;};
-  const adminViewPermissions={frontdesk:'FRONTDESK_SETTLE',management:'REPORT_VIEW',finance:'EXPENSE_REVIEW',technicians:'FOUNDATION_MANAGE',rooms:'FOUNDATION_MANAGE',services:'FOUNDATION_MANAGE','payment-methods':'FOUNDATION_MANAGE','print-settings':'FOUNDATION_MANAGE',members:'MEMBER_MANAGE',access:'TENANT_ADMIN','daily-report':'DAILY_REPORT_VIEW','monthly-targets':'DAILY_REPORT_CONFIG'};
+const adminViewPermissions={frontdesk:'FRONTDESK_SETTLE',management:'REPORT_VIEW',finance:'EXPENSE_REVIEW',technicians:'FOUNDATION_MANAGE',rooms:'FOUNDATION_MANAGE',services:'FOUNDATION_MANAGE','payment-methods':'FOUNDATION_MANAGE','print-settings':'FOUNDATION_MANAGE',members:'MEMBER_MANAGE',access:'TENANT_ADMIN','daily-report':'DAILY_REPORT_VIEW','monthly-targets':'DAILY_REPORT_CONFIG'};
 const isAdminViewAllowed=view=>{
   if(!localStorage.getItem(adminTokenKey))return false;
   const permission=adminViewPermissions[view];
@@ -2581,11 +2787,6 @@ function applyAdminPermissions(){
 }
 window.applyAdminPermissions=applyAdminPermissions;
 window.isAdminViewAllowed=isAdminViewAllowed;
-const storeContextHeaders=(json=false)=>{
-  const token=localStorage.getItem(adminTokenKey);
-  const storeId=localStorage.getItem(currentStoreKey);
-  return {...(token&&storeId?{Authorization:`Bearer ${token}`,'X-Store-Id':storeId}:{}),...(json?{'Content-Type':'application/json'}:{})};
-};
 let storeComparisonSort='SALES';
 let crossStoreTransactionType='ALL',crossStoreTransactionTimer=null;
 let technicianSchedules=[],technicianLeaveRequests=[],editingTechnicianScheduleId=null,reviewingTechnicianLeaveId=null;
@@ -2611,18 +2812,9 @@ const crossStoreTransactionLabel={ORDER:'订单',REFUND:'退款',CONSUMPTION:'�
 function renderCrossStoreTransactions(rows){document.querySelector('#cross-store-transaction-records').innerHTML=rows.map(row=>{const amount=Number(row.amountCents||0);const signed=row.transactionType==='CONSUMPTION'||row.transactionType==='REFUND'?signedMoneyCents(-Math.abs(amount)):signedMoneyCents(amount);const service=row.serviceTrace||'—';return `<tr><td><span class="record-type ${row.transactionType==='REFUND'?'refund-state':row.transactionType==='ORDER'?'order':'consumption'}">${roomTransferEscape(crossStoreTransactionLabel[row.transactionType]||row.transactionType)}</span></td><td><b>${roomTransferEscape(row.storeName)}</b><small class="muted-cell"> ${roomTransferEscape(row.storeCode)}</small></td><td><b>${roomTransferEscape(row.referenceNo)}</b></td><td>${roomTransferEscape(row.memberName)}<small class="muted-cell"> ${roomTransferEscape(row.memberPhone||'')}</small></td><td class="amount-cell">${signed}</td><td>${roomTransferEscape(row.paymentMethod||'—')}<small class="muted-cell"> ${roomTransferEscape(row.status||'')}</small></td><td class="cross-store-service">${roomTransferEscape(service)}</td><td>${row.occurredAt?new Date(row.occurredAt).toLocaleString('zh-CN'):'—'}</td><td><button class="record-delete edit-technician" data-cross-store-transaction-store="${roomTransferEscape(row.storeId)}" data-cross-store-transaction-type="${roomTransferEscape(row.transactionType)}" data-cross-store-transaction-order="${roomTransferEscape(row.orderId||'')}" data-cross-store-transaction-member="${roomTransferEscape(row.memberPhone||'')}">${row.orderId?'查看明细':'查看账本'}</button></td></tr>`;}).join('')||'<tr><td colspan="9" class="table-empty">没有符合条件的跨门店记录</td></tr>';}
 async function loadCrossStoreTransactions(){const target=document.querySelector('#cross-store-transaction-records');if(!localStorage.getItem(adminTokenKey)){target.innerHTML='<tr><td colspan="9" class="table-empty">请先在“门店与权限”中登录管理账号</td></tr>';return;}const query=document.querySelector('#cross-store-transaction-search').value.trim();const response=await fetch(`http://localhost:8080/api/v1/operations/cross-store-transactions?query=${encodeURIComponent(query)}&type=${crossStoreTransactionType}`,{headers:adminHeaders()});if(!response.ok){target.innerHTML=`<tr><td colspan="9" class="table-empty">${response.status===403?'当前账号没有经营报表权限':'跨门店记录加载失败'}</td></tr>`;return;}renderCrossStoreTransactions(await response.json());}
 async function switchToAlertStore(storeId){localStorage.setItem(currentStoreKey,storeId);extensionSyncSnapshot=new Map();extensionSyncInitialized=false;const selector=document.querySelector('#current-store-select');if(selector)selector.value=storeId;await Promise.all([loadFoundationData(),loadManagedTechnicians(),loadManagedRooms(),loadManagedServiceItems(),loadManagedPaymentMethods(),loadServiceSessions(),loadTechnicianPerformance()]);}
-const nativeFetch=window.fetch.bind(window);
-const storeScopedApi=/\/api\/v1\/(foundation|rooms|service-sessions|service-reservations|service-extension-intents|members|wallet-transactions|sales-orders|refunds|operations|technician-performance|print-settings|commissions)(?:\/|\?|$)/;
-window.fetch=(input,init={})=>{
-  const originalUrl=typeof input==='string'?input:input.url;
-  const url=typeof originalUrl==='string'?originalUrl.replace(/^http:\/\/localhost:8080(?=\/api\/)/,''):originalUrl;
-  if(!storeScopedApi.test(url))return nativeFetch(url,init);
-  const headers=new Headers(storeContextHeaders());
-  new Headers(init.headers||{}).forEach((value,key)=>headers.set(key,value));
-  return nativeFetch(url,{...init,headers});
-};
 function renderStoreSelector(){
   const container=document.querySelector('.store-select');
+  if(!container)return;
   const activeStores=selectableStores;
   if(!activeStores.length)return;
   let selected=localStorage.getItem(currentStoreKey);
@@ -2640,28 +2832,38 @@ async function loadMyStores(){const response=await fetch('http://localhost:8080/
 function renderCurrentOperator(session=currentAdminSession){
   const name=document.querySelector('#current-operator-name');
   const role=document.querySelector('#current-operator-role');
-  if(!name||!role)return;
-  name.textContent=session?.displayName||'当前账号';
+  if(name)name.textContent=session?.displayName||'当前账号';
   const roles=session?.roles||[];
-  role.textContent=roles.includes('TENANT_ADMIN')?'系统管理员':roles.includes('STORE_MANAGER')?'店长':roles.includes('FRONTDESK')?'前台主管':roles[0]||'运营账号';
+  if(role)role.textContent=roles.includes('TENANT_ADMIN')?'系统管理员':roles.includes('STORE_MANAGER')?'店长':roles.includes('FRONTDESK')?'前台主管':roles[0]||'运营账号';
 }
-async function initializeAdminSession(){const response=await fetch('http://localhost:8080/api/v1/admin/auth/session',{headers:adminHeaders()});if(!response.ok)throw new Error('ADMIN_SESSION_INVALID');const session=await response.json();currentAdminSession=session;renderCurrentOperator(session);localStorage.setItem(adminRolesKey,JSON.stringify(session.roles||[]));localStorage.setItem(adminPermissionsKey,JSON.stringify(session.permissions||[]));syncHeadquartersNavigation();await loadMyStores();if(isTenantAdmin())await loadAccessControl();if(selectableStores.length)await Promise.all([loadFoundationData(),loadStorePrintSetting({render:false})]);applyAdminPermissions();}
+async function initializeAdminSession(){
+  const response=await fetch('http://localhost:8080/api/v1/admin/auth/session',{headers:adminHeaders()});
+  if(!response.ok)throw new Error('ADMIN_SESSION_INVALID');
+  const session=await response.json();
+  currentAdminSession=session;
+  renderCurrentOperator(session);
+  localStorage.setItem(adminRolesKey,JSON.stringify(session.roles||[]));
+  localStorage.setItem(adminPermissionsKey,JSON.stringify(session.permissions||[]));
+  syncHeadquartersNavigation();
+  await loadMyStores();
+  if(isTenantAdmin())await loadAccessControl();
+  applyAdminPermissions();
+  installServiceDurationPolicyControl();
+  unauthorizedPromptPending=false;
+}
+async function initializeFrontdeskWorkspace(){
+  if(!selectableStores.length)return false;
+  const foundationReady=await loadFoundationData({silent:true});
+  await Promise.allSettled([
+    loadStorePrintSetting({render:false}),
+    loadMonthlyCommissionTierPolicy()
+  ]);
+  return foundationReady;
+}
   function ensureHeadquartersOverview(){let root=document.querySelector('#headquarters-overview');if(root)return root;document.querySelector('#management-view .page-heading').insertAdjacentHTML('afterend','<section class="panel headquarters-overview" id="headquarters-overview"><div class="admin-toolbar headquarters-overview-heading"><div><p class="eyebrow">总部运营中心</p><h2>门店总览</h2><p>汇总所有启用门店的当日经营与待办</p></div><span class="muted-count" id="headquarters-overview-date">加载中</span></div><div class="headquarters-overview-stats" id="headquarters-overview-stats"></div><div class="ledger-table-wrap"><table><thead><tr><th>门店</th><th>净营业额</th><th>服务业绩</th><th>会员充值</th><th>退款</th><th>现金净额</th><th>房间状态</th><th>服务中技师</th><th class="align-right">操作</th></tr></thead><tbody id="headquarters-overview-records"></tbody></table></div></section>');return document.querySelector('#headquarters-overview');}
 const headquartersMoney=value=>money(Number(value||0)/100);
 function renderHeadquartersOverview(stores,rows,alerts,date){const activeStores=stores.filter(store=>store.active);const total=field=>rows.reduce((sum,row)=>sum+Number(row[field]||0),0);const stats=[['启用门店',`${activeStores.length}`,`共 ${stores.length} 家已建档门店`],['净营业额',headquartersMoney(total('salesAmountCents')),`${total('completedServiceCount')} 次完成服务`],['会员充值',headquartersMoney(total('rechargeAmountCents')),`退款 ${headquartersMoney(total('refundAmountCents'))}`],['待处理事项',`${alerts.length}`,`清洁、退款与待结算提醒`]];document.querySelector('#headquarters-overview-date').textContent=`经营日期 ${date}`;document.querySelector('#headquarters-overview-stats').innerHTML=stats.map(item=>`<article><span>${roomTransferEscape(item[0])}</span><strong>${roomTransferEscape(item[1])}</strong><small>${roomTransferEscape(item[2])}</small></article>`).join('');document.querySelector('#headquarters-overview-records').innerHTML=rows.map(row=>`<tr><td><b>${roomTransferEscape(row.storeName)}</b><small class="muted-cell">${roomTransferEscape(row.storeCode)}</small></td><td class="amount-cell">${headquartersMoney(row.salesAmountCents)}</td><td class="amount-cell">${headquartersMoney(row.serviceAmountCents)}</td><td class="amount-cell">${headquartersMoney(row.rechargeAmountCents)}</td><td class="amount-cell">${headquartersMoney(row.refundAmountCents)}</td><td class="amount-cell">${headquartersMoney(row.cashNetCents)}</td><td>服务中 ${roomTransferEscape(row.roomServingCount)}/${roomTransferEscape(row.activeRoomCount)}<small class="muted-cell">清洁 ${roomTransferEscape(row.roomCleaningCount)}</small></td><td>${roomTransferEscape(row.activeTechnicianCount)}</td><td class="align-right"><button class="record-delete edit-technician" type="button" data-headquarters-store="${roomTransferEscape(row.storeId)}">进入门店</button></td></tr>`).join('')||'<tr><td colspan="9" class="table-empty">当前没有可汇总的启用门店</td></tr>';}
 async function loadHeadquartersOverview(){const management=document.querySelector('#management-view');if(!isTenantAdmin()){management.classList.remove('headquarters-active');document.querySelector('#headquarters-overview')?.remove();return;}const root=ensureHeadquartersOverview();const date=document.querySelector('#daily-report-date')?.value||'';const [storesResponse,comparisonResponse,alertsResponse]=await Promise.all([fetch('http://localhost:8080/api/v1/admin/access/stores',{headers:adminHeaders()}),fetch(`http://localhost:8080/api/v1/operations/store-comparison?date=${encodeURIComponent(date)}`,{headers:adminHeaders()}),fetch(`http://localhost:8080/api/v1/operations/store-alerts?date=${encodeURIComponent(date)}`,{headers:adminHeaders()})]);if(!storesResponse.ok||!comparisonResponse.ok||!alertsResponse.ok){root.querySelector('#headquarters-overview-stats').innerHTML='';root.querySelector('#headquarters-overview-records').innerHTML='<tr><td colspan="10" class="table-empty">总部运营数据加载失败</td></tr>';return;}renderHeadquartersOverview(await storesResponse.json(),await comparisonResponse.json(),await alertsResponse.json(),date||'当前营业日');management.classList.add('headquarters-active');}
-let frontdeskLoginRequired=false;
-const showAdminLogin=()=>{document.querySelector('#admin-login-form').reset();document.querySelector('#admin-login-dialog').showModal();};
-const requireFrontdeskLogin=()=>{
-  frontdeskLoginRequired=true;
-  document.body.classList.add('frontdesk-auth-locked');
-  const dialog=document.querySelector('#admin-login-dialog');
-  dialog.classList.add('login-portal-dialog');
-  const form=dialog.querySelector('form');
-  form.classList.add('login-portal-surface');
-  if(!form.querySelector('.login-portal-brand'))form.insertAdjacentHTML('afterbegin','<div class="login-portal-brand"><span class="login-portal-mark">JK</span><h1>靖康科技运营</h1><span class="login-portal-role">店长端</span><p>门店运营、前台收银与经营管理</p></div>');
-  showAdminLogin();
-};
 function ensureOperatorDialogs(){
   if(!document.querySelector('#operator-profile-dialog'))document.body.insertAdjacentHTML('beforeend','<dialog id="operator-profile-dialog"><div class="dialog-card compact operator-profile-card"><div class="dialog-heading"><div><p class="eyebrow">账号管理</p><h2>账号信息</h2></div><button class="icon-button" type="button" data-close-operator-dialog aria-label="关闭">×</button></div><div class="operator-profile-content"><b id="operator-profile-name">—</b><span id="operator-profile-role">—</span><small id="operator-profile-login">登录账号：—</small></div><div class="dialog-actions"><button class="button primary" type="button" data-close-operator-dialog>完成</button></div></div></dialog>');
   if(!document.querySelector('#operator-password-dialog'))document.body.insertAdjacentHTML('beforeend','<dialog id="operator-password-dialog"><form id="operator-password-form" class="dialog-card compact"><div class="dialog-heading"><div><p class="eyebrow">账号安全</p><h2>修改密码</h2></div><button class="icon-button" type="button" data-close-password-dialog aria-label="关闭">×</button></div><div class="form-grid"><label class="form-full">当前密码<input name="currentPassword" type="password" minlength="8" autocomplete="current-password" required></label><label class="form-full">新密码<input name="newPassword" type="password" minlength="8" autocomplete="new-password" required></label><label class="form-full">确认新密码<input name="confirmPassword" type="password" minlength="8" autocomplete="new-password" required></label></div><div class="dialog-actions"><button class="button secondary" type="button" data-close-password-dialog>取消</button><button class="button primary" type="submit">保存新密码</button></div></form></dialog>');
@@ -3229,13 +3431,6 @@ function installServiceDurationPolicyControl() {
   host.append(button);
 }
 
-const initializeAdminSessionBeforeDurationPolicy = initializeAdminSession;
-initializeAdminSession = async function () {
-  await initializeAdminSessionBeforeDurationPolicy();
-  installServiceDurationPolicyControl();
-};
-installServiceDurationPolicyControl();
-
 let monthlyCommissionTierPolicy = null;
 function tierEscape(value) { return String(value ?? '').replace(/[&<>"']/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[character])); }
 function ensureMonthlyCommissionTierPanel() {
@@ -3311,11 +3506,6 @@ async function saveMonthlyCommissionTiers(event) {
   toast('月度阶梯提成已保存');
 }
 
-const initializeAdminSessionBeforeMonthlyTiers = initializeAdminSession;
-initializeAdminSession = async function () {
-  await initializeAdminSessionBeforeMonthlyTiers();
-  await loadMonthlyCommissionTierPolicy();
-};
 ensureMonthlyCommissionTierPanel();
 document.querySelector('[data-view="services"]')?.addEventListener('click', () => loadMonthlyCommissionTierPolicy());
 
@@ -4126,9 +4316,6 @@ document.querySelector('.ranking-panel .text-button')?.addEventListener('click',
 const managementAlertActions=document.querySelectorAll('.alert-panel .text-button');
 managementAlertActions[0]?.addEventListener('click',()=>document.querySelector('[data-view="rooms"]').click());
 managementAlertActions[1]?.addEventListener('click',openCashierShiftDialog);
-document.querySelector('#close-admin-login').addEventListener('click',()=>{if(!frontdeskLoginRequired)document.querySelector('#admin-login-dialog').close();});
-document.querySelector('#admin-login-dialog').addEventListener('cancel',event=>{if(frontdeskLoginRequired)event.preventDefault();});
-document.querySelector('#admin-login-form').addEventListener('submit',async event=>{event.preventDefault();const form=new FormData(event.currentTarget);try{const response=await fetch('/api/v1/admin/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({loginName:form.get('loginName'),password:form.get('password')})});if(!response.ok)return toast('管理账号或密码错误');const session=await response.json();localStorage.setItem(adminTokenKey,session.accessToken);localStorage.setItem(adminRolesKey,JSON.stringify(session.roles||[]));localStorage.setItem(adminPermissionsKey,JSON.stringify(session.permissions||[]));document.querySelector('#admin-login-dialog').close();try{await initializeAdminSession();}catch{clearAdminSession();return toast('账号会话初始化失败');}frontdeskLoginRequired=false;document.body.classList.remove('frontdesk-auth-locked');const preferredView=isTenantAdmin()?'management':'frontdesk';const target=document.querySelector(`[data-view="${preferredView}"]`);(target&&!target.hidden?target:[...document.querySelectorAll('.nav-item[data-view]')].find(button=>!button.hidden))?.click();toast(`已登录：${session.displayName}`);}catch{toast('登录服务连接失败，请检查接口服务是否已启动');}});
 document.querySelector('#add-access-store').addEventListener('click',()=>openAccessStore());
 document.querySelector('#add-access-store').insertAdjacentHTML('beforebegin','<button class="button primary" id="onboard-store" type="button">开通门店</button>');
 document.body.insertAdjacentHTML('beforeend','<dialog id="store-onboarding-dialog"><form id="store-onboarding-form" class="dialog-card onboarding-dialog"><div class="dialog-heading"><div><p class="eyebrow">总部开店</p><h2>新门店开通</h2></div><button class="icon-button" type="button" id="close-store-onboarding" aria-label="关闭">×</button></div><div class="form-grid"><label>门店编码<input name="code" maxlength="40" required placeholder="例如 sh-pudong" /></label><label>门店名称<input name="name" maxlength="120" required /></label><label>联系电话<input name="contactPhone" maxlength="30" /></label><label>营业时间<input name="businessHours" maxlength="120" value="10:00-22:00" required /></label><label>营业日切换时间<input name="businessDayCutoff" type="time" value="05:00" required /></label><label class="form-full">门店地址<input name="address" maxlength="240" /></label><label class="form-full">项目模板<select name="serviceTemplateStoreId" id="onboarding-service-template" required></select></label><label>首个房号<input name="firstRoomNumber" type="number" min="1" max="999" value="201" required /></label><label>初始房间数<input name="roomCount" type="number" min="1" max="50" value="3" required /></label><label class="form-full">每间床位数<input name="bedsPerRoom" type="number" min="1" max="10" value="1" required /></label><label>门店经理账号<input name="managerLoginName" maxlength="80" required /></label><label>经理姓名<input name="managerDisplayName" maxlength="120" required /></label><label class="form-full">初始密码<input name="managerPassword" type="password" minlength="8" maxlength="128" required /></label></div><div class="dialog-actions"><button class="button secondary" type="button" id="cancel-store-onboarding">取消</button><button class="button primary" type="submit">确认开通</button></div></form></dialog>');
@@ -4906,7 +5093,9 @@ async function restoreFrontdeskSession(){
   try{
     await initializeAdminSession();
     frontdeskLoginRequired=false;
-    document.body.classList.remove('frontdesk-auth-locked');
+    document.body?.classList.remove('frontdesk-auth-locked');
+    await initializeFrontdeskWorkspace();
+    if (frontdeskLoginRequired) { requireFrontdeskLogin(); return; }
     const requestedView=window.location.hash==='#management'?'management':'frontdesk';
     const requestedButton=document.querySelector(`[data-view="${requestedView}"]`);
     (requestedButton&&!requestedButton.hidden?requestedButton:[...document.querySelectorAll('.nav-item[data-view]')].find(button=>!button.hidden))?.click();
@@ -4915,9 +5104,7 @@ async function restoreFrontdeskSession(){
     requireFrontdeskLogin();
   }
 }
-renderRooms(); renderTechnicians(); renderOrder(); renderMemberCard(); syncHeadquartersNavigation();
 setupOperatorMenu();
-restoreFrontdeskSession();
 
 // Payment proof upload is attached to the existing finance payment dialog so the
 // current review and settlement workflow stays unchanged for older claims.

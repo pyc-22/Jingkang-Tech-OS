@@ -41,11 +41,38 @@ http.createServer(async (req, res) => {
   const filePath = path.join(root, safePath || 'index.html');
   if (!filePath.startsWith(root)) { res.writeHead(403).end(); return; }
   try {
-    const body = await fs.readFile(filePath);
-    const headers = { 'Content-Type': mime[path.extname(filePath)] || 'application/octet-stream', 'Content-Length': body.length, 'Cache-Control': 'no-store' };
-    if (path.extname(filePath) === '.apk') headers['Content-Disposition'] = `attachment; filename="${path.basename(filePath)}"`;
+    const extension = path.extname(filePath).toLowerCase();
+    const stats = await fs.stat(filePath);
+    const body = req.method === 'HEAD' ? null : await fs.readFile(filePath);
+    const versionedAsset = /[?&](?:v|hash|version)=[^&]+/i.test(req.url);
+    const cacheControl = extension === '.apk'
+      ? 'no-store'
+      : path.basename(filePath).toLowerCase() === 'index.html'
+      ? 'no-cache, no-store, must-revalidate'
+      : ['.js', '.css'].includes(extension) && versionedAsset
+        ? 'public, max-age=31536000, immutable'
+        : 'no-cache';
+    const etag = `"${Math.floor(stats.mtimeMs).toString(16)}-${stats.size.toString(16)}"`;
+    const lastModified = stats.mtime.toUTCString();
+    const lastModifiedMs = Math.floor(stats.mtimeMs / 1000) * 1000;
+    const headers = {
+      'Content-Type': mime[extension] || 'application/octet-stream',
+      'Content-Length': stats.size,
+      'Cache-Control': cacheControl,
+      ETag: etag,
+      'Last-Modified': lastModified
+    };
+    const notModified = req.headers['if-none-match'] === etag ||
+      (!req.headers['if-none-match'] && req.headers['if-modified-since'] && new Date(req.headers['if-modified-since']).getTime() >= lastModifiedMs);
+    if (notModified) {
+      delete headers['Content-Length'];
+      res.writeHead(304, headers);
+      res.end();
+      return;
+    }
+    if (extension === '.apk') headers['Content-Disposition'] = `attachment; filename="${path.basename(filePath)}"`;
     res.writeHead(200, headers);
-    res.end(body);
+    if (body) res.end(body); else res.end();
   }
   catch { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('Not found'); }
 }).listen(port, address, () => console.log(`Massage console: http://${address}:${port}`));
