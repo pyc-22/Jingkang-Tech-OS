@@ -1,9 +1,10 @@
-const CACHE_NAME = 'jingkang-technician-20260916-quality-batch2-v9';
+const CACHE_NAME = 'jingkang-technician-20260927-perf-polling-v1';
 const ASSET_VERSION = '20260916-quality-batch2-v9';
+const POLLING_VERSION = '20260927-perf-polling-v1';
 const APP_SHELL = [
-  `./mobile.html?v=${ASSET_VERSION}`,
+  `./mobile.html?v=${POLLING_VERSION}`,
   `./technician.webmanifest?v=${ASSET_VERSION}`,
-  `./mobile.js?v=${ASSET_VERSION}`,
+  `./mobile.js?v=${POLLING_VERSION}`,
   `./mobile.css?v=${ASSET_VERSION}`,
   `./mobile-clock.css?v=${ASSET_VERSION}`,
   `./mobile-extension.css?v=${ASSET_VERSION}`,
@@ -11,7 +12,7 @@ const APP_SHELL = [
   `./mobile-auth.css?v=${ASSET_VERSION}`,
   `./mobile-app.css?v=${ASSET_VERSION}`,
   `./offline-sync.css?v=${ASSET_VERSION}`,
-  `./offline-sync.js?v=${ASSET_VERSION}`,
+  `./offline-sync.js?v=${POLLING_VERSION}`,
   `./login-portal.css?v=${ASSET_VERSION}`,
   './assets/technician-dispatch-alert.mp3',
   './assets/service-reminder-ten-minutes.mp3',

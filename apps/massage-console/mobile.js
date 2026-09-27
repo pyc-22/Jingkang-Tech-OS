@@ -24,6 +24,15 @@ let mobileDispatchDeadlineTimer=null;
 let mobileServiceReminderTimer=null;
 let mobileServiceReminderSessionKey=null;
 let mobileAttendanceBlocked=false;
+let mobileDashboardCache=null;
+let mobileDashboardLoad=null;
+let mobileDispatchLoad=null;
+let mobileDispatchTimer=null;
+let mobileDashboardTimer=null;
+let mobileNotificationSnapshot=null;
+let mobileCurrentPage='current-service';
+let mobilePageActive=true;
+let mobileVisiblePageLoad=null;
 const mobileServiceReminderAudioSources={
   'ten-minutes':'./assets/service-reminder-ten-minutes.mp3',
   'five-minutes':'./assets/service-reminder-five-minutes.mp3',
@@ -35,7 +44,11 @@ const mobileLocalDate=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shangh
 
 function clearMobileSession() {
   localStorage.removeItem(mobileTokenKey);
+  mobileDashboardCache=null;
+  mobileNotificationSnapshot=null;
+  mobileActiveSession=null;
   mobileAttendanceBlocked=false;
+  stopMobileServiceReminders();
   stopMobileDispatchAlert();
   document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close());
 }
@@ -171,19 +184,31 @@ async function enableMobileDispatchSound() {
 }
 
 async function pollMobileDispatchNotification() {
+  if (!mobilePageActive || document.hidden) return;
   if (!localStorage.getItem(mobileTokenKey) || mobileAttendanceBlocked) {
     stopMobileDispatchAlert();
     return;
   }
-  try {
+  const token=localStorage.getItem(mobileTokenKey);
+  if(mobileDispatchLoad?.token===token)return mobileDispatchLoad.promise;
+  const promise=(async()=>{try {
     const response=await fetch(`${mobileApi}/technician/dispatch-notification`,{headers:mobileAuthHeaders()});
+    if(localStorage.getItem(mobileTokenKey)!==token || !mobilePageActive || document.hidden || mobileAttendanceBlocked)return;
     if(response.status===401){clearMobileSession();showLogin('登录已失效，请重新登录');return;}
     if(!response.ok)return;
     const notification=await response.json();
+    if(localStorage.getItem(mobileTokenKey)!==token || !mobilePageActive || document.hidden || mobileAttendanceBlocked)return;
+    const snapshot=`${notification.dispatch?.sessionId||''}:${notification.reservation?.reservationId||''}:${notification.transfer?.requestId||''}:${notification.transfer?.status||''}`;
+    const changed=mobileNotificationSnapshot!==snapshot && (mobileNotificationSnapshot!==null || !!notification.dispatch || !!notification.reservation);
+    mobileNotificationSnapshot=snapshot;
     if(notification.dispatch)showMobileDispatchAlert(notification.dispatch);else stopMobileDispatchAlert();
     const reservation=notification.reservation;
     if(reservation && mobileReservationNoticeId!==reservation.reservationId){ mobileReservationNoticeId=reservation.reservationId; mobileToast(`${mobileClockTypeLabel(reservation.reservationType)}：${reservation.serviceNameSnapshot}，${reservation.roomCode} 房已预留`); }
+    if(changed)await loadMobileDashboard({refresh:true});
   } catch { /* Keep the current alert active until a successful sync clears it. */ }
+  finally { if(mobileDispatchLoad?.promise===promise)mobileDispatchLoad=null; }})();
+  mobileDispatchLoad={token,promise};
+  return promise;
 }
 
 function renderMobileAttendance(dashboard) {
@@ -229,7 +254,8 @@ async function mobileClockIn() {
     const response=await fetch(`${mobileAttendanceApi}/clock-in`,{method:'POST',headers:{...mobileAuthHeaders(),'Content-Type':'application/json'},body:JSON.stringify({})});
     if(response.status===401){clearMobileSession();showLogin('登录已失效，请重新登录');return;}
     if(!response.ok){mobileToast(response.status===409?'今日已下班或打卡状态已变化，请刷新页面':'上班打卡失败，请稍后重试');return;}
-    await loadMobileDashboard();
+    await loadMobileDashboard({refresh:true});
+    await pollMobileDispatchNotification();
     mobileToast('已完成今日上班打卡');
   } catch { mobileToast('上班打卡失败，请检查网络后重试'); }
   finally { button.disabled=false; }
@@ -334,7 +360,7 @@ async function mobileClockOut() {
   if(!window.confirm('确认结束当前服务，并将房间标记为待清理？'))return;
   const response=await fetch(`${mobileApi}/technician/clock-out`,{method:'POST',headers:mobileAuthHeaders()});
   if(!response.ok){mobileToast('下钟失败，请刷新后重试');return;}
-  await loadMobileDashboard();
+  await loadMobileDashboard({refresh:true});
   mobileToast('已下钟，房间等待付款');
 }
 
@@ -347,7 +373,7 @@ async function mobileStartService() {
   try {
     const response=await fetch(`${mobileApi}/technician/start-service`,{method:'POST',headers:mobileAuthHeaders()});
     if(!response.ok){mobileToast(response.status===409?'服务状态已变化，请刷新':'开始服务失败，请稍后重试');return;}
-    await loadMobileDashboard();
+    await loadMobileDashboard({refresh:true});
     mobileToast('服务已开始');
   } finally { mobileStartingService=false; }
 }
@@ -409,14 +435,21 @@ async function loadTechnicianDailyData() {
   }
 }
 
-async function loadMobileDashboard() {
+async function loadMobileDashboard({refresh=false}={}) {
   const token = localStorage.getItem(mobileTokenKey);
   if (!token) { showLogin(); return; }
-  try {
-    const response = await fetch(`${mobileApi}/technician/me`, { headers: mobileAuthHeaders() });
-    if (response.status === 401) { clearMobileSession(); showLogin('登录已失效，请重新登录'); return; }
-    if (!response.ok) throw new Error(response.status);
-    const dashboard = await response.json();
+  if(mobileDashboardLoad?.token===token)return mobileDashboardLoad.promise;
+  const promise=(async()=>{try {
+    let dashboard=mobileDashboardCache?.token===token&&!refresh?mobileDashboardCache.dashboard:null;
+    if(!dashboard){
+      const response = await fetch(`${mobileApi}/technician/me`, { headers: mobileAuthHeaders() });
+      if(localStorage.getItem(mobileTokenKey)!==token)return;
+      if (response.status === 401) { clearMobileSession(); showLogin('登录已失效，请重新登录'); return; }
+      if (!response.ok) throw new Error(response.status);
+      dashboard = await response.json();
+      if(localStorage.getItem(mobileTokenKey)!==token)return;
+      mobileDashboardCache={token,dashboard,updatedAt:Date.now()};
+    }
     document.querySelector('#technician-name').textContent = `${dashboard.technician.name}，你好`;
     document.querySelector('.store-badge').textContent = dashboard.technician.storeName;
     document.querySelector('#performance-date').textContent = new Intl.DateTimeFormat('zh-CN', { month:'long', day:'numeric' }).format(new Date());
@@ -429,12 +462,26 @@ async function loadMobileDashboard() {
     renderCurrentService(dashboard.activeSession,dashboard.acceptedSession,dashboard.pendingSession,dashboard.clockInEligible,dashboard.clockInReason);
     renderRecentSessions(dashboard.recentSessions);
     renderMobileReservations(dashboard.reservations || []);
-    await loadTechnicianDailyData();
-    await loadMobilePerformanceRange();
-    await loadMobileLeaveRequests();
     showDashboard();
-    await pollMobileDispatchNotification();
-  } catch { mobileToast('业绩数据暂时无法加载，请稍后重试'); }
+  } catch { mobileToast('技师数据暂时无法加载，请稍后重试'); }
+  finally { if(mobileDashboardLoad?.promise===promise)mobileDashboardLoad=null; }})();
+  mobileDashboardLoad={token,promise};
+  return promise;
+}
+
+async function loadVisibleMobilePage() {
+  const page=mobileCurrentPage;
+  if(page!=='performance-section'&&page!=='mobile-leave-section')return;
+  if(mobileVisiblePageLoad?.page===page)return mobileVisiblePageLoad.promise;
+  const promise=(async()=>{try {
+    if(page==='performance-section')await Promise.all([loadTechnicianDailyData(),loadMobilePerformanceRange()]);
+    if(page==='mobile-leave-section')await loadMobileLeaveRequests();
+  } catch(error) {
+    if(error.message==='UNAUTHORIZED'){clearMobileSession();showLogin('登录已失效，请重新登录');}
+    else mobileToast('业绩数据暂时无法加载，请稍后重试');
+  }})();
+  mobileVisiblePageLoad={page,promise};
+  try { await promise; } finally { if(mobileVisiblePageLoad?.promise===promise)mobileVisiblePageLoad=null; }
 }
 
 document.querySelector('#login-form').addEventListener('submit', async event => {
@@ -445,8 +492,10 @@ document.querySelector('#login-form').addEventListener('submit', async event => 
   if (!response.ok) { mobileToast('账号或密码错误'); return; }
   const session = await response.json();
   localStorage.setItem(mobileTokenKey, session.accessToken);
+  mobileDashboardCache=null;
   formElement.reset();
   await loadMobileDashboard();
+  await pollMobileDispatchNotification();
 });
 
 document.querySelector('#logout-button').addEventListener('click', async () => {
@@ -459,7 +508,7 @@ document.querySelector('#confirm-mobile-dispatch').addEventListener('click',asyn
   const response=await fetch(`${mobileApi}/technician/dispatch-notification/confirm`,{method:'POST',headers:mobileAuthHeaders()});
   if(!response.ok){mobileToast('确认接单失败，请刷新后重试');return;}
   stopMobileDispatchAlert();
-  await loadMobileDashboard();
+  await loadMobileDashboard({refresh:true});
   mobileToast('已确认接单');
 });
 document.querySelector('#current-service').addEventListener('click',async event=>{
@@ -489,6 +538,7 @@ document.querySelector('#load-mobile-daily-data').addEventListener('click',loadT
 mobileDailyDateInput.addEventListener('change',loadTechnicianDailyData);
 const selectMobilePage = pageId => {
   if (!mobilePages.includes(pageId)) return;
+  mobileCurrentPage=pageId;
   mobilePages.forEach(id => document.querySelector(`#${id}`).classList.toggle('mobile-page-hidden', id !== pageId));
   const queueSection = document.querySelector('#mobile-reservation-section');
   if (queueSection) {
@@ -501,6 +551,7 @@ const selectMobilePage = pageId => {
   document.querySelector('.mobile-footer').classList.toggle('mobile-page-hidden', pageId !== 'current-service');
   document.querySelectorAll('#mobile-tabbar button').forEach(button => button.classList.toggle('selected', button.dataset.mobileNav === pageId));
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  if(mobileDashboardCache)loadVisibleMobilePage();
 };
 
 document.querySelector('#mobile-tabbar').addEventListener('click', event => {
@@ -512,12 +563,37 @@ selectMobilePage('current-service');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./technician-service-worker.js?v=20260916-quality-batch2-v9').catch(() => {
+    navigator.serviceWorker.register('./technician-service-worker.js?v=20260927-perf-polling-v1').catch(() => {
       // The technician page remains fully available when offline caching is unavailable.
     });
   });
 }
 
-if(localStorage.getItem(mobileTokenKey))loadMobileDashboard();
+function startMobileDispatchPolling(){
+  if(!mobileDispatchTimer)mobileDispatchTimer=window.setInterval(pollMobileDispatchNotification,12000);
+  if(!mobileDashboardTimer)mobileDashboardTimer=window.setInterval(refreshMobileDashboardIfStale,30000);
+}
+function refreshMobileDashboardIfStale(){
+  if(!mobilePageActive || document.hidden || !localStorage.getItem(mobileTokenKey))return;
+  if(Date.now()-(mobileDashboardCache?.updatedAt||0)>=30000)loadMobileDashboard({refresh:true});
+}
+function stopMobileTimers(){
+  mobilePageActive=false;
+  window.clearInterval(mobileDispatchTimer);
+  window.clearInterval(mobileDashboardTimer);
+  window.clearInterval(mobileDispatchDeadlineTimer);
+  window.clearInterval(mobileServiceReminderTimer);
+  mobileDispatchTimer=mobileDashboardTimer=mobileDispatchDeadlineTimer=mobileServiceReminderTimer=null;
+}
+async function refreshMobileWhenVisible(){
+  if(document.hidden || !mobilePageActive || !localStorage.getItem(mobileTokenKey))return;
+  await loadMobileDashboard({refresh:true});
+  await loadVisibleMobilePage();
+  await pollMobileDispatchNotification();
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshMobileWhenVisible();});
+window.addEventListener('pagehide',stopMobileTimers);
+window.addEventListener('pageshow',event=>{if(event.persisted){mobilePageActive=true;startMobileDispatchPolling();if(mobileActiveSession)startMobileServiceReminders(mobileActiveSession);refreshMobileWhenVisible();}});
+startMobileDispatchPolling();
+if(localStorage.getItem(mobileTokenKey))loadMobileDashboard().then(pollMobileDispatchNotification);
 else showLogin();
-window.setInterval(() => { if (localStorage.getItem(mobileTokenKey)) loadMobileDashboard(); },5000);

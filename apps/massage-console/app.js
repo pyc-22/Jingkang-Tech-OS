@@ -461,14 +461,50 @@ async function loadServiceExtensionIntents() {
   } catch { target.innerHTML = '<p class="table-empty">意向消息暂时无法加载</p>'; }
 }
 
-async function loadFoundationData({ silent = false } = {}) {
+let foundationLoad = null;
+let completedSessionsForDay = { key: '', sessions: [] };
+let completedSessionRefresh = null;
+function applyTechnicianClockCounts(sessions, businessDate) {
+  state.technicians.forEach(tech => { tech.queueCount = 0; tech.callCount = 0; tech.extensionCount = 0; });
+  sessions.filter(session => ['IN_SERVICE','COMPLETED'].includes(session.status) && String(session.businessDate) === businessDate).forEach(session => {
+    const field = ['QUEUE','BOOKED_QUEUE'].includes(session.clockType) ? 'queueCount' : ['CALL','BOOKED_CALL'].includes(session.clockType) ? 'callCount' : null;
+    if (field) sessionParticipantIds(session).forEach(id => { const tech = state.technicians.find(item => String(item.id) === id); if (tech) tech[field] += 1; });
+    String(session.extensionTechnicianIds || '').split(',').filter(Boolean).forEach(id => {
+      const tech = state.technicians.find(item => String(item.id) === String(id));
+      if (tech) tech.extensionCount += 1;
+    });
+  });
+}
+function refreshCompletedSessionCounts(businessDate, key) {
+  if (completedSessionRefresh?.key === key) return;
+  const promise = fetch(`http://localhost:8080/api/v1/service-sessions?status=COMPLETED&businessDate=${encodeURIComponent(businessDate)}`, { headers: storeContextHeaders() })
+    .then(response => { if (!response.ok) throw new Error(response.status); return response.json(); })
+    .then(sessions => {
+      if (frontdeskLoginRequired || `${localStorage.getItem(currentStoreKey)}:${businessDate}` !== key) return;
+      completedSessionsForDay = { key, sessions };
+      applyTechnicianClockCounts([...state.activeSessions, ...sessions], businessDate);
+      safeRender('renderTechnicians', renderTechnicians);
+    }).catch(error => console.warn('Daily technician counts failed', error));
+  completedSessionRefresh = { key, promise };
+  promise.finally(() => { if (completedSessionRefresh?.promise === promise) completedSessionRefresh = null; });
+}
+function loadFoundationData(options = {}) {
+  const storeId = localStorage.getItem(currentStoreKey);
+  if (foundationLoad?.storeId === storeId) return foundationLoad.promise;
+  const promise = loadFoundationDataOnce(options, storeId);
+  foundationLoad = { storeId, promise };
+  promise.finally(() => { if (foundationLoad?.promise === promise) foundationLoad = null; });
+  return promise;
+}
+async function loadFoundationDataOnce({ silent = false } = {}, requestedStoreId) {
   if (!localStorage.getItem(adminTokenKey) || frontdeskLoginRequired) {
     updateOperationalSyncStatus(false);
     return false;
   }
   try {
     const base = 'http://localhost:8080/api/v1/foundation';
-    const [technicians, rooms, services, serviceCategories, statuses, sessions, pendingAcceptance, reassignment, dispatchCancelled, accepted, eligibility, queueSnapshot, allSessions, waitingReservations] = await Promise.all([`${base}/technicians`, `${base}/rooms`, `${base}/service-items`, 'http://localhost:8080/api/v1/service-categories', 'http://localhost:8080/api/v1/rooms/statuses', 'http://localhost:8080/api/v1/service-sessions?status=IN_SERVICE', 'http://localhost:8080/api/v1/service-sessions?status=PENDING_ACCEPTANCE', 'http://localhost:8080/api/v1/service-sessions?status=REASSIGNMENT_REQUIRED', 'http://localhost:8080/api/v1/service-sessions?status=DISPATCH_CANCELLED', 'http://localhost:8080/api/v1/service-sessions?status=ACCEPTED', 'http://localhost:8080/api/v1/technician-schedules/clock-eligibility', 'http://localhost:8080/api/v1/technician-queue', 'http://localhost:8080/api/v1/service-sessions', 'http://localhost:8080/api/v1/service-reservations?status=WAITING'].map(url => fetch(url, { headers: storeContextHeaders() }).then(response => { if (!response.ok) throw new Error(response.status); return response.json(); })));
+    const [technicians, rooms, services, serviceCategories, statuses, sessions, pendingAcceptance, reassignment, dispatchCancelled, accepted, eligibility, queueSnapshot, waitingReservations] = await Promise.all([`${base}/technicians`, `${base}/rooms`, `${base}/service-items`, 'http://localhost:8080/api/v1/service-categories', 'http://localhost:8080/api/v1/rooms/statuses', 'http://localhost:8080/api/v1/service-sessions?status=IN_SERVICE', 'http://localhost:8080/api/v1/service-sessions?status=PENDING_ACCEPTANCE', 'http://localhost:8080/api/v1/service-sessions?status=REASSIGNMENT_REQUIRED', 'http://localhost:8080/api/v1/service-sessions?status=DISPATCH_CANCELLED', 'http://localhost:8080/api/v1/service-sessions?status=ACCEPTED', 'http://localhost:8080/api/v1/technician-schedules/clock-eligibility', 'http://localhost:8080/api/v1/technician-queue', 'http://localhost:8080/api/v1/service-reservations?status=WAITING'].map(url => fetch(url, { headers: storeContextHeaders() }).then(response => { if (!response.ok) throw new Error(response.status); return response.json(); })));
+    if (localStorage.getItem(currentStoreKey) !== requestedStoreId) return false;
     const eligibilityByTechnician=new Map((eligibility.technicians||[]).map(item=>[item.technicianId,item]));
     const queueByTechnician = new Map((queueSnapshot.technicians||[]).map(item => [String(item.technicianId), item.queuePosition]));
     const businessDate = String(queueSnapshot.businessDate || '');
@@ -546,29 +582,26 @@ async function loadFoundationData({ silent = false } = {}) {
       const tech = state.technicians.find(item => String(item.id) === id);
       if (tech) { tech.state = 'accepted'; tech.detail = `${session.roomCode} 房 · 已接单，待开始服务`; }
     }));
-    allSessions.filter(session => ['IN_SERVICE','COMPLETED'].includes(session.status) && String(session.businessDate) === businessDate).forEach(session => {
-      const field = ['QUEUE','BOOKED_QUEUE'].includes(session.clockType) ? 'queueCount' : ['CALL','BOOKED_CALL'].includes(session.clockType) ? 'callCount' : null;
-      if (field) sessionParticipantIds(session).forEach(id => { const tech = state.technicians.find(item => String(item.id) === id); if (tech) tech[field] += 1; });
-      String(session.extensionTechnicianIds || '').split(',').filter(Boolean).forEach(id => {
-        const tech = state.technicians.find(item => String(item.id) === String(id));
-        if (tech) tech.extensionCount += 1;
-      });
-    });
+    const countKey = `${requestedStoreId}:${businessDate}`;
+    applyTechnicianClockCounts([...sessions, ...(completedSessionsForDay.key === countKey ? completedSessionsForDay.sessions : [])], businessDate);
     frontdeskOperationalReady = true;
     safeRender('renderRooms', renderRooms);
     safeRender('renderTechnicians', renderTechnicians);
     safeRender('renderOrder', renderOrder);
+    if (!document.hidden && businessDate) refreshCompletedSessionCounts(businessDate, countKey);
     if (frontdeskPendingPanelsEnabled) {
       await loadServiceExtensionIntents();
       safeRender('renderDispatchReassignmentPanel', renderDispatchReassignmentPanel);
       await loadDispatchTransferRequests({ silent: true });
     }
-    await loadQueueEvents({ silent: true });
-    await loadReservations({ silent: true });
-    await loadPendingServiceSessions({ silent: true });
+    if (!document.hidden) await loadQueueEvents({ silent: true });
+    if (!document.hidden) await loadReservations({ silent: true });
+    if (!document.hidden) await loadPendingServiceSessions({ silent: true });
+    lastOperationalRefreshAt = Date.now();
     updateOperationalSyncStatus(true);
     return true;
   } catch {
+    if (localStorage.getItem(currentStoreKey) !== requestedStoreId) return false;
     frontdeskOperationalReady = false;
     state.rooms = [];
     state.technicians = [];
@@ -671,6 +704,7 @@ async function dispatchReservation(id) {
 }
 
 let operationalRefreshInFlight = false;
+let lastOperationalRefreshAt = 0;
 const isFrontdeskVisible = () => document.querySelector('#frontdesk-view') && !document.querySelector('#frontdesk-view').classList.contains('hidden');
 function updateOperationalSyncStatus(success) {
   const status = document.querySelector('#operational-sync-status');
@@ -680,8 +714,8 @@ function updateOperationalSyncStatus(success) {
   status.textContent = `${time} 已同步`;
   status.classList.remove('stale');
 }
-async function syncOperationalState({ manual = false } = {}) {
-  if (operationalRefreshInFlight) return;
+async function syncOperationalState({ manual = false, force = false } = {}) {
+  if (operationalRefreshInFlight || !manual && !force && Date.now() - lastOperationalRefreshAt < 30000) return;
   operationalRefreshInFlight = true;
   try {
     const success = await loadFoundationData({ silent: true });
@@ -691,9 +725,27 @@ async function syncOperationalState({ manual = false } = {}) {
 function syncFrontdeskWhenVisible() {
   if (document.visibilityState === 'visible' && isFrontdeskVisible()) syncOperationalState();
 }
-window.setInterval(syncFrontdeskWhenVisible, 5000);
-window.setInterval(refreshRoomServiceTimers, 1000);
-document.addEventListener('visibilitychange', syncFrontdeskWhenVisible);
+function refreshOnVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    if (isFrontdeskVisible()) syncOperationalState({ force: true });
+    financeSyncTick();
+  }
+}
+let frontdeskSyncTimer;
+let roomServiceTimer;
+function startFrontdeskTimers() {
+  if (!frontdeskSyncTimer) frontdeskSyncTimer = window.setInterval(syncFrontdeskWhenVisible, 30000);
+  if (!roomServiceTimer) roomServiceTimer = window.setInterval(refreshRoomServiceTimers, 1000);
+}
+function stopFrontdeskTimers() {
+  window.clearInterval(frontdeskSyncTimer);
+  window.clearInterval(roomServiceTimer);
+  frontdeskSyncTimer = roomServiceTimer = null;
+}
+startFrontdeskTimers();
+document.addEventListener('visibilitychange', refreshOnVisibilityChange);
+window.addEventListener('pagehide', stopFrontdeskTimers);
+window.addEventListener('pageshow', event => { if (event.persisted) { startFrontdeskTimers(); refreshOnVisibilityChange(); } });
 
 function renderRooms() {
   const grid = document.querySelector('#room-grid');
@@ -3852,8 +3904,11 @@ async function loadFinanceClaims(page=null) {
   const categories=document.querySelector('#finance-category-filter'),category=categories.value;
   categories.innerHTML='<option value="">全部分类</option>'+financeExpenseCategories.map(item=>`<option value="${financeEscape(item.id)}">${financeEscape(item.parentName?item.parentName+' / '+item.name:item.name)}</option>`).join('');categories.value=category;
 }
-function financeSyncTick(){const view=document.querySelector('#finance-view');if(!view||view.classList.contains('hidden')||!localStorage.getItem(adminTokenKey))return;loadFinanceClaims().catch(error=>{document.querySelector('#finance-sync-status').textContent=error.message||'报销同步失败，请刷新重试';});loadFinanceReport().catch(()=>{});}
-window.setInterval(financeSyncTick,20000);
+let financeSyncInFlight = false;
+async function financeSyncTick(){const view=document.querySelector('#finance-view');if(document.hidden||financeSyncInFlight||!view||view.classList.contains('hidden')||!localStorage.getItem(adminTokenKey))return;financeSyncInFlight=true;try{await Promise.allSettled([loadFinanceClaims().catch(error=>{document.querySelector('#finance-sync-status').textContent=error.message||'报销同步失败，请刷新重试';}),loadFinanceReport().catch(()=>{})]);}finally{financeSyncInFlight=false;}}
+let financeSyncTimer = window.setInterval(financeSyncTick,20000);
+window.addEventListener('pagehide', () => { window.clearInterval(financeSyncTimer); financeSyncTimer = null; });
+window.addEventListener('pageshow', event => { if (event.persisted && !financeSyncTimer) financeSyncTimer = window.setInterval(financeSyncTick,20000); });
 
 const managementTabGroups = {
   overview: ['.metric-grid', '.ledger-summary-panel', '.daily-report-panel', '.management-grid', '#headquarters-overview'],

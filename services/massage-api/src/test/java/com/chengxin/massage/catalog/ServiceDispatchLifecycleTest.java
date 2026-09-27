@@ -56,6 +56,15 @@ class ServiceDispatchLifecycleTest {
   }
 
   @Test
+  void sessionListCanFilterByBusinessDateWithoutChangingItsResultShape() throws Exception {
+    String source = Files.readString(Path.of("src/main/java/com/chengxin/massage/catalog/ServiceSessionController.java"));
+
+    assertThat(source).contains("@RequestParam(required = false) LocalDate businessDate");
+    assertThat(source).contains("ss.business_date=:businessDate");
+    assertThat(source).contains("statement.param(\"businessDate\", businessDate)");
+  }
+
+  @Test
   void clockTypeCanBeChangedOnlyWhileServiceIsOperational() {
     assertThat(ServiceSessionController.canChangeClockType("PENDING_ACCEPTANCE")).isTrue();
     assertThat(ServiceSessionController.canChangeClockType("ACCEPTED")).isTrue();

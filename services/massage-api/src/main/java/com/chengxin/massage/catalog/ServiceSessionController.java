@@ -75,6 +75,7 @@ public class ServiceSessionController {
   List<ServiceSession> sessions(@RequestParam(required = false) String status,
                                 @RequestParam(required = false) OffsetDateTime from,
                                 @RequestParam(required = false) OffsetDateTime to,
+                                @RequestParam(required = false) LocalDate businessDate,
                                 @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                                 @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
@@ -82,11 +83,13 @@ public class ServiceSessionController {
     if (status != null && !status.isBlank()) where.append(" and ss.status=:status");
     if (from != null) where.append(" and ss.started_at>=:fromTime");
     if (to != null) where.append(" and ss.started_at<=:toTime");
+    if (businessDate != null) where.append(" and ss.business_date=:businessDate");
     String sql = sessionListSql(where.toString());
     JdbcClient.StatementSpec statement = jdbc.sql(sql).param("store", storeId);
     if (status != null && !status.isBlank()) statement = statement.param("status", status);
     if (from != null) statement = statement.param("fromTime", from);
     if (to != null) statement = statement.param("toTime", to);
+    if (businessDate != null) statement = statement.param("businessDate", businessDate);
     return statement.query(ServiceSession.class).list();
   }
 

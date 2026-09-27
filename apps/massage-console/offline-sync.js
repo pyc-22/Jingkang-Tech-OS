@@ -76,7 +76,7 @@
   function openPanel() { document.querySelector('#offline-sync-panel')?.classList.toggle('hidden', false); }
   function closePanel() { document.querySelector('#offline-sync-panel')?.classList.add('hidden'); }
   async function sync() {
-    if (flushing || !navigator.onLine) return;
+    if (document.hidden || flushing || !navigator.onLine) return;
     flushing = true;
     try {
       const operations = (await list()).filter(operation => operation.state === 'PENDING').sort((left, right) => left.createdAt.localeCompare(right.createdAt));
@@ -194,7 +194,10 @@
   document.querySelector('#offline-sync-now').addEventListener('click', sync);
   document.querySelector('#offline-sync-list').addEventListener('click', async event => { const discard = event.target.closest('[data-offline-discard]'); if (!discard) return; await remove(discard.dataset.offlineDiscard); await render(); });
   window.addEventListener('online', sync);
-  window.setInterval(sync, 15000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
+  let syncTimer = window.setInterval(sync, 15000);
+  window.addEventListener('pagehide', () => { window.clearInterval(syncTimer); syncTimer = null; });
+  window.addEventListener('pageshow', event => { if (event.persisted && !syncTimer) { syncTimer = window.setInterval(sync, 15000); sync(); } });
   render();
   window.OfflineOperationQueue = { sync, list, discard:remove };
 })();

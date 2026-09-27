@@ -20,6 +20,8 @@ async function loadConsole({ html = index, token = null, fetchImpl = async () =>
   const errors = [];
   const warnings = [];
   const requests = [];
+  const intervals = [];
+  const clearedIntervals = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', error => errors.push(`jsdom: ${error.message}`));
   virtualConsole.on('error', (...args) => errors.push(`error: ${args.join(' ')}`));
@@ -36,7 +38,11 @@ async function loadConsole({ html = index, token = null, fetchImpl = async () =>
     if (this.id === 'admin-login-dialog') promptCount += 1;
     originalShowModal.call(this);
   };
-  window.setInterval = () => 0;
+  let visibility = 'visible';
+  Object.defineProperty(window.document, 'visibilityState', { configurable: true, get: () => visibility });
+  Object.defineProperty(window.document, 'hidden', { configurable: true, get: () => visibility !== 'visible' });
+  window.setInterval = (callback, delay) => { const id = intervals.length + 1; intervals.push({ id, callback, delay }); return id; };
+  window.clearInterval = id => clearedIntervals.push(id);
   if (token) window.localStorage.setItem('chengxin-admin-access-token', token);
   window.fetch = async (url, init = {}) => {
     requests.push({ url: String(url), headers: Object.fromEntries(new window.Headers(init.headers || {}).entries()) });
@@ -44,7 +50,20 @@ async function loadConsole({ html = index, token = null, fetchImpl = async () =>
   };
   window.eval(app);
   await new Promise(resolve => window.setTimeout(resolve, 60));
-  return { dom, window, errors, warnings, requests, get promptCount() { return promptCount; } };
+  return { dom, window, errors, warnings, requests, intervals, clearedIntervals,
+    setVisibility(value) { visibility = value; window.document.dispatchEvent(new window.Event('visibilitychange')); },
+    get promptCount() { return promptCount; } };
+}
+
+function frontdeskResponse(url) {
+  const value = String(url);
+  if (value.endsWith('/admin/auth/session')) return response({ displayName: '前台', roles: ['FRONTDESK'], permissions: [] });
+  if (value.includes('/admin/access/my-stores')) return response([{ id: 'store-1', name: '门店', active: true }]);
+  if (value.includes('/technician-queue') && !value.includes('/events')) return response({ businessDate: '2026-09-27', technicians: [] });
+  if (value.includes('/clock-eligibility')) return response({ technicians: [] });
+  if (value.includes('/foundation/rooms')) return response([{ id: 'room-1', code: '201', bedCount: 1 }]);
+  if (value.includes('/foundation/technicians')) return response([{ id: 'tech-1', code: '01', name: '张三', queueOrder: 1 }]);
+  return response([]);
 }
 
 test('fresh entry opens the login dialog before any protected request', async () => {
@@ -105,11 +124,51 @@ test('a foundation 401 clears the session and shows one login prompt without a r
   }
 });
 
-test('entry and primary assets use the same release version and the entry keeps the new room node', () => {
+test('frontdesk renders before daily completed counts and never requests all service sessions', async () => {
+  let finishCounts;
+  const counts = new Promise(resolve => { finishCounts = resolve; });
+  const fixture = await loadConsole({ token: 'valid-token', fetchImpl: url => String(url).includes('status=COMPLETED&businessDate=') ? counts : frontdeskResponse(url) });
+  try {
+    assert.ok(fixture.window.document.querySelector('[data-room="201"]'));
+    assert.ok(fixture.requests.some(item => item.url.includes('status=COMPLETED&businessDate=2026-09-27')));
+    assert.equal(fixture.requests.some(item => /\/service-sessions$/.test(item.url)), false);
+    finishCounts(response([{ status: 'COMPLETED', businessDate: '2026-09-27', clockType: 'QUEUE', technicianId: 'tech-1' }]));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.match(fixture.window.document.querySelector('[data-tech-card="tech-1"]').textContent, /排钟 1/);
+    assert.deepEqual(fixture.errors, []);
+  } finally { fixture.dom.window.close(); }
+});
+
+test('frontdesk polling is 30 seconds, shares in-flight load, pauses while hidden and cleans up', async () => {
+  let finishRooms;
+  const rooms = new Promise(resolve => { finishRooms = resolve; });
+  const fixture = await loadConsole({ token: 'valid-token', fetchImpl: url => String(url).includes('/foundation/rooms') ? rooms : frontdeskResponse(url) });
+  try {
+    const poll = fixture.intervals.find(item => item.delay === 30000);
+    assert.ok(poll);
+    poll.callback();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(fixture.requests.filter(item => item.url.includes('/foundation/rooms')).length, 1);
+    fixture.setVisibility('hidden');
+    poll.callback();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(fixture.requests.filter(item => item.url.includes('/foundation/rooms')).length, 1);
+    finishRooms(frontdeskResponse('/foundation/rooms'));
+    await new Promise(resolve => setTimeout(resolve, 40));
+    fixture.setVisibility('visible');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(fixture.requests.filter(item => item.url.includes('/foundation/rooms')).length, 2);
+    fixture.window.dispatchEvent(new fixture.window.Event('pagehide'));
+    assert.ok(fixture.intervals.every(item => fixture.clearedIntervals.includes(item.id)));
+  } finally { fixture.dom.window.close(); }
+});
+
+test('entry versions changed assets independently and keeps the new room node', () => {
   const appVersion = index.match(/app\.js\?v=([^"']+)/)?.[1];
   const cssVersion = index.match(/styles\.css\?v=([^"']+)/)?.[1];
   assert.ok(appVersion);
-  assert.equal(cssVersion, appVersion);
+  assert.equal(appVersion, '20260927-perf-polling-v1');
+  assert.equal(cssVersion, '20260926-auth-hardening-v1');
   assert.match(index, /id="idle-room-count"/);
   assert.match(app, /if \(idleCount\) idleCount\.textContent/);
   assert.match(app, /if \(availableCount\) availableCount\.textContent/);
@@ -155,7 +214,7 @@ test('static server sends entry no-cache, versioned asset long-cache, validators
   assert.ok(entry.headers.get('etag'));
   assert.ok(entry.headers.get('last-modified'));
 
-  const asset = await fetch(`${staticBase}/app.js?v=20260926-auth-hardening-v1`);
+  const asset = await fetch(`${staticBase}/app.js?v=20260927-perf-polling-v1`);
   assert.equal(asset.status, 200);
   assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable');
   const etag = asset.headers.get('etag');
@@ -163,10 +222,10 @@ test('static server sends entry no-cache, versioned asset long-cache, validators
   assert.ok(etag);
   assert.ok(lastModified);
 
-  const byTag = await fetch(`${staticBase}/app.js?v=20260926-auth-hardening-v1`, { headers: { 'If-None-Match': etag } });
+  const byTag = await fetch(`${staticBase}/app.js?v=20260927-perf-polling-v1`, { headers: { 'If-None-Match': etag } });
   assert.equal(byTag.status, 304);
   assert.equal(await byTag.text(), '');
-  const byDate = await fetch(`${staticBase}/app.js?v=20260926-auth-hardening-v1`, { headers: { 'If-Modified-Since': lastModified } });
+  const byDate = await fetch(`${staticBase}/app.js?v=20260927-perf-polling-v1`, { headers: { 'If-Modified-Since': lastModified } });
   assert.equal(byDate.status, 304);
   assert.equal(await byDate.text(), '');
 
