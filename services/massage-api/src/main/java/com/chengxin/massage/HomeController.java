@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.ResponseBody;
 
 @Controller
 public class HomeController {
-  private static final String RELEASE = "20260924-room-transfer-tech-replacement-v1";
+  private static final String RELEASE = "20260929-manager-rewards-v2";
   private final JdbcClient jdbc;
 
   HomeController(JdbcClient jdbc) {

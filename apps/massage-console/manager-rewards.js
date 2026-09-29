@@ -55,13 +55,47 @@
     if (!select) return;
     select.innerHTML = '<option value="">选择今日订单</option>' + (Array.isArray(rows) ? rows : []).map(row => `<option value="${escape(row.orderId)}" ${row.submitted ? 'disabled' : ''}>${escape(row.orderNo || '订单')} · ${escape(row.memberName || '散客')} · ${money(row.paidCents)}${row.submitted ? ' · 已提交' : ''}</option>`).join('');
   }
+  function ensureCorrectionDialog() {
+    if ($('#manager-reward-correction-dialog')) return;
+    document.body.insertAdjacentHTML('beforeend', '<dialog id="manager-reward-correction-dialog"><form id="manager-reward-correction-form" class="manager-reward-correction-card"><div class="manager-reward-subheading"><b>当天更正约客</b><button type="button" class="manager-quiet-button" id="manager-reward-correction-close">关闭</button></div><p id="manager-reward-correction-summary"></p><label>更正订单<select name="orderId" id="manager-reward-correction-order" required></select></label><label>客户姓名<input name="customerName" maxlength="120" placeholder="散客可留空"></label><label>客户手机号<input name="customerPhone" maxlength="40" inputmode="tel"></label><label>更正备注<textarea name="note" maxlength="240" rows="3" required placeholder="说明选错订单或凭证原因"></textarea></label><label>替换凭证（可选）<input name="file" type="file" accept="image/jpeg,image/png"><small>不选则保留原凭证</small></label><div class="manager-reward-dialog-actions"><button type="button" class="manager-secondary-button" id="manager-reward-correction-cancel">取消</button><button type="submit" class="manager-primary-button">保存更正</button></div></form></dialog>');
+    $('#manager-reward-correction-close')?.addEventListener('click', () => $('#manager-reward-correction-dialog')?.close());
+    $('#manager-reward-correction-cancel')?.addEventListener('click', () => $('#manager-reward-correction-dialog')?.close());
+    $('#manager-reward-correction-form')?.addEventListener('submit', submitCorrection);
+  }
+  function openCorrection(row) {
+    ensureCorrectionDialog();
+    const form = $('#manager-reward-correction-form');
+    const select = $('#manager-reward-correction-order');
+    if (!form || !select) return;
+    form.dataset.id = row.id;
+    select.innerHTML = (state.orders || []).map(order => {
+      const taken = order.submitted && order.orderId !== row.orderId;
+      return `<option value="${escape(order.orderId)}" ${order.orderId === row.orderId ? 'selected' : ''} ${taken ? 'disabled' : ''}>${escape(order.orderNo || '订单')} · ${escape(order.memberName || '散客')} · ${money(order.paidCents)}${taken ? ' · 已提交' : ''}</option>`;
+    }).join('');
+    form.customerName.value = row.customerNameSnapshot || '';
+    form.customerPhone.value = row.customerPhoneSnapshot || '';
+    form.note.value = '';
+    $('#manager-reward-correction-summary').textContent = `${row.orderNo || '订单'} · 原记录可在当天原地更正并留痕`;
+    $('#manager-reward-correction-dialog').showModal();
+  }
+  async function submitCorrection(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    if (!String(data.get('note') || '').trim()) return toast('请填写更正备注');
+    const button = form.querySelector('button[type="submit"]'); if (button) button.disabled = true;
+    try { await request(`/yue/${encodeURIComponent(form.dataset.id)}`, { method:'PUT', body:data }); $('#manager-reward-correction-dialog').close(); toast('约客记录已更正'); await loadDaily(); }
+    catch (error) { toast(error.message || '约客记录更正失败'); }
+    finally { if (button) button.disabled = false; }
+  }
   function renderRecords(rows) {
     const target = $('#manager-reward-yue-records');
     const count = $('#manager-reward-yue-count');
     const active = (rows || []).filter(row => row.active);
     if (count) count.textContent = `${active.length} 条`;
     if (!target) return;
-    target.innerHTML = active.map(row => `<article><div><b>${escape(row.orderNo || '订单')}</b><small>${escape(row.customerNameSnapshot || '散客')} ${row.customerPhoneSnapshot ? `· ${escape(row.customerPhoneSnapshot)}` : ''} · ${escape(row.managerNameSnapshot || '')}</small><small>${row.submittedAt ? new Date(row.submittedAt).toLocaleString('zh-CN') : ''}</small></div><button type="button" class="manager-secondary-button" data-reward-attachment="${escape(row.id)}" ${row.attachmentId ? '' : 'disabled'}>查看水印图</button></article>`).join('') || '<p class="comparison-empty">今日还没有约客凭证</p>';
+    const canCorrect = Boolean(state.daily && state.daily.businessDate === today() && !state.daily.locked && state.daily.onDutyDay);
+    target.innerHTML = active.map(row => `<article><div><b>${escape(row.orderNo || '订单')}</b><small>${escape(row.customerNameSnapshot || '散客')} ${row.customerPhoneSnapshot ? `· ${escape(row.customerPhoneSnapshot)}` : ''} · ${escape(row.managerNameSnapshot || '')}</small><small>${row.submittedAt ? new Date(row.submittedAt).toLocaleString('zh-CN') : ''}</small></div><span>${canCorrect ? `<button type="button" class="manager-secondary-button" data-reward-correction="${escape(row.id)}">当天更正</button>` : ''}<button type="button" class="manager-secondary-button" data-reward-attachment="${escape(row.id)}" ${row.attachmentId ? '' : 'disabled'}>查看水印图</button></span></article>`).join('') || '<p class="comparison-empty">今日还没有约客凭证</p>';
   }
   function ensureAttachmentDialog() {
     if ($('#manager-reward-attachment-dialog')) return;
@@ -123,7 +157,7 @@
   $('#manager-reward-date')?.addEventListener('change', load);
   $('#manager-reward-month')?.addEventListener('change', load);
   $('#manager-rewards-refresh')?.addEventListener('click', load);
-  $('#manager-reward-yue-records')?.addEventListener('click', event => { const button = event.target.closest('[data-reward-attachment]'); if (button) openAttachment(button.dataset.rewardAttachment).catch(error => toast(error.message || '凭证加载失败')); });
+  $('#manager-reward-yue-records')?.addEventListener('click', event => { const correction = event.target.closest('[data-reward-correction]'); if (correction) { const row = state.records.find(item => item.id === correction.dataset.rewardCorrection); if (row) openCorrection(row); return; } const button = event.target.closest('[data-reward-attachment]'); if (button) openAttachment(button.dataset.rewardAttachment).catch(error => toast(error.message || '凭证加载失败')); });
   $('#manager-reward-file')?.addEventListener('change', event => { const file = event.target.files?.[0]; const preview = $('#manager-reward-file-preview'); if (state.fileUrl) URL.revokeObjectURL(state.fileUrl); state.fileUrl = null; if (!preview || !file) { if (preview) preview.hidden = true; return; } state.fileUrl = URL.createObjectURL(file); preview.innerHTML = `<img src="${state.fileUrl}" alt="待上传凭证预览"><span>${escape(file.name)}</span>`; preview.hidden = false; });
   $('#manager-reward-yue-form')?.addEventListener('submit', async event => {
     event.preventDefault();
