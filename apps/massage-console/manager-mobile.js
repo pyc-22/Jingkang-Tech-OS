@@ -78,16 +78,18 @@ function showManagerDashboard() {
   restoreManagerPage();
 }
 function switchManagerPage(page,{remember=true}={}) {
-  const allowedPages=['home','business','commission','expense','more'];
+  const allowedPages=['home','business','commission','expense','rewards','more'];
   let targetPage=allowedPages.includes(page)?page:'home';
+  if(targetPage==='rewards'&&!managerHasPermission('MANAGER_REWARD_VIEW'))targetPage='home';
   let targetButton=document.querySelector(`[data-manager-nav="${targetPage}"]`);
-  if(!targetButton||targetButton.classList.contains('hidden')){
+  if(targetPage!=='rewards'&&(!targetButton||targetButton.classList.contains('hidden'))){
     targetButton=[...document.querySelectorAll('[data-manager-nav]')].find(button=>!button.classList.contains('hidden'));
     targetPage=targetButton?.dataset.managerNav||'home';
   }
   document.querySelectorAll('[data-manager-page-panel]').forEach(panel=>{panel.hidden=panel.dataset.managerPagePanel!==targetPage;});
   document.querySelectorAll('[data-manager-nav]').forEach(button=>{const selected=button.dataset.managerNav===targetPage;button.classList.toggle('selected',selected);button.setAttribute('aria-current',selected?'page':'false');});
   if(remember)localStorage.setItem(managerPageKey,targetPage);
+  if(targetPage==='rewards') window.ManagerRewards?.load?.();
   window.scrollTo({top:0,behavior:'auto'});
 }
 function restoreManagerPage(){switchManagerPage(localStorage.getItem(managerPageKey)||'home',{remember:false});}
@@ -570,10 +572,10 @@ document.querySelector('#manager-login-form').addEventListener('submit',async ev
   formElement.reset();
   await loadManagerStores();
 });
-document.querySelector('#manager-store-select').addEventListener('change',async event=>{if(!managerStores.some(store=>store.id===event.target.value)){renderManagerStores();return managerToast('该门店未分配给当前账号');}resetManagerExtensionState({close:true});localStorage.setItem(managerStoreKey,event.target.value);await loadManagerDashboard();});
+document.querySelector('#manager-store-select').addEventListener('change',async event=>{if(!managerStores.some(store=>store.id===event.target.value)){renderManagerStores();return managerToast('该门店未分配给当前账号');}resetManagerExtensionState({close:true});localStorage.setItem(managerStoreKey,event.target.value);await loadManagerDashboard();window.ManagerRewards?.load?.();});
 document.querySelector('#manager-report-date').addEventListener('change',()=>loadManagerDashboard({manual:true}).catch(()=>managerToast('所选营业日数据暂时无法加载')));
 document.querySelector('#manager-tabbar').addEventListener('click',event=>{const button=event.target.closest('[data-manager-nav]');if(!button||button.classList.contains('hidden'))return;switchManagerPage(button.dataset.managerNav);});
-document.querySelector('.manager-home-shortcuts').addEventListener('click',event=>{const button=event.target.closest('[data-manager-shortcut]');if(!button)return;const nav=document.querySelector(`[data-manager-nav="${button.dataset.managerShortcut}"]`);if(!nav||nav.classList.contains('hidden'))return managerToast('当前账号没有该模块权限');switchManagerPage(button.dataset.managerShortcut);});
+document.querySelector('.manager-home-shortcuts').addEventListener('click',event=>{const button=event.target.closest('[data-manager-shortcut]');if(!button)return;const page=button.dataset.managerShortcut;const permission=button.dataset.managerPermission;if(permission&&!managerHasPermission(permission))return managerToast('当前账号没有该模块权限');switchManagerPage(page);});
 document.querySelector('#manager-open-dispatch').addEventListener('click',()=>openManagerClockDialog());
 document.querySelector('#manager-live-room-list').addEventListener('click',event=>{const extension=event.target.closest('[data-manager-extension-session]');if(extension)return openManagerExtension(extension.dataset.managerExtensionSession,extension.dataset.managerExtensionTech).catch(handleManagerExtensionFailure);const button=event.target.closest('[data-manager-clock-room]');if(button)openManagerClockDialog({roomId:button.dataset.managerClockRoom});});
 document.querySelector('#manager-live-technician-groups').addEventListener('click',event=>{const button=event.target.closest('[data-manager-clock-tech]');if(button)openManagerClockDialog({technicianId:button.dataset.managerClockTech});});

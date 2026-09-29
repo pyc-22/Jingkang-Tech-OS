@@ -89,6 +89,15 @@ public class BusinessPermissionFilter extends OncePerRequestFilter {
 
   private Requirement requirement(String path, String method) {
     if (path.startsWith("/api/v1/admin/access/")) return null;
+    if (path.startsWith("/api/v1/admin/manager-rewards")) {
+      return isRead(method) && !path.endsWith("/attachment")
+        ? required("MANAGER_REWARD_ADMIN_VIEW")
+        : path.endsWith("/attachment") ? any("MANAGER_REWARD_ADMIN_VIEW", "MANAGER_REWARD_LOCK")
+        : required("MANAGER_REWARD_LOCK");
+    }
+    if (path.startsWith("/api/v1/manager-rewards")) {
+      return isRead(method) ? required("MANAGER_REWARD_VIEW") : required("MANAGER_REWARD_SUBMIT");
+    }
     if (path.startsWith("/api/v1/admin/technician-accounts")) return required("ACCOUNT_MANAGE");
     if (path.startsWith("/api/v1/employees")) return required("FOUNDATION_MANAGE");
     if (path.startsWith("/api/v1/foundation")) {

@@ -6,6 +6,7 @@
     <title>靖康科技运营 - 管理看板</title>
     <link rel="stylesheet" href="./manager-mobile.css?v=20260918-expense-workspace-v1" />
     <link rel="stylesheet" href="./login-portal.css?v=20260927-remove-login-bg-v1" />
+    <link rel="stylesheet" href="./manager-rewards.css?v=20260929-manager-rewards-v1" />
   </head>
   <body class="login-portal-page">
     <main class="manager-shell">
@@ -105,6 +106,7 @@
             <button type="button" data-manager-shortcut="business" data-manager-permission="DAILY_REPORT_VIEW"><span aria-hidden="true">▥</span><b>营业数据</b><small>日报与渠道</small></button>
             <button type="button" data-manager-shortcut="commission" data-manager-permission="REPORT_VIEW"><span aria-hidden="true">¥</span><b>技师提成</b><small>汇总与明细</small></button>
             <button type="button" data-manager-shortcut="expense" data-manager-permission="EXPENSE_STORE_VIEW"><span aria-hidden="true">▣</span><b>费用报销</b><small>提交与进度</small></button>
+            <button type="button" data-manager-shortcut="rewards" data-manager-permission="MANAGER_REWARD_VIEW"><span aria-hidden="true">★</span><b>店长奖励</b><small>四项绩效与约客</small></button>
             <button type="button" data-manager-shortcut="more"><span aria-hidden="true">•••</span><b>更多管理</b><small>跨门店查询</small></button>
           </div>
         </section>
@@ -145,6 +147,29 @@
             </form>
           </div>
         </section>
+        <section class="manager-section manager-rewards-section" id="manager-rewards-section" data-manager-page-panel="rewards" data-manager-permission="MANAGER_REWARD_VIEW">
+          <div class="section-heading manager-rewards-heading">
+            <div><p class="manager-section-kicker">店长绩效</p><h2>奖励机制</h2><small id="manager-rewards-status">实时计算，按当班店长归属</small></div>
+            <button class="manager-secondary-button" id="manager-rewards-refresh" type="button">刷新</button>
+          </div>
+          <div class="manager-reward-tabs" id="manager-reward-tabs"><button class="selected" type="button" data-reward-period="daily">当日</button><button type="button" data-reward-period="monthly">月度</button></div>
+          <div class="manager-reward-filters">
+            <label data-reward-filter="daily">营业日期<input id="manager-reward-date" type="date"></label>
+            <label data-reward-filter="monthly" hidden>统计月份<input id="manager-reward-month" type="month"></label>
+          </div>
+          <div id="manager-reward-summary" class="manager-reward-summary"><p class="comparison-empty">正在加载奖励数据</p></div>
+          <div id="manager-reward-month-rows" class="manager-reward-month-rows" hidden></div>
+          <div class="manager-reward-yue">
+            <div class="manager-reward-subheading"><div><b>约客凭证</b><small>会员按客户去重，散客按订单去重</small></div><span id="manager-reward-yue-count">0 条</span></div>
+            <form id="manager-reward-yue-form" class="manager-reward-yue-form">
+              <label>已结算订单<select id="manager-reward-order" name="orderId" required><option value="">选择今日订单</option></select></label>
+              <label>截图凭证<input id="manager-reward-file" name="file" type="file" accept="image/jpeg,image/png" required><small>支持 JPG、PNG，单个不超过 10MB</small></label>
+              <div id="manager-reward-file-preview" class="manager-reward-file-preview" hidden></div>
+              <button class="manager-primary-button" type="submit">提交约客凭证</button>
+            </form>
+            <div id="manager-reward-yue-records" class="manager-reward-yue-records"><p class="comparison-empty">正在加载约客记录</p></div>
+          </div>
+        </section>
         <nav class="manager-tabbar" id="manager-tabbar" aria-label="店长端主导航">
           <button class="selected" type="button" data-manager-nav="home" title="首页"><span aria-hidden="true">⌂</span><b>首页</b></button>
           <button type="button" data-manager-nav="business" data-manager-permission="DAILY_REPORT_VIEW" title="营业数据"><span aria-hidden="true">▥</span><b>营业</b></button>
@@ -159,6 +184,7 @@
     <dialog id="manager-expense-detail-dialog"><div class="manager-expense-detail-card"><div class="expense-editor-title"><div><p>费用报销单</p><h3 id="manager-expense-detail-title">报销详情</h3></div><button class="manager-quiet-button" id="manager-expense-detail-close" type="button">关闭</button></div><div id="manager-expense-detail-content" class="manager-expense-detail-content"></div><div class="expense-editor-actions" id="manager-expense-detail-actions"></div></div></dialog>
     <dialog id="manager-clock-dialog"><form id="manager-clock-form" class="manager-clock-dialog-card"><div class="expense-editor-title"><div><p>现场安排</p><h3>安排技师上钟</h3></div><button class="manager-quiet-button" id="manager-clock-close" type="button">关闭</button></div><div class="manager-clock-grid"><label>上钟类别<select id="manager-clock-type" name="clockType"><option value="QUEUE">排钟</option><option value="CALL">点钟</option><option value="SELECTED">选钟</option><option value="BOOKED_QUEUE">预定排钟</option><option value="BOOKED_CALL">预定点钟</option></select></label><label>服务房间<select id="manager-clock-room" name="roomId" required></select></label><label class="manager-clock-full">服务项目<select id="manager-clock-service" name="serviceItemId" required></select></label><label>服务时长<input id="manager-clock-duration" name="duration" type="number" min="15" max="360" step="5" required /><small>分钟，默认跟随项目</small></label></div><div class="manager-clock-picker"><div class="manager-clock-picker-heading"><b>选择技师</b><small id="manager-clock-tech-count">最多选择 4 位</small></div><div id="manager-clock-tech-list" class="manager-clock-tech-list"></div></div><div id="manager-clock-allocation" class="manager-clock-allocation"></div><p class="manager-clock-note">即时派钟会进入技师端待接单；预定钟会先占用房间并在前一单结束后提醒技师。</p><div class="expense-editor-actions"><button class="manager-secondary-button" id="manager-clock-cancel" type="button">取消</button><button class="manager-primary-button" type="submit">确认安排</button></div></form></dialog>
     <script src="./expense-ui.js?v=20260919-expense-sync-fix-v1"></script>
-    <script src="./manager-mobile.js?v=20260919-expense-sync-fix-v1"></script>
+    <script src="./manager-mobile.js?v=20260929-manager-rewards-v1"></script>
+    <script src="./manager-rewards.js?v=20260929-manager-rewards-v1"></script>
   </body>
 </html>
