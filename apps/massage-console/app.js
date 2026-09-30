@@ -462,6 +462,7 @@ async function loadServiceExtensionIntents() {
 }
 
 let foundationLoad = null;
+let foundationRequestSequence = 0;
 let completedSessionsForDay = { key: '', sessions: [] };
 let completedSessionRefresh = null;
 function applyTechnicianClockCounts(sessions, businessDate) {
@@ -491,36 +492,42 @@ function refreshCompletedSessionCounts(businessDate, key) {
 function loadFoundationData(options = {}) {
   const storeId = localStorage.getItem(currentStoreKey);
   if (foundationLoad?.storeId === storeId) return foundationLoad.promise;
-  const promise = loadFoundationDataOnce(options, storeId);
+  const requestSequence = ++foundationRequestSequence;
+  const promise = loadFoundationDataOnce({ ...options, requestSequence }, storeId);
   foundationLoad = { storeId, promise };
   promise.finally(() => { if (foundationLoad?.promise === promise) foundationLoad = null; });
   return promise;
 }
-async function loadFoundationDataOnce({ silent = false } = {}, requestedStoreId) {
+async function loadFoundationDataOnce({ silent = false, requestSequence = foundationRequestSequence } = {}, requestedStoreId) {
   if (!localStorage.getItem(adminTokenKey) || frontdeskLoginRequired) {
     updateOperationalSyncStatus(false);
     return false;
   }
   try {
     const base = 'http://localhost:8080/api/v1/foundation';
-    const [technicians, rooms, services, serviceCategories, statuses, sessions, pendingAcceptance, reassignment, dispatchCancelled, accepted, eligibility, queueSnapshot, waitingReservations] = await Promise.all([`${base}/technicians`, `${base}/rooms`, `${base}/service-items`, 'http://localhost:8080/api/v1/service-categories', 'http://localhost:8080/api/v1/rooms/statuses', 'http://localhost:8080/api/v1/service-sessions?status=IN_SERVICE', 'http://localhost:8080/api/v1/service-sessions?status=PENDING_ACCEPTANCE', 'http://localhost:8080/api/v1/service-sessions?status=REASSIGNMENT_REQUIRED', 'http://localhost:8080/api/v1/service-sessions?status=DISPATCH_CANCELLED', 'http://localhost:8080/api/v1/service-sessions?status=ACCEPTED', 'http://localhost:8080/api/v1/technician-schedules/clock-eligibility', 'http://localhost:8080/api/v1/technician-queue', 'http://localhost:8080/api/v1/service-reservations?status=WAITING'].map(url => fetch(url, { headers: storeContextHeaders() }).then(response => { if (!response.ok) throw new Error(response.status); return response.json(); })));
-    if (localStorage.getItem(currentStoreKey) !== requestedStoreId) return false;
-    const eligibilityByTechnician=new Map((eligibility.technicians||[]).map(item=>[item.technicianId,item]));
-    const queueByTechnician = new Map((queueSnapshot.technicians||[]).map(item => [String(item.technicianId), item.queuePosition]));
-    const businessDate = String(queueSnapshot.businessDate || '');
-    const waitingReservationByTechnician = new Map((waitingReservations||[]).filter(item => item.technicianId).map(item => [String(item.technicianId), item]));
-    state.technicians = technicians.map((tech, index) => { const schedule=eligibilityByTechnician.get(tech.id); const eligible=!schedule||schedule.eligible; const clockedIn=!schedule||schedule.clockedIn||schedule.legacyCompatible; return { id: tech.id, code:tech.code, name: tech.name, initials: tech.name.slice(0, 1), queueEnabled: tech.queueEnabled !== false, clockedIn, state: eligible?'available':'off', queue: queueByTechnician.get(String(tech.id)) ?? tech.queueOrder ?? index + 1, detail:eligible?'可立即安排服务':(technicianScheduleReasonLabel[schedule?.reason]||'当前不可上钟'), queueCount:0, callCount:0, extensionCount:0, nextReservation:waitingReservationByTechnician.get(String(tech.id)) || null }; });
-    const labels = { IDLE:['idle','空闲'], IN_SERVICE:['serving','服务中'], PENDING_PAYMENT:['pending-payment','待付款'], CLEANING:['cleaning','清洁中'], RESERVED:['reserved','已预留'] };
+     const [technicians, rooms, services, serviceCategories, liveState, sessions, pendingAcceptance, reassignment, dispatchCancelled, accepted, eligibility, queueSnapshot, waitingReservations] = await Promise.all([`${base}/technicians`, `${base}/rooms`, `${base}/service-items`, 'http://localhost:8080/api/v1/service-categories', 'http://localhost:8080/api/v1/operations/live-state', 'http://localhost:8080/api/v1/service-sessions?status=IN_SERVICE', 'http://localhost:8080/api/v1/service-sessions?status=PENDING_ACCEPTANCE', 'http://localhost:8080/api/v1/service-sessions?status=REASSIGNMENT_REQUIRED', 'http://localhost:8080/api/v1/service-sessions?status=DISPATCH_CANCELLED', 'http://localhost:8080/api/v1/service-sessions?status=ACCEPTED', 'http://localhost:8080/api/v1/technician-schedules/clock-eligibility', 'http://localhost:8080/api/v1/technician-queue', 'http://localhost:8080/api/v1/service-reservations?status=WAITING'].map(url => fetch(url, { headers: storeContextHeaders(), cache:'no-store' }).then(response => { if (!response.ok) throw new Error(response.status); return response.json(); })));
+     if (localStorage.getItem(currentStoreKey) !== requestedStoreId || requestSequence !== foundationRequestSequence) return false;
+     const eligibilityByTechnician=new Map((eligibility.technicians||[]).map(item=>[String(item.technicianId),item]));
+     const queueByTechnician = new Map((queueSnapshot.technicians||[]).map(item => [String(item.technicianId), item.queuePosition]));
+     const businessDate = String(liveState.businessDate || queueSnapshot.businessDate || '');
+     const waitingReservationByTechnician = new Map((waitingReservations||[]).filter(item => item.technicianId).map(item => [String(item.technicianId), item]));
+     const liveTechnicians = new Map((liveState.technicians || []).map(item => [String(item.technicianId), item]));
+     const technicianState = { IDLE:'available', IN_SERVICE:'serving', PENDING_ACCEPTANCE:'pending', ACCEPTED:'accepted' };
+     state.technicians = technicians.map((tech, index) => {
+       const schedule=eligibilityByTechnician.get(String(tech.id));
+       const eligible=!schedule||schedule.eligible;
+       const clockedIn=!schedule||schedule.clockedIn||schedule.legacyCompatible;
+       const live=liveTechnicians.get(String(tech.id));
+       const liveStatus=live?.status||'IDLE';
+       const state=eligible?(technicianState[liveStatus]||'available'):'off';
+       const detail=live?.roomCode?`${live.roomCode} 房 · ${live.serviceNameSnapshot||'服务中'}`:eligible?'可立即安排服务':(technicianScheduleReasonLabel[schedule?.reason]||'当前不可上钟');
+       return { id: tech.id, code:tech.code, name: tech.name, initials: tech.name.slice(0, 1), queueEnabled: tech.queueEnabled !== false, clockedIn, state, queue: live?.queuePosition ?? queueByTechnician.get(String(tech.id)) ?? tech.queueOrder ?? index + 1, detail, queueCount:0, callCount:0, extensionCount:0, nextReservation:waitingReservationByTechnician.get(String(tech.id)) || null };
+     });
+     const labels = { IDLE:['idle','空闲'], IN_SERVICE:['serving','服务中'], PENDING_PAYMENT:['pending-payment','待结算'], COMPLETED_UNSETTLED:['pending-payment','待结算'], CLEANING:['cleaning','清洁中'], RESERVED:['reserved','已预留'] };
     labels.MAINTENANCE=['maintenance','维修中'];
     const roomStatusSelect=document.querySelector('#room-status-form select[name="status"]');
     if(roomStatusSelect && !roomStatusSelect.querySelector('option[value="MAINTENANCE"]')) roomStatusSelect.insertAdjacentHTML('beforeend','<option value="MAINTENANCE">维修中</option>');
-    const roomSessions = new Map();
-    [...sessions, ...pendingAcceptance, ...reassignment, ...dispatchCancelled, ...accepted].forEach(session => {
-      const key = String(session.roomId);
-      if (!roomSessions.has(key)) roomSessions.set(key, []);
-      roomSessions.get(key).push(session);
-    });
-    const nextExtensionSnapshot = new Map(sessions.map(session => [String(session.id), String(session.extensionSummary || '')]));
+     const nextExtensionSnapshot = new Map(sessions.map(session => [String(session.id), String(session.extensionSummary || '')]));
     if (extensionSyncInitialized) {
       sessions.forEach(session => {
         const previous = extensionSyncSnapshot.get(String(session.id)) || '';
@@ -530,37 +537,28 @@ async function loadFoundationDataOnce({ silent = false } = {}, requestedStoreId)
     }
     extensionSyncSnapshot = nextExtensionSnapshot;
     extensionSyncInitialized = true;
-    state.rooms = rooms.map(room => {
-      const current = statuses.find(item => item.roomId === room.id);
-      const roomList = roomSessions.get(String(room.id)) || [];
-      const capacity = Number(room.bedCount || 1);
-      const session = roomList[0];
-      const displayStatus = roomList.some(item => item.status === 'IN_SERVICE') ? 'IN_SERVICE' : roomList.some(item => item.status === 'PENDING_ACCEPTANCE' || item.status === 'ACCEPTED') ? 'RESERVED' : current?.status || 'IDLE';
-      const [status,label] = labels[displayStatus] || labels.IDLE;
-      const services = roomList.flatMap(item => {
-        const participantIds = sessionParticipantIds(item);
-        const participants = participantIds.length ? participantIds : [null];
-        return participants.map((technicianId, index) => {
-          const technician = technicianId ? state.technicians.find(candidate => String(candidate.id) === String(technicianId)) : null;
-          const fallbackNames = String(sessionDisplayTechnicianName(item)).split('、').map(value => value.trim()).filter(Boolean);
-          return {
-            sessionId: item.id,
-            technicianId,
-            technicianName: technician?.name || fallbackNames[index] || '待派单',
-            serviceName: item.serviceNameSnapshot,
-            status: item.status,
-            plannedDurationMinutes: item.plannedDurationMinutes,
-            expectedEndAt: item.expectedEndAt,
-            extensionSummary: item.extensionSummary || ''
-          };
-        });
-      });
-      const occupiedBedCount = roomList.length;
-      const bedText = `${occupiedBedCount}/${capacity} 床已用 · 余 ${Math.max(0, capacity - occupiedBedCount)} 床`;
-      const details = bedText;
-      const exceptionSession = roomList.find(item => ['REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED'].includes(item.status));
-      return { id: room.code, apiId: room.id, sessionId: session?.id || null, exceptionSessionId: exceptionSession?.id || null, exceptionStatus: exceptionSession?.status || null, status, label, detail: details, services, expectedEndAt: session?.expectedEndAt, bedCount: capacity, occupiedBedCount, availableBedCount: Math.max(0, capacity - occupiedBedCount) };
-    });
+     state.rooms = rooms.map(room => {
+       const liveRoom = (liveState.rooms || []).find(item => String(item.roomId) === String(room.id));
+       const roomList = liveRoom?.services || [];
+       const capacity = Number(liveRoom?.bedCount || room.bedCount || 1);
+       const session = roomList[0];
+       const displayStatus = liveRoom?.status || 'IDLE';
+       const [status,label] = labels[displayStatus] || labels.IDLE;
+       const services = roomList.flatMap(item => {
+         const participantIds = sessionParticipantIds(item);
+         const participants = participantIds.length ? participantIds : [null];
+         const fallbackNames = String(item.technicianDisplay || '').split('、').map(value => value.trim()).filter(Boolean);
+         return participants.map((technicianId, index) => {
+           const technician = technicianId ? state.technicians.find(candidate => String(candidate.id) === String(technicianId)) : null;
+           return { sessionId:item.serviceSessionId, roomId:item.roomId, bedId:item.bedId, bedName:item.bedName||item.bedCode||'未指定床位', technicianId, technicianName: technician?.name || fallbackNames[index] || '待派单', serviceName:item.serviceNameSnapshot, status:item.serviceStatus, plannedDurationMinutes:Number(item.plannedDurationMinutes||0), expectedEndAt:item.expectedEndAt, startedAt:item.startedAt, extensionSummary:item.extensionSummary||'' };
+         });
+       });
+       const occupiedBedCount = Number(liveRoom?.occupiedBedCount || 0);
+       const bedText = `${occupiedBedCount}/${capacity} 床已用 · 余 ${Math.max(0, capacity - occupiedBedCount)} 床`;
+       const details = bedText;
+       const exceptionSession = roomList.find(item => ['REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED'].includes(item.serviceStatus));
+       return { id: room.code, apiId: room.id, sessionId: session?.serviceSessionId || null, exceptionSessionId: exceptionSession?.serviceSessionId || null, exceptionStatus: exceptionSession?.serviceStatus || null, status, label, detail: details, services, expectedEndAt: session?.expectedEndAt, bedCount: capacity, occupiedBedCount, availableBedCount: Number(liveRoom?.availableBedCount ?? Math.max(0, capacity - occupiedBedCount)) };
+     });
     state.serviceCategories = serviceCategories || [];
     state.services = services.map(service => ({ id: service.id, code: service.code, name: service.name, category: service.category || '未分类', categoryId: service.categoryId || null, duration: `${service.defaultDurationMinutes} 分钟`, durationMinutes:service.defaultDurationMinutes, price: service.priceCents / 100, dispatchType: service.dispatchType || 'QUEUE', allowsExtension:service.allowsExtension !== false }));
     state.activeSessions = sessions;
@@ -568,20 +566,6 @@ async function loadFoundationDataOnce({ silent = false } = {}, requestedStoreId)
     state.reassignmentSessions = reassignment;
     state.dispatchCancelledSessions = dispatchCancelled;
     state.acceptedSessions = accepted;
-    sessions.forEach(session => sessionParticipantIds(session).forEach(id => {
-      const tech = state.technicians.find(item => String(item.id) === id);
-      if (tech) { tech.state = 'serving'; tech.detail = `${session.roomCode} 房 · ${session.serviceNameSnapshot} · ${session.plannedDurationMinutes} 分钟${session.extensionSummary ? ` · 加钟：${session.extensionSummary}` : ''}`; }
-    }));
-    pendingAcceptance.forEach(session => sessionParticipantIds(session).forEach(id => {
-      const tech = state.technicians.find(item => String(item.id) === id);
-      if (tech) { tech.state = 'pending'; tech.detail = `${session.roomCode} 房 · 等待接单`; }
-    }));
-    // Rejected and expired participants are no longer assigned to the session.
-    // Keep the service in the reassignment panel, but leave those technicians available.
-    accepted.forEach(session => sessionParticipantIds(session).forEach(id => {
-      const tech = state.technicians.find(item => String(item.id) === id);
-      if (tech) { tech.state = 'accepted'; tech.detail = `${session.roomCode} 房 · 已接单，待开始服务`; }
-    }));
     const countKey = `${requestedStoreId}:${businessDate}`;
     applyTechnicianClockCounts([...sessions, ...(completedSessionsForDay.key === countKey ? completedSessionsForDay.sessions : [])], businessDate);
     frontdeskOperationalReady = true;
@@ -1899,6 +1883,33 @@ async function loadActivePaymentMethods() {
 }
 
 let settlementPaymentDraft = new Map();
+let settlementPaymentRows = [];
+let settlementPaymentTarget = null;
+
+function paymentMethodOptions(selected) {
+  return activePaymentMethods.filter(item => item.active !== false).map(item => `<option value="${roomTransferEscape(item.code)}" ${item.code === selected ? 'selected' : ''}>${memberBusinessEscape(item.name)}</option>`).join('');
+}
+
+function walletOptions(wallets, selected) {
+  return (wallets || []).map(wallet => `<option value="${roomTransferEscape(wallet.id)}" ${String(wallet.id) === String(selected) ? 'selected' : ''}>${memberBusinessEscape(wallet.accountName || '会员卡')} · ${memberBusinessEscape(wallet.accountCode || '')} · ${money(Number(wallet.balanceCents || 0) / 100)}</option>`).join('');
+}
+
+async function loadSettlementWallets(memberId) {
+  if (!memberId) return [];
+  const response = await fetch(`http://localhost:8080/api/v1/members/${memberId}/wallets`, { headers: storeContextHeaders(), cache: 'no-store' });
+  if (!response.ok) throw new Error(response.status);
+  return response.json();
+}
+
+function syncSettlementPaymentRows() {
+  settlementPaymentRows = [...document.querySelectorAll('[data-payment-row]')].map((row, index) => {
+    const method = row.querySelector('[data-payment-method]')?.value || settlementPaymentRows[index]?.method || '';
+    const walletSelect = row.querySelector('[data-payment-wallet]');
+    const walletId = walletSelect ? (walletSelect.value || null) : (settlementPaymentRows[index]?.walletId || null);
+    const amountCents = Math.round(Math.max(0, Number(row.querySelector('[data-payment-amount]')?.value) || 0) * 100);
+    return { ...(settlementPaymentRows[index] || {}), method, walletId, amountCents };
+  });
+}
 
 function settlementTotalCents() {
   return Math.round(state.orderItems.reduce((sum,item)=>sum+item.price,0)*100);
@@ -1914,14 +1925,15 @@ function settlementIsWaived() {
 }
 
 function settlementPayments() {
-  return [...document.querySelectorAll('[data-payment-amount]')].map(input => ({
-    method: input.dataset.paymentAmount,
-    amountCents: Math.round(Math.max(0, Number(input.value) || 0) * 100)
-  })).filter(payment => payment.amountCents > 0);
+  syncSettlementPaymentRows();
+  return settlementPaymentRows.filter(payment => payment.amountCents > 0).map(payment => {
+    const method = activePaymentMethods.find(item => item.code === payment.method);
+    return { method: payment.method, walletId: method?.methodKind === 'MEMBER_BALANCE' ? (payment.walletId || null) : null, amountCents: payment.amountCents };
+  });
 }
 
 function updateSettlementAllocation() {
-  document.querySelectorAll('[data-payment-amount]').forEach(input => settlementPaymentDraft.set(input.dataset.paymentAmount, input.value));
+  syncSettlementPaymentRows();
   const totalCents = settlementAmountCents();
   const allocatedCents = settlementPayments().reduce((sum,payment)=>sum+payment.amountCents,0);
   const remainingCents = totalCents-allocatedCents;
@@ -1938,18 +1950,29 @@ function updateSettlementAllocation() {
 
 function renderSettlementPaymentMethods({ reset = false } = {}) {
   const container = document.querySelector('#payment-options');
-  const hasMember = Boolean(state.selectedMemberId);
   const methods = activePaymentMethods.filter(item => item.active !== false);
-  const firstEnabledCode = methods.find(item => hasMember || item.code !== 'MEMBER_BALANCE')?.code;
-  if(reset){settlementPaymentDraft=new Map();if(firstEnabledCode)settlementPaymentDraft.set(firstEnabledCode,(settlementAmountCents()/100).toFixed(2));}
-  container.innerHTML = methods.map(item => {
-    const memberRequired = item.methodKind === 'MEMBER_BALANCE' && !hasMember;
-    const member = state.members.find(memberItem=>memberItem.id===state.selectedMemberId);
-    const note = item.methodKind === 'MEMBER_BALANCE' ? (memberRequired ? '需先选择会员' : `余额 ${money(member?.balance||0)}`) : (item.cashCounted ? '计入现金' : '');
-    const value = memberRequired ? '' : (settlementPaymentDraft.get(item.code)||'');
-    return `<label class="payment-option${memberRequired?' disabled':''}"><span><b>${memberBusinessEscape(item.name)}</b><small>${memberBusinessEscape(note)}</small></span><span class="payment-amount-control"><i>¥</i><input type="number" min="0" step="0.01" inputmode="decimal" data-payment-amount="${memberBusinessEscape(item.code)}" value="${memberBusinessEscape(value)}" ${memberRequired?'disabled':''} aria-label="${memberBusinessEscape(item.name)}收款金额"><button type="button" data-fill-payment="${memberBusinessEscape(item.code)}" ${memberRequired?'disabled':''}>填入剩余</button></span></label>`;
-  }).join('') || '<p class="empty-state payment-empty-state">当前门店没有可用于散客结算的收款方式，请先启用现金、支付宝等收款方式</p>';
+  const firstEnabledCode = methods.find(item => item.methodKind !== 'MEMBER_BALANCE' || state.selectedMemberId)?.code;
+  if (reset) {
+    settlementPaymentDraft = new Map();
+    settlementPaymentRows = firstEnabledCode ? [{ method: firstEnabledCode, walletId: null, memberId: state.selectedMemberId || null, wallets: [], amountCents: settlementAmountCents() }] : [];
+  } else {
+    syncSettlementPaymentRows();
+    settlementPaymentRows.forEach(row => { if (!row.memberId && state.selectedMemberId) row.memberId = state.selectedMemberId; });
+  }
+  container.innerHTML = settlementPaymentRows.map((row, index) => {
+    const method = methods.find(item => item.code === row.method) || methods[0];
+    const isMember = method?.methodKind === 'MEMBER_BALANCE';
+    const member = state.members.find(item => item.id === (row.memberId || state.selectedMemberId));
+    const note = isMember ? (member ? `${member.name} · 余额 ${money(member.balance || 0)}` : '请选择付款会员和会员卡') : (method?.cashCounted ? '计入现金' : '');
+    const walletSelect = isMember ? `<select data-payment-wallet aria-label="第 ${index + 1} 条支付会员卡"><option value="">选择会员卡</option>${walletOptions(row.wallets, row.walletId)}</select><button type="button" data-payment-member-search="${index}">${member ? `付款人：${memberBusinessEscape(member.name)}` : '选择付款人'}</button>` : '';
+    return `<div class="payment-option payment-option-row" data-payment-row="${index}"><span><select data-payment-method aria-label="第 ${index + 1} 条支付方式">${paymentMethodOptions(row.method)}</select><small>${memberBusinessEscape(note)}</small>${walletSelect}</span><span class="payment-amount-control"><i>¥</i><input type="number" min="0" step="0.01" inputmode="decimal" data-payment-amount value="${memberBusinessEscape((row.amountCents || 0) / 100)}" aria-label="第 ${index + 1} 条收款金额"><button type="button" data-fill-payment="${index}">填入剩余</button><button type="button" data-remove-payment="${index}" aria-label="删除第 ${index + 1} 条支付">×</button></span></div>`;
+  }).join('') + (methods.length ? '<button type="button" class="button secondary" data-add-payment-row>添加支付明细</button>' : '<p class="empty-state payment-empty-state">当前门店没有可用于散客结算的收款方式，请先启用现金、支付宝等收款方式</p>');
   updateSettlementAllocation();
+  settlementPaymentRows.forEach(row => {
+    if (row.walletLoading || !row.memberId || row.wallets?.length) return;
+    row.walletLoading = true;
+    loadSettlementWallets(row.memberId).then(wallets => { row.wallets = wallets; row.walletId = row.walletId || wallets.find(item => item.isDefault)?.id || wallets[0]?.id || null; renderSettlementPaymentMethods(); }).catch(() => toast('会员卡加载失败，请重新选择付款人'));
+  });
 }
 
 async function loadStorePrintSetting({ render = true } = {}) {
@@ -2031,7 +2054,7 @@ async function printReceipt(orderDetail, openedWindow = null) {
   const storeInfo = [show('showStoreAddress') && setting.storeAddress, show('showStorePhone') && setting.storePhone].filter(Boolean).map(value => `<div>${receiptEscape(value)}</div>`).join('');
   const memberInfo = show('showMember') && order.memberName ? `<div>会员：${receiptEscape(order.memberName)}${order.memberPhone ? ` ${receiptEscape(order.memberPhone)}` : ''}</div>` : '';
   const lineRows = lines.map(line => `<tr><td>${receiptEscape(line.itemNameSnapshot)}${show('showClockType') ? `<small>钟类：${receiptEscape(receiptClockTypeLabel(line.clockType))}</small>` : ''}${show('showTechnician') && line.technicianName ? `<small>技师：${receiptEscape(line.technicianName)}</small>` : ''}${show('showRoom') && line.roomCode ? `<small>房间：${receiptEscape(line.roomCode)}</small>` : ''}</td><td>${roomTransferEscape(line.durationMinutes)}分</td><td>¥${(line.lineAmountCents / 100).toFixed(2)}</td></tr>`).join('');
-  const paymentRows = show('showPayment') ? payments.map(payment => `<div class="line"><span>${receiptEscape(payment.paymentMethodNameSnapshot || payment.paymentMethod)}</span><span>¥${(payment.amountCents / 100).toFixed(2)}</span></div>`).join('') : '';
+  const paymentRows = show('showPayment') ? payments.map(payment => { const payer = payment.payerMemberName ? `付款人：${payment.payerMemberName}${payment.payerMemberCode ? `（${payment.payerMemberCode}）` : ''}` : (payment.accountName || payment.accountCode ? `会员卡：${payment.accountName || ''}${payment.accountCode ? `（${payment.accountCode}）` : ''}` : ''); return `<div class="line"><span>${receiptEscape(payment.paymentMethodNameSnapshot || payment.paymentMethod)}${payer ? `<small>${receiptEscape(payer)}</small>` : ''}</span><span>¥${(payment.amountCents / 100).toFixed(2)}</span></div>`; }).join('') : '';
   const balance = show('showBalance') && order.memberName ? `<div class="line"><span>会员余额</span><span>¥${((order.memberBalanceCents || 0) / 100).toFixed(2)}</span></div>` : '';
   const content = `<section class="receipt"><header><b>${receiptEscape(setting.receiptTitle)}</b><h1>${receiptEscape(setting.storeName)}</h1>${storeInfo}${setting.headerNote ? `<p>${receiptEscape(setting.headerNote)}</p>` : ''}</header>${show('showOrderNo') ? `<div>订单号：${receiptEscape(order.orderNo)}</div>` : ''}<div>结算时间：${new Date(order.settledAt).toLocaleString('zh-CN', { hour12:false })}</div>${memberInfo}<table>${lineRows}</table><div class="total"><span>合计</span><strong>¥${(order.paidCents / 100).toFixed(2)}</strong></div>${paymentRows}${balance}${setting.footerNote ? `<footer>${receiptEscape(setting.footerNote)}</footer>` : ''}</section>`;
   const copies = Array.from({ length: setting.copies || 1 }, () => content).join('');
@@ -2059,7 +2082,7 @@ async function printReferenceReceipt(orderDetail, openedWindow = null) {
   const narrowPaper = Number(setting.paperWidthMm) <= 58;
   const lineRows = lines.map((line, index) => `<tr><td>${index + 1}</td><td>${receiptEscape(line.itemNameSnapshot)}${show('showClockType') ? `<small>钟类：${receiptEscape(receiptClockTypeLabel(line.clockType))}</small>` : ''}</td><td>${show('showTechnician') ? receiptEscape(line.technicianName || '—') : ''}</td><td>${roomTransferEscape(line.quantity || 1)}</td><td>${moneyText(line.lineAmountCents)}</td><td>—</td></tr>`).join('');
   const compactLineRows = lines.map((line, index) => `<article class="reference-compact-item"><div><b>${index + 1}. ${receiptEscape(line.itemNameSnapshot)}</b><strong>${moneyText(line.lineAmountCents)}</strong></div>${show('showClockType') ? `<small>钟类：${receiptEscape(receiptClockTypeLabel(line.clockType))}</small>` : ''}${show('showTechnician') ? `<small>技师：${receiptEscape(line.technicianName || '—')}</small>` : ''}<small>${roomTransferEscape(line.quantity || 1)} × ${roomTransferEscape(line.durationMinutes || 0)}分</small></article>`).join('');
-  const paymentRows = show('showPayment') ? payments.map(payment => `<tr><td>${receiptEscape(payment.paymentMethodNameSnapshot || payment.paymentMethod)}</td><td>${moneyText(payment.amountCents)}</td><td>¥0.00</td></tr>`).join('') : '';
+  const paymentRows = show('showPayment') ? payments.map(payment => { const payer = payment.payerMemberName ? `付款人：${payment.payerMemberName}${payment.payerMemberCode ? `（${payment.payerMemberCode}）` : ''}` : (payment.accountName || payment.accountCode ? `会员卡：${payment.accountName || ''}${payment.accountCode ? `（${payment.accountCode}）` : ''}` : ''); return `<tr><td>${receiptEscape(payment.paymentMethodNameSnapshot || payment.paymentMethod)}${payer ? `<small>${receiptEscape(payer)}</small>` : ''}</td><td>${moneyText(payment.amountCents)}</td><td>¥0.00</td></tr>`; }).join('') : '';
   const memberBlock = show('showMember') && order.memberName ? `<p>会员：${receiptEscape(order.memberName)}${order.memberPhone ? ` ${receiptEscape(order.memberPhone)}` : ''}</p>` : '';
   const balanceBlock = show('showBalance') && order.memberName ? `<p>会员余额：${moneyText(order.memberBalanceCents)}</p>` : '';
   const orderNumbers = show('showOrderNumbers') ? `<p>消费单号：${receiptEscape(order.orderNo)}</p><p>结算单号：${receiptEscape(order.settlementNo || '—')}</p>` : '';
@@ -2189,7 +2212,7 @@ async function printBrowserReceiptByOptions(orderDetail, openedWindow = null) {
   const itemSection = show('showProjects') ? (isNarrow
     ? `<section class="compact-items">${compactRows}</section>`
     : `<table class="item-table"><colgroup>${itemColumns.map(column => `<col class="${roomTransferEscape(column.className)}">`).join('')}</colgroup><thead><tr>${itemColumns.map(column => `<th class="${roomTransferEscape(column.className)}">${roomTransferEscape(column.label)}</th>`).join('')}</tr></thead><tbody>${itemRows}</tbody></table>`) : '';
-  const paymentRows = show('showPayment') ? payments.map(payment => `<tr><td>${receiptEscape(payment.paymentMethodNameSnapshot || payment.paymentMethod)}</td><td>${moneyText(payment.amountCents)}</td>${show('showChange') ? '<td>¥0.00</td>' : ''}</tr>`).join('') : '';
+  const paymentRows = show('showPayment') ? payments.map(payment => { const payer = payment.payerMemberName ? `付款人：${payment.payerMemberName}${payment.payerMemberCode ? `（${payment.payerMemberCode}）` : ''}` : (payment.accountName || payment.accountCode ? `会员卡：${payment.accountName || ''}${payment.accountCode ? `（${payment.accountCode}）` : ''}` : ''); return `<tr><td>${receiptEscape(payment.paymentMethodNameSnapshot || payment.paymentMethod)}${payer ? `<small>${receiptEscape(payer)}</small>` : ''}</td><td>${moneyText(payment.amountCents)}</td>${show('showChange') ? '<td>¥0.00</td>' : ''}</tr>`; }).join('') : '';
   const paymentHeader = show('showChange') ? '<th>找零</th>' : '';
   const member = show('showMember') && order.memberName ? `<p>会员：${receiptEscape(order.memberName)}${show('showMemberPhone') && order.memberPhone ? ` ${receiptEscape(order.memberPhone)}` : ''}</p>` : '';
   const balance = show('showBalance') && order.memberName ? `<p>会员余额：${moneyText(order.memberBalanceCents)}</p>` : '';
@@ -2669,7 +2692,7 @@ async function openOrderCorrection(orderId){
   const order=detail.order;
   const terminal=order.status==='CANCELLED'||order.refundStatus==='FULL';
   if(!terminal&&Number(order.paidCents||0)>0){
-    toast('已收款订单需要先完成整单红冲，完成后再重新结算');
+    toast('已收款订单请先整单退款；订单保留待结算服务，随后可重新结账');
     openRefundDialog('FULL_REVERSAL');
     return;
   }
@@ -2951,6 +2974,7 @@ function memberRechargeAttribution(row){
 }
 function memberWalletAttribution(row){
   const parts=[];
+  if(row.accountName||row.accountCode)parts.push(`会员卡：${row.accountName||'未命名'}${row.accountCode?`（${row.accountCode}）`:''}`);
   if(row.technicianNameSnapshot)parts.push(`技师：${row.technicianNameSnapshot}`);
   if(row.employeeNameSnapshot)parts.push(`经办：${row.employeeNameSnapshot}`);
   if(row.note)parts.push(row.note);
@@ -3242,7 +3266,8 @@ function renderBusinessCorrections(corrections){
   const amount=value=>money(Number(value||0)/100);
   return `<section class="business-correction-history"><div class="business-correction-history-heading"><h3>改单记录</h3><small>每次更正已合并原提成冲回与新提成结果</small></div>${rows.map(item=>`<article class="business-correction-history-row"><div class="business-correction-history-meta"><b>第 ${Number(item.version||0)} 次更正</b><small>${item.correctedAt?new Date(item.correctedAt).toLocaleString('zh-CN'):''} · ${memberBusinessEscape(item.correctedByNameSnapshot||'—')}</small></div><div class="business-correction-change"><div class="business-correction-side"><span>原记录</span><b>${memberBusinessEscape(item.oldTechnicianName||'—')} · ${clock(item.oldClockType)}</b><small>项目业绩 ${amount(item.oldBaseAmountCents)} · 提成 ${amount(item.oldCommissionCents)}</small></div><strong aria-hidden="true">→</strong><div class="business-correction-side is-new"><span>更正后</span><b>${memberBusinessEscape(item.newTechnicianName||'—')} · ${clock(item.newClockType)}</b><small>项目业绩 ${amount(item.newBaseAmountCents)} · 提成 ${amount(item.newCommissionCents)}</small></div></div><p class="business-correction-history-reason">原因：${memberBusinessEscape(item.reason||'未填写')}</p></article>`).join('')}</section>`;
 }
-async function openOrderDetail(orderId){const [orderResponse,refunds]=await Promise.all([fetch(`http://localhost:8080/api/v1/sales-orders/${orderId}`,{headers:storeContextHeaders()}),loadRefundDetails(orderId)]);if(!orderResponse.ok)return toast('订单明细加载失败');const detail=await orderResponse.json();activeOrderDetail={detail,refunds:refunds.filter(Boolean)};const capacity=refundCapacity(detail,activeOrderDetail.refunds);const canRefund=detail.order.refundStatus!=='FULL'&&capacity.lines.some(line=>line.remainingCents>0)&&capacity.payments.some(payment=>payment.remainingCents>0);const refundActions=hasAdminPermission('ORDER_REFUND')?`<button class="button danger" type="button" data-refund-kind="FULL_REVERSAL" ${canRefund?'':'disabled'}>整单退款</button>`:'';const businessAllowed=detail.order.status==='SETTLED'&&detail.order.refundStatus==='NONE'&&!activeOrderDetail.refunds.length;document.querySelector('#order-detail-content').innerHTML=`<div class="order-detail-summary"><span><b>${memberBusinessEscape(detail.order.orderNo)}</b><small>结算单号：${memberBusinessEscape(detail.order.settlementNo||'—')} · ${roomTransferEscape(refundStatusLabel[detail.order.refundStatus]||'未退款')}</small></span><div class="order-detail-actions"><button class="button secondary" type="button" id="print-order-receipt">重新打印</button>${refundActions}</div></div><div class="member-results order-detail-list">${detail.lines.map(line=>`<div class="member-result"><span><b>${memberBusinessEscape(line.itemNameSnapshot)}</b><small>${roomTransferEscape(serviceTraceLabel(line))} · ${roomTransferEscape(line.durationMinutes)} 分钟 · 可退 ${money((capacity.lines.find(item=>item.id===line.id)?.remainingCents||0)/100)}</small><span class="order-line-actions">${line.serviceSessionId?`<button class="text-button order-service-history" type="button" data-order-service-history="${roomTransferEscape(line.serviceSessionId)}">查看服务变更</button>`:''}${line.serviceSessionId?`<button class="text-button" type="button" data-business-correct-line="${roomTransferEscape(line.id)}" ${businessAllowed&&Number(line.participantCount)===1?'':'disabled'}>更正技师/钟类</button>`:''}</span></span><em>${money(line.lineAmountCents/100)}</em></div>`).join('')}${detail.payments.map(payment=>`<div class="member-result"><span><b>${memberBusinessEscape(paymentMethodLabel[payment.paymentMethod]||payment.paymentMethod)}</b><small>支付记录 · 可退 ${money((capacity.payments.find(item=>item.id===payment.id)?.remainingCents||0)/100)}</small></span><em>${money(payment.amountCents/100)}</em></div>`).join('')}</div>${renderBusinessCorrections(detail.businessCorrections)}${renderRefundHistory(activeOrderDetail.refunds)}`;document.querySelector('#order-detail-dialog').showModal();}
+function paymentPayerLabel(payment){const payer=payment?.payerMemberName?`付款人：${payment.payerMemberName}${payment.payerMemberCode?`（${payment.payerMemberCode}）`:''}`:'';return payer||(payment?.accountName||payment?.accountCode?`会员卡：${payment.accountName||''}${payment.accountCode?`（${payment.accountCode}）`:''}`:'支付账户未标注');}
+async function openOrderDetail(orderId){const [orderResponse,refunds]=await Promise.all([fetch(`http://localhost:8080/api/v1/sales-orders/${orderId}`,{headers:storeContextHeaders()}),loadRefundDetails(orderId)]);if(!orderResponse.ok)return toast('订单明细加载失败');const detail=await orderResponse.json();activeOrderDetail={detail,refunds:refunds.filter(Boolean)};const capacity=refundCapacity(detail,activeOrderDetail.refunds);const canRefund=detail.order.refundStatus!=='FULL'&&capacity.lines.some(line=>line.remainingCents>0)&&capacity.payments.some(payment=>payment.remainingCents>0);const refundActions=hasAdminPermission('ORDER_REFUND')?`<button class="button danger" type="button" data-refund-kind="FULL_REVERSAL" ${canRefund?'':'disabled'}>整单退款</button>`:'';const businessAllowed=detail.order.status==='SETTLED'&&detail.order.refundStatus==='NONE'&&!activeOrderDetail.refunds.length;document.querySelector('#order-detail-content').innerHTML=`<div class="order-detail-summary"><span><b>${memberBusinessEscape(detail.order.orderNo)}</b><small>结算单号：${memberBusinessEscape(detail.order.settlementNo||'—')} · ${roomTransferEscape(refundStatusLabel[detail.order.refundStatus]||'未退款')}</small></span><div class="order-detail-actions"><button class="button secondary" type="button" id="print-order-receipt">重新打印</button>${refundActions}</div></div><div class="member-results order-detail-list">${detail.lines.map(line=>`<div class="member-result"><span><b>${memberBusinessEscape(line.itemNameSnapshot)}</b><small>${roomTransferEscape(serviceTraceLabel(line))} · ${roomTransferEscape(line.durationMinutes)} 分钟 · 可退 ${money((capacity.lines.find(item=>item.id===line.id)?.remainingCents||0)/100)}</small><span class="order-line-actions">${line.serviceSessionId?`<button class="text-button order-service-history" type="button" data-order-service-history="${roomTransferEscape(line.serviceSessionId)}">查看服务变更</button>`:''}${line.serviceSessionId?`<button class="text-button" type="button" data-business-correct-line="${roomTransferEscape(line.id)}" ${businessAllowed&&Number(line.participantCount)===1?'':'disabled'}>更正技师/钟类</button>`:''}</span></span><em>${money(line.lineAmountCents/100)}</em></div>`).join('')}${detail.payments.map(payment=>`<div class="member-result"><span><b>${memberBusinessEscape(paymentMethodLabel[payment.paymentMethod]||payment.paymentMethod)}</b><small>${memberBusinessEscape(paymentPayerLabel(payment))} · 可退 ${money((capacity.payments.find(item=>item.id===payment.id)?.remainingCents||0)/100)}</small></span><em>${money(payment.amountCents/100)}</em></div>`).join('')}</div>${renderBusinessCorrections(detail.businessCorrections)}${renderRefundHistory(activeOrderDetail.refunds)}`;document.querySelector('#order-detail-dialog').showModal();}
 const openOrderDetailBeforeVoidAction=openOrderDetail;
 async function openBusinessCorrection(lineId){const detail=activeOrderDetail?.detail;const line=detail?.lines?.find(item=>String(item.id)===String(lineId));if(!detail||!line||!line.serviceSessionId)return;businessCorrectionLine=line;const form=document.querySelector('#business-correction-form');form.reset();form.technicianId.innerHTML=state.technicians.filter(item=>item.state==='available'||String(item.id)===String(line.technicianId)).map(item=>`<option value="${roomTransferEscape(item.id)}" ${String(item.id)===String(line.technicianId)?'selected':''}>${memberBusinessEscape(item.code||'')} · ${memberBusinessEscape(item.name)}</option>`).join('');form.clockType.value=['CALL','BOOKED_CALL'].includes(line.clockType)?'CALL':'QUEUE';document.querySelector('#business-correction-summary').innerHTML=`<b>${memberBusinessEscape(line.itemNameSnapshot)}</b><small>${roomTransferEscape(serviceTraceLabel(line))} · 订单 ${memberBusinessEscape(detail.order.orderNo)}</small>`;document.querySelector('#business-correction-dialog').showModal();}
 document.querySelector('#business-correction-form').addEventListener('submit',async event=>{event.preventDefault();const line=businessCorrectionLine;const detail=activeOrderDetail?.detail;if(!line||!detail)return;const form=new FormData(event.currentTarget);const reason=String(form.get('reason')||'').trim();if(!reason)return toast('修改原因不能为空');const response=await fetch(`http://localhost:8080/api/v1/sales-orders/${detail.order.id}/business-corrections`,{method:'POST',headers:storeContextHeaders(true),body:JSON.stringify({orderLineId:line.id,technicianId:form.get('technicianId'),clockType:form.get('clockType'),reason,expectedVersion:Number(detail.order.businessCorrectionVersion||0)})});if(!response.ok){const message=(await response.text()).replace(/^"|"$/g,'');return toast(`修改失败：${message||'订单状态已变化，请刷新'}`);}document.querySelector('#business-correction-dialog').close();businessCorrectionLine=null;await openOrderDetail(detail.order.id);await Promise.all([loadSalesOrders(),loadTechnicianPerformance(),loadDailyReport(),loadFoundationData({silent:true})]);toast('订单技师和钟类已更新，提成已按新规则重算');});
@@ -3270,7 +3295,7 @@ openOrderDetail=async function(orderId){
   }
 };
 function updateRefundPreview(){if(!activeRefundContext)return;const selected=[...document.querySelectorAll('[data-refund-amount]')].filter(input=>input.closest('.refund-line-choice').querySelector('input[type="checkbox"]').checked);const total=selected.reduce((sum,input)=>sum+yuanToCents(input.value),0);const full=activeRefundContext.refundKind==='FULL_REVERSAL';const fullHasZeroLine=full&&selected.some(input=>yuanToCents(input.value)<=0);let left=total;const allocations=[];for(const payment of activeRefundContext.capacity.payments){if(left<=0)break;const amount=Math.min(left,payment.remainingCents);if(amount>0)allocations.push({...payment,amount});left-=amount;}document.querySelector('#refund-total').textContent=`-${money(total/100)}`;document.querySelector('#refund-payment-preview').innerHTML=total?allocations.map(item=>`<span>${roomTransferEscape(paymentMethodLabel[item.paymentMethod]||item.paymentMethod)}<b>-${money(item.amount/100)}</b></span>`).join('')+(left?'<small class="refund-warning">原支付可退款金额不足</small>':'')+(fullHasZeroLine?'<small class="refund-warning">金额过低，暂不支持为每个剩余项目分配至少 0.01 元</small>':''):'<small>选择退款项目后显示原路退回方式</small>';document.querySelector('#submit-refund').disabled=total<=0||left>0||fullHasZeroLine;}
-function openRefundDialog(refundKind='FULL_REVERSAL'){if(!activeOrderDetail||!hasAdminPermission('ORDER_REFUND'))return;const capacity=refundCapacity(activeOrderDetail.detail,activeOrderDetail.refunds);const full=true;activeRefundContext={...activeOrderDetail,capacity,refundKind:'FULL_REVERSAL'};const form=document.querySelector('#refund-form');form.reset();document.querySelector('#refund-dialog-eyebrow').textContent='订单原路退款';document.querySelector('#refund-dialog-title').textContent=`${activeOrderDetail.detail.order.orderNo} · 整单退款`;document.querySelector('#refund-dialog-note').textContent='系统将按全部剩余可退金额原路退款，退款完成后整笔冲回技师业绩和提成。';document.querySelector('#refund-total-label').textContent='退款金额';document.querySelector('#submit-refund').textContent='确认整单退款';const fullTotal=capacity.payments.reduce((sum,payment)=>sum+Number(payment.remainingCents||0),0);const fullAllocations=allocateRefundAmounts(fullTotal,capacity.lines);document.querySelector('#refund-draft-lines').innerHTML=capacity.lines.map(line=>{const available=line.remainingCents>0;const selected=available;const amountCents=fullAllocations.get(String(line.id))||0;return `<label class="refund-line-choice ${selected?'is-selected ':''}${available?'':'is-exhausted'}"><input type="checkbox" ${selected?'checked':''} disabled><span><b>${roomTransferEscape(line.itemNameSnapshot)}</b><small>${roomTransferEscape(serviceTraceLabel(line))} · 订单金额 ${money(line.lineAmountCents/100)}，本次整单退款 ${money(amountCents/100)}</small></span><input data-refund-amount data-order-line="${roomTransferEscape(line.id)}" type="number" min="0.01" max="${(line.remainingCents/100).toFixed(2)}" step="0.01" value="${(amountCents/100).toFixed(2)}" readonly></label>`;}).join('');updateRefundPreview();document.querySelector('#refund-dialog').showModal();}
+function openRefundDialog(refundKind='FULL_REVERSAL'){if(!activeOrderDetail||!hasAdminPermission('ORDER_REFUND'))return;const capacity=refundCapacity(activeOrderDetail.detail,activeOrderDetail.refunds);const full=true;activeRefundContext={...activeOrderDetail,capacity,refundKind:'FULL_REVERSAL'};const form=document.querySelector('#refund-form');form.reset();document.querySelector('#refund-dialog-eyebrow').textContent='订单原路退款';document.querySelector('#refund-dialog-title').textContent=`${activeOrderDetail.detail.order.orderNo} · 整单退款`;document.querySelector('#refund-dialog-note').textContent='系统将按全部剩余可退金额原路退款，并冲回技师业绩和提成；订单不会作废，服务回待结算且继续占床，可重新结账。';document.querySelector('#refund-total-label').textContent='退款金额';document.querySelector('#submit-refund').textContent='确认整单退款';const fullTotal=capacity.payments.reduce((sum,payment)=>sum+Number(payment.remainingCents||0),0);const fullAllocations=allocateRefundAmounts(fullTotal,capacity.lines);document.querySelector('#refund-draft-lines').innerHTML=capacity.lines.map(line=>{const available=line.remainingCents>0;const selected=available;const amountCents=fullAllocations.get(String(line.id))||0;return `<label class="refund-line-choice ${selected?'is-selected ':''}${available?'':'is-exhausted'}"><input type="checkbox" ${selected?'checked':''} disabled><span><b>${roomTransferEscape(line.itemNameSnapshot)}</b><small>${roomTransferEscape(serviceTraceLabel(line))} · 订单金额 ${money(line.lineAmountCents/100)}，本次整单退款 ${money(amountCents/100)}</small></span><input data-refund-amount data-order-line="${roomTransferEscape(line.id)}" type="number" min="0.01" max="${(line.remainingCents/100).toFixed(2)}" step="0.01" value="${(amountCents/100).toFixed(2)}" readonly></label>`;}).join('');updateRefundPreview();document.querySelector('#refund-dialog').showModal();}
 
 function formatSessionTime(value) {
   return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value));
@@ -3802,8 +3827,9 @@ function renderFinanceClaims(rows) {
     const status=row.status||'';
     const action=status==='SUBMITTED'?`<button class="record-delete edit-technician" data-finance-review="${financeEscape(row.id)}">审核</button>`:status==='APPROVED'&&hasAdminPermission('EXPENSE_PAY')?`<button class="record-delete edit-technician" data-finance-pay="${financeEscape(row.id)}">付款</button>`:`<button class="record-delete edit-technician" data-finance-detail="${financeEscape(row.id)}">详情</button>`;
     const attachment=row.attachmentCount?`<button type="button" class="finance-attachment-indicator" data-finance-detail="${financeEscape(row.id)}">${Number(row.attachmentCount)} 个凭证</button>`:'<span class="muted-cell">无凭证</span>';
-    return `<tr><td class="finance-check">${status==='SUBMITTED'?`<input type="checkbox" data-finance-select="${financeEscape(row.id)}" aria-label="选择 ${financeEscape(row.claimNo)}" ${financeSelected.has(row.id)?'checked':''}>`:''}</td><td><b>${financeEscape(row.claimNo)}</b></td><td>${financeEscape(row.storeName)}</td><td>${financeEscape(row.categoryName)}</td><td>${financeEscape(ExpenseUI.time(row.submittedAt))}</td><td class="amount-cell">${financeAmount(row.amountCents)}</td><td>${financeEscape(row.applicantName)}</td><td>${attachment}</td><td class="finance-status-cell"><span class="record-type expense-state-${financeEscape(status)}">${financeStatusLabel[status]||financeEscape(status)}</span></td><td class="align-right">${action}</td></tr>`;
-  }).join('')||'<tr><td colspan="10" class="table-empty">当前没有符合条件的报销单</td></tr>';
+    const title=row.title||row.description||row.categoryName||'待财务分类';
+    return `<tr><td class="finance-check">${status==='SUBMITTED'?`<input type="checkbox" data-finance-select="${financeEscape(row.id)}" aria-label="选择 ${financeEscape(row.claimNo)}" ${financeSelected.has(row.id)?'checked':''}>`:''}</td><td><b>${financeEscape(row.claimNo)}</b></td><td>${financeEscape(row.storeName)}</td><td>${financeEscape(title)}</td><td>${financeEscape(row.categoryName)}</td><td>${financeEscape(ExpenseUI.time(row.submittedAt))}</td><td class="amount-cell">${financeAmount(row.amountCents)}</td><td>${financeEscape(row.applicantName)}</td><td>${attachment}</td><td class="finance-status-cell"><span class="record-type expense-state-${financeEscape(status)}">${financeStatusLabel[status]||financeEscape(status)}</span></td><td class="align-right">${action}</td></tr>`;
+  }).join('')||'<tr><td colspan="11" class="table-empty">当前没有符合条件的报销单</td></tr>';
   updateFinanceSelection();
 }
 async function legacyLoadFinanceClaims(){if(!hasAdminPermission('EXPENSE_REVIEW'))return;const status=document.querySelector('#finance-status-filter').value;const storeId=document.querySelector('#finance-store-filter').value;const applicant=document.querySelector('#finance-applicant-filter')?.value||'';const from=document.querySelector('#finance-claims-from')?.value||'';const to=document.querySelector('#finance-claims-to')?.value||'';const claimNo=document.querySelector('#finance-claims-number')?.value.trim()||'';const query=new URLSearchParams();if(status)query.set('status',status);if(storeId)query.set('storeId',storeId);if(applicant)query.set('applicantUserId',applicant);if(from)query.set('from',from);if(to)query.set('to',to);if(claimNo)query.set('claimNo',claimNo);const response=await fetch(`http://localhost:8080/api/v1/finance/expense-claims?${query.toString()}`,{headers:adminHeaders()});if(!response.ok){document.querySelector('#finance-claim-records').innerHTML=`<tr><td colspan="9" class="table-empty">${response.status===403?'当前账号没有财务审核权限':'财务报销数据加载失败'}</td></tr>`;return;}financeClaims=await response.json();renderFinanceStoreFilter(financeClaims);renderFinanceApplicantFilter(financeClaims);renderFinanceClaims(financeClaims);}
@@ -3822,8 +3848,8 @@ function financeReportQuery(){const query=new URLSearchParams();const from=docum
 function financeReportStoreOptions(summary){const select=document.querySelector('#finance-report-store');const current=select.value;const stores=summary.stores||[];select.innerHTML='<option value="">全部门店</option>'+stores.map(item=>`<option value="${roomTransferEscape(item.storeId)}">${financeEscape(item.storeName)}</option>`).join('');if(stores.some(item=>item.storeId===current))select.value=current;}
 function financeReportMetric(label,value,status=''){return `<button type="button" class="finance-report-metric" data-report-status="${status}"><span>${label}</span><strong>${value}</strong></button>`;}
 function renderFinanceReport(summary){financeReport=summary;financeReportStoreOptions(summary);const totals=summary.totals||{};document.querySelector('#finance-report-metrics').innerHTML=[financeReportMetric('报销单数',totals.claimCount||0),financeReportMetric('申请总额',financeReportMoney(totals.totalAmountCents),'EFFECTIVE'),financeReportMetric('待审核',`${totals.pendingCount||0} 单`,'SUBMITTED'),financeReportMetric('待付款',financeReportMoney(totals.approvedAmountCents),'APPROVED'),financeReportMetric('已付款',financeReportMoney(totals.paidAmountCents),'PAID')].join('');document.querySelector('#finance-report-stores').innerHTML=(summary.stores||[]).map(item=>`<tr><td>${financeEscape(item.storeName)}</td><td>${roomTransferEscape(item.claimCount||0)}</td><td class="amount-cell">${financeReportMoney(item.amountCents)}</td><td class="amount-cell">${financeReportMoney(item.paidAmountCents)}</td></tr>`).join('')||'<tr><td colspan="4" class="table-empty">暂无数据</td></tr>';document.querySelector('#finance-report-categories').innerHTML=(summary.categories||[]).map(item=>`<tr><td>${financeEscape(item.categoryName)}</td><td>${roomTransferEscape(item.claimCount||0)}</td><td class="amount-cell">${financeReportMoney(item.amountCents)}</td><td class="amount-cell">${financeReportMoney(item.paidAmountCents)}</td></tr>`).join('')||'<tr><td colspan="4" class="table-empty">暂无数据</td></tr>';const statusLabel={SUBMITTED:'待审核',APPROVED:'待付款',PAID:'已付款',RETURNED:'已退回',REJECTED:'已驳回'};document.querySelector('#finance-report-statuses').innerHTML=(summary.statuses||[]).map(item=>`<tr><td>${statusLabel[item.status]||financeEscape(item.status)}</td><td>${roomTransferEscape(item.claimCount||0)}</td><td class="amount-cell">${financeReportMoney(item.amountCents)}</td></tr>`).join('')||'<tr><td colspan="3" class="table-empty">暂无数据</td></tr>';}
-async function loadFinanceReport(){if(!hasAdminPermission('EXPENSE_REVIEW'))return;financeReportSetDefaults();const response=await fetch(`http://localhost:8080/api/v1/finance/expense-reports/summary?${financeReportQuery().toString()}`,{headers:adminHeaders()});if(!response.ok)throw new Error(await financeError(response));renderFinanceReport(await response.json());}
-async function exportFinanceReport(){if(!hasAdminPermission('EXPENSE_REVIEW'))return;financeReportSetDefaults();const response=await fetch(`http://localhost:8080/api/v1/finance/expense-reports/export?${financeReportQuery().toString()}`,{headers:adminHeaders()});if(!response.ok)return toast(`导出失败：${await financeError(response)}`);const blob=await response.blob();const disposition=response.headers.get('content-disposition')||'';const match=disposition.match(/filename\*=UTF-8''([^;]+)/i);const filename=match?decodeURIComponent(match[1]):'财务报销统计.xlsx';const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);toast('财务报销统计已导出');}
+async function loadFinanceReport(){if(!hasAdminPermission('EXPENSE_REVIEW'))return;financeReportSetDefaults();const response=await fetch(`http://localhost:8080/api/v1/finance/expense-reports/summary?${financeReportQuery().toString()}`,{headers:adminHeaders(),cache:'no-store'});if(!response.ok)throw new Error(await financeError(response));renderFinanceReport(await response.json());}
+async function exportFinanceReport(){if(!hasAdminPermission('EXPENSE_REVIEW'))return;financeReportSetDefaults();const response=await fetch(`http://localhost:8080/api/v1/finance/expense-reports/export?${financeReportQuery().toString()}`,{headers:adminHeaders(),cache:'no-store'});if(!response.ok)return toast(`导出失败：${await financeError(response)}`);const blob=await response.blob();const disposition=response.headers.get('content-disposition')||'';const match=disposition.match(/filename\*=UTF-8''([^;]+)/i);const filename=match?decodeURIComponent(match[1]):'财务报销统计.xlsx';const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);toast('财务报销统计已导出');}
 document.querySelector('#finance-report-refresh').addEventListener('click',()=>loadFinanceReport().then(()=>toast('财务统计已刷新')).catch(()=>toast('财务统计加载失败')));document.querySelector('#finance-report-export').addEventListener('click',()=>exportFinanceReport());document.querySelector('#finance-report-from').addEventListener('change',()=>loadFinanceReport().catch(()=>toast('财务统计加载失败')));document.querySelector('#finance-report-to').addEventListener('change',()=>loadFinanceReport().catch(()=>toast('财务统计加载失败')));document.querySelector('#finance-report-store').addEventListener('change',()=>loadFinanceReport().catch(()=>toast('财务统计加载失败')));
 
 let financeAttachmentObjectUrl=null;
@@ -3837,7 +3863,7 @@ function renderFinanceDetail(detail,targetId) {
   const files=attachments.map(item=>`<li class="finance-detail-attachment"><span>${financeEscape(item.originalFilename)}</span><span class="finance-detail-attachment-actions"><button type="button" data-finance-attachment="${financeEscape(item.id)}" data-finance-attachment-name="${financeEscape(item.originalFilename)}" data-finance-attachment-type="${financeEscape(item.contentType)}">预览</button><button type="button" data-finance-attachment-download="${financeEscape(item.id)}" data-finance-attachment-name="${financeEscape(item.originalFilename)}">下载</button></span></li>`).join('')||'<li>无附件</li>';
   document.querySelector(targetId).innerHTML=
     block('基本信息',`<div class="finance-detail-meta">${field('报销单号',claim.claimNo)}${field('提交时间',ExpenseUI.time(claim.submittedAt))}${field('报销人',claim.applicantName)}${field('门店',claim.storeName)}${field('状态',financeDetailStatus[claim.status])}${field('发生日期',claim.expenseDate)}</div>`)+
-    block('费用信息',`<div class="finance-detail-meta">${field('费用分类',claim.categoryName)}${field('申请金额',financeAmount(claim.amountCents))}${field('收款方',claim.payeeName)}${field('付款来源',claim.paymentSource)}${field('票据类型',claim.receiptType)}${field('发票号码',claim.invoiceNo)}</div><p class="finance-detail-description">${financeEscape(claim.description||'无备注')}</p>${claim.noReceiptReason?`<p class="finance-detail-warning">无票说明：${financeEscape(claim.noReceiptReason)}</p>`:''}${claim.duplicateWarning?'<p class="finance-detail-warning">检测到相似报销记录，请复核。</p>':''}`)+
+    block('费用信息',`<div class="finance-detail-meta">${field('标题 / 用途',claim.title||claim.description||claim.categoryName||'待财务分类')}${field('费用分类',claim.categoryName)}${field('申请金额',financeAmount(claim.amountCents))}${field('收款方',claim.payeeName)}${field('付款来源',claim.paymentSource)}${field('票据类型',claim.receiptType)}${field('发票号码',claim.invoiceNo)}</div><p class="finance-detail-description">费用说明：${financeEscape(claim.description||'无备注')}</p>${claim.noReceiptReason?`<p class="finance-detail-warning">无票说明：${financeEscape(claim.noReceiptReason)}</p>`:''}${claim.duplicateWarning?'<p class="finance-detail-warning">检测到相似报销记录，请复核。</p>':''}`)+
     block('审核信息',latestReview?`<div class="finance-detail-meta">${field('审核人',latestReview.actorName)}${field('审核时间',ExpenseUI.time(latestReview.createdAt))}${field('审核意见',latestReview.comment)}</div>`:'<p>尚未审核</p>')+
     block('付款信息',payment?`<div class="finance-detail-meta">${field('付款日期',payment.paymentDate)}${field('付款方式',payment.paymentMethod)}${field('付款金额',financeAmount(payment.amountCents))}${field('付款凭证号',payment.paymentReference)}${field('记录时间',ExpenseUI.time(payment.createdAt))}${field('付款备注',payment.note)}</div>`:'<p>尚未付款</p>')+
     block('附件凭证',`<ul class="finance-detail-attachments">${files}</ul>`)+
@@ -3875,7 +3901,7 @@ async function loadFinanceClaims(page=null) {
   const key=query.toString();
   const requestedPage=page??(key===financeClaimQueryKey?financeClaimPage:0);
   query.set('page',requestedPage);query.set('size','20');
-  const response=await fetch(`http://localhost:8080/api/v1/finance/expense-claims/page?${query}`,{headers:adminHeaders()});
+  const response=await fetch(`http://localhost:8080/api/v1/finance/expense-claims/page?${query}`,{headers:adminHeaders(),cache:'no-store'});
   if(request!==financeClaimRequest)return;
   if(!response.ok)throw new Error(await financeError(response));
   const result=await response.json();
@@ -4079,7 +4105,8 @@ function renderSingleRoomServiceSelection() {
     const selected = singleRoomSettlementSelection.has(session.id);
     const clockType = clockTypeLabels[session.clockType] || session.clockType;
     const extension = session.extensionSummary ? ' · 加钟：' + session.extensionSummary : '';
-    return '<label class="single-room-service-option' + (selected ? ' selected' : '') + '"><input type="checkbox" data-single-room-service="' + memberBusinessEscape(session.id) + '" ' + (selected ? 'checked' : '') + '><i aria-hidden="true">' + (selected ? '✓' : '') + '</i><span><b>' + memberBusinessEscape(session.serviceNameSnapshot) + '</b><small>' + memberBusinessEscape(session.serviceNo || '') + ' · ' + memberBusinessEscape(clockType) + ' · ' + memberBusinessEscape(session.technicianName) + ' · ' + session.plannedDurationMinutes + ' 分钟' + memberBusinessEscape(extension) + '</small></span><strong>' + money(Number(session.servicePriceCents || 0) / 100) + '</strong></label>';
+     const bedLabel = session.bedCode || session.bedName || '未指定床位';
+     return '<label class="single-room-service-option' + (selected ? ' selected' : '') + '"><input type="checkbox" data-single-room-service="' + memberBusinessEscape(session.id) + '" ' + (selected ? 'checked' : '') + '><i aria-hidden="true">' + (selected ? '✓' : '') + '</i><span><b>' + memberBusinessEscape(bedLabel) + ' · ' + memberBusinessEscape(session.serviceNameSnapshot) + '</b><small>' + memberBusinessEscape(session.serviceNo || '') + ' · ' + memberBusinessEscape(clockType) + ' · ' + memberBusinessEscape(session.technicianName) + ' · ' + session.plannedDurationMinutes + ' 分钟' + memberBusinessEscape(extension) + '</small></span><strong>' + money(Number(session.servicePriceCents || 0) / 100) + '</strong></label>';
   }).join('');
   const selectedSessions = singleRoomSettlementSessions.filter(session => singleRoomSettlementSelection.has(session.id));
   const selectedTotal = selectedSessions.reduce((sum, session) => sum + Number(session.servicePriceCents || 0), 0);
@@ -4220,17 +4247,29 @@ let mergeSettlementGroups=[];
 let mergeSettlementSelection=new Set();
 let mergeSettlementMemberId=null;
 let mergeSettlementPaymentDraft=new Map();
+let mergePaymentRows=[];
 
 function mergeSelectedGroups(){return [...mergeSettlementSelection].map(index=>mergeSettlementGroups[index]).filter(Boolean);}
 function mergeSelectedSessions(){return mergeSelectedGroups().flatMap(group=>group.sessions);}
 function mergeOriginalCents(){return mergeSelectedSessions().reduce((sum,item)=>sum+Number(item.servicePriceCents||0),0);}
 function mergeAmountCents(){return Math.round(Math.max(0,Number(document.querySelector('#merge-settlement-amount')?.value)||0)*100);}
 function mergeIsWaived(){return Boolean(document.querySelector('#merge-settlement-waive')?.checked);}
-function mergePayments(){return [...document.querySelectorAll('[data-merge-payment-amount]')].map(input=>({method:input.dataset.mergePaymentAmount,amountCents:Math.round(Math.max(0,Number(input.value)||0)*100)})).filter(item=>item.amountCents>0);}
+function syncMergePaymentRows() {
+  mergePaymentRows = [...document.querySelectorAll('[data-merge-payment-row]')].map((row, index) => {
+    const walletSelect = row.querySelector('[data-merge-payment-wallet]');
+    return {
+      ...(mergePaymentRows[index] || {}),
+      method: row.querySelector('[data-merge-payment-method]')?.value || mergePaymentRows[index]?.method || '',
+      walletId: walletSelect ? (walletSelect.value || null) : (mergePaymentRows[index]?.walletId || null),
+      amountCents: Math.round(Math.max(0, Number(row.querySelector('[data-merge-payment-amount]')?.value) || 0) * 100)
+    };
+  });
+}
+function mergePayments(){syncMergePaymentRows();return mergePaymentRows.filter(item=>item.amountCents>0).map(item=>{const method=activePaymentMethods.find(candidate=>candidate.code===item.method);return {method:item.method,walletId:method?.methodKind==='MEMBER_BALANCE'?(item.walletId||null):null,amountCents:item.amountCents};});}
 
 function setupMergeSettlementDialog(){
   if(document.querySelector('#merge-settlement-dialog'))return;
-  document.body.insertAdjacentHTML('beforeend','<dialog id="merge-settlement-dialog" class="merge-settlement-dialog"><form id="merge-settlement-form" class="dialog-card merge-settlement-card"><div class="dialog-heading"><div><p class="eyebrow">多房结算工作台</p><h2>选择房间并完成统一收款</h2></div><button class="icon-button" type="button" id="close-merge-settlement" aria-label="关闭">×</button></div><div class="merge-settlement-layout"><section class="merge-settlement-room-pane"><div class="merge-settlement-section-heading"><div><b>待结算房间</b><small>同一营业日的有效订单可以合并</small></div><label class="merge-room-search"><span>⌕</span><input id="merge-room-search" placeholder="搜索房间号、工单号或项目"></label></div><div id="merge-settlement-rooms" class="merge-settlement-rooms"></div><div class="merge-settlement-selected" id="merge-settlement-selected"><p>请选择两个或以上房间</p></div></section><aside class="merge-settlement-summary"><section class="settlement-member merge-settlement-member"><div><span>结算会员</span><b id="merge-member-name">散客</b><small id="merge-member-meta">非会员结算</small></div><button class="button secondary" type="button" id="merge-select-member">查询会员</button></section><section class="settlement-amount-summary"><div><span>项目原价</span><strong id="merge-original-total">¥0.00</strong></div><div><span>优惠/加价</span><strong id="merge-adjustment">¥0.00</strong></div><div class="settlement-received"><span>实收金额</span><label class="settlement-amount-input"><span>¥</span><input id="merge-settlement-amount" type="number" min="0" step="0.01" value="0.00" aria-label="合并结算实收金额"></label></div></section><label class="settlement-waive-option"><input id="merge-settlement-waive" type="checkbox"> 免单</label><label class="settlement-waive-reason" id="merge-waive-reason-wrap" hidden>免单原因<textarea id="merge-waive-reason" rows="2" maxlength="240" placeholder="请输入免单原因"></textarea></label><div class="settlement-payment-heading"><span>支付方式</span><small>支持组合支付</small></div><div class="payment-options" id="merge-payment-options"></div><section class="settlement-allocation-summary"><span>已分配 <b id="merge-allocated">¥0.00</b></span><span>待分配 <b id="merge-remaining">¥0.00</b></span></section><button class="button primary" type="submit" id="submit-merge-settlement" disabled>确认合并收款</button></aside></div></form></dialog>');
+  document.body.insertAdjacentHTML('beforeend','<dialog id="merge-settlement-dialog" class="merge-settlement-dialog"><form id="merge-settlement-form" class="dialog-card merge-settlement-card"><div class="dialog-heading"><div><p class="eyebrow">分单 / 合并结算工作台</p><h2>按房间和床位选择服务</h2></div><button class="icon-button" type="button" id="close-merge-settlement" aria-label="关闭">×</button></div><div class="merge-settlement-layout"><section class="merge-settlement-room-pane"><div class="merge-settlement-section-heading"><div><b>待结算房间 / 床位</b><small>同一床位的主服务与加钟作为一个结算单元，可与其他床位合并</small></div><label class="merge-room-search"><span>⌕</span><input id="merge-room-search" placeholder="搜索房间号、床位、工单号或项目"></label></div><div id="merge-settlement-rooms" class="merge-settlement-rooms"></div><div class="merge-settlement-selected" id="merge-settlement-selected"><p>请选择一个或多个房间 / 床位</p></div></section><aside class="merge-settlement-summary"><section class="settlement-member merge-settlement-member"><div><span>结算会员</span><b id="merge-member-name">散客</b><small id="merge-member-meta">非会员结算</small></div><button class="button secondary" type="button" id="merge-select-member">查询会员</button></section><section class="settlement-amount-summary"><div><span>项目原价</span><strong id="merge-original-total">¥0.00</strong></div><div><span>优惠/加价</span><strong id="merge-adjustment">¥0.00</strong></div><div class="settlement-received"><span>实收金额</span><label class="settlement-amount-input"><span>¥</span><input id="merge-settlement-amount" type="number" min="0" step="0.01" value="0.00" aria-label="分单或合并结算实收金额"></label></div></section><label class="settlement-waive-option"><input id="merge-settlement-waive" type="checkbox"> 免单</label><label class="settlement-waive-reason" id="merge-waive-reason-wrap" hidden>免单原因<textarea id="merge-waive-reason" rows="2" maxlength="240" placeholder="请输入免单原因"></textarea></label><div class="settlement-payment-heading"><span>支付方式</span><small>支持组合支付</small></div><div class="payment-options" id="merge-payment-options"></div><section class="settlement-allocation-summary"><span>已分配 <b id="merge-allocated">¥0.00</b></span><span>待分配 <b id="merge-remaining">¥0.00</b></span></section><button class="button primary" type="submit" id="submit-merge-settlement" disabled>确认分单 / 合并收款</button></aside></div></form></dialog>');
   document.querySelector('#close-merge-settlement').addEventListener('click',()=>document.querySelector('#merge-settlement-dialog').close());
   document.querySelector('#merge-settlement-rooms').addEventListener('click',event=>{const button=event.target.closest('[data-merge-room]');if(!button||button.disabled)return;const index=Number(button.dataset.mergeRoom);if(mergeSettlementSelection.has(index))mergeSettlementSelection.delete(index);else mergeSettlementSelection.add(index);renderMergeSettlement({resetAmount:true});});
   document.querySelector('#merge-room-search').addEventListener('input',()=>renderMergeSettlement());
@@ -4238,8 +4277,9 @@ function setupMergeSettlementDialog(){
   document.querySelector('#merge-settlement-amount').addEventListener('input',()=>{if(mergeIsWaived()){document.querySelector('#merge-settlement-waive').checked=false;document.querySelector('#merge-waive-reason-wrap').hidden=true;}updateMergeSettlementAllocation();});
   document.querySelector('#merge-settlement-waive').addEventListener('change',event=>{const checked=event.currentTarget.checked;document.querySelector('#merge-settlement-amount').value=checked?'0.00':(mergeOriginalCents()/100).toFixed(2);document.querySelector('#merge-waive-reason-wrap').hidden=!checked;mergeSettlementPaymentDraft=new Map();renderMergePaymentMethods();});
   document.querySelector('#merge-waive-reason').addEventListener('input',updateMergeSettlementAllocation);
-  document.querySelector('#merge-payment-options').addEventListener('input',event=>{if(event.target.matches('[data-merge-payment-amount]'))updateMergeSettlementAllocation();});
-  document.querySelector('#merge-payment-options').addEventListener('click',event=>{const button=event.target.closest('[data-fill-merge-payment]');if(!button||button.disabled)return;const inputs=[...document.querySelectorAll('[data-merge-payment-amount]')];const current=inputs.find(input=>input.dataset.mergePaymentAmount===button.dataset.fillMergePayment);const other=inputs.filter(input=>input!==current).reduce((sum,input)=>sum+Math.round(Math.max(0,Number(input.value)||0)*100),0);current.value=(Math.max(0,mergeAmountCents()-other)/100).toFixed(2);updateMergeSettlementAllocation();});
+   document.querySelector('#merge-payment-options').addEventListener('input',event=>{if(event.target.matches('[data-merge-payment-amount]'))updateMergeSettlementAllocation();});
+   document.querySelector('#merge-payment-options').addEventListener('change',async event=>{const row=event.target.closest('[data-merge-payment-row]');if(!row)return;const index=Number(row.dataset.mergePaymentRow);syncMergePaymentRows();if(event.target.matches('[data-merge-payment-method]')){const payment=mergePaymentRows[index];const method=activePaymentMethods.find(item=>item.code===payment?.method);if(method?.methodKind!=='MEMBER_BALANCE'){payment.walletId=null;payment.wallets=[];payment.memberId=null;payment.walletLoading=false;}else if(payment.memberId&&!payment.wallets?.length){try{payment.wallets=await loadSettlementWallets(payment.memberId);}catch{toast('会员卡加载失败，请重新选择付款人');}}renderMergePaymentMethods();}});
+   document.querySelector('#merge-payment-options').addEventListener('click',event=>{const add=event.target.closest('[data-add-merge-payment]');if(add){syncMergePaymentRows();mergePaymentRows.push({method:activePaymentMethods.find(item=>item.methodKind!=='MEMBER_BALANCE'||mergeSettlementMemberId)?.code||activePaymentMethods[0]?.code||'',walletId:null,memberId:mergeSettlementMemberId||null,wallets:[],amountCents:0});return renderMergePaymentMethods();}const remove=event.target.closest('[data-remove-merge-payment]');if(remove){syncMergePaymentRows();mergePaymentRows.splice(Number(remove.dataset.removeMergePayment),1);return renderMergePaymentMethods();}const payer=event.target.closest('[data-merge-payment-member-search]');if(payer){settlementPaymentTarget={kind:'merge',index:Number(payer.dataset.mergePaymentMemberSearch)};return openSettlementMemberSearch('merge-payment');}const button=event.target.closest('[data-fill-merge-payment]');if(!button||button.disabled)return;syncMergePaymentRows();const index=Number(button.dataset.fillMergePayment);const current=document.querySelector(`[data-merge-payment-row="${index}"] [data-merge-payment-amount]`);const other=mergePaymentRows.reduce((sum,row,rowIndex)=>rowIndex===index?sum:sum+Number(row.amountCents||0),0);if(current)current.value=(Math.max(0,mergeAmountCents()-other)/100).toFixed(2);updateMergeSettlementAllocation();});
   document.querySelector('#merge-settlement-form').addEventListener('submit',submitMergeSettlement);
 }
 
@@ -4247,35 +4287,36 @@ function renderMergeMember(){const member=state.members.find(item=>item.id===mer
 
 function renderMergePaymentMethods({reset=false}={}){
   const container=document.querySelector('#merge-payment-options');if(!container)return;
-  const methods=activePaymentMethods.filter(item=>item.active!==false);const member=state.members.find(item=>item.id===mergeSettlementMemberId);const first=methods.find(item=>item.methodKind!=='MEMBER_BALANCE'||member)?.code;
-  if(reset){mergeSettlementPaymentDraft=new Map();if(first&&mergeAmountCents()>0)mergeSettlementPaymentDraft.set(first,(mergeAmountCents()/100).toFixed(2));}
-  container.innerHTML=methods.map(item=>{const blocked=item.methodKind==='MEMBER_BALANCE'&&!member;const note=item.methodKind==='MEMBER_BALANCE'?(blocked?'需先选择会员':`余额 ${money(member.balance||0)}`):(item.cashCounted?'计入现金':'');const value=blocked?'':(mergeSettlementPaymentDraft.get(item.code)||'');return `<label class="payment-option${blocked?' disabled':''}"><span><b>${memberBusinessEscape(item.name)}</b><small>${memberBusinessEscape(note)}</small></span><span class="payment-amount-control"><i>¥</i><input type="number" min="0" step="0.01" data-merge-payment-amount="${memberBusinessEscape(item.code)}" value="${memberBusinessEscape(value)}" ${blocked?'disabled':''}><button type="button" data-fill-merge-payment="${memberBusinessEscape(item.code)}" ${blocked?'disabled':''}>填入剩余</button></span></label>`;}).join('')||'<p class="empty-state">当前门店没有可用的收款方式</p>';
-  updateMergeSettlementAllocation();
+  const methods=activePaymentMethods.filter(item=>item.active!==false);const first=methods.find(item=>item.methodKind!=='MEMBER_BALANCE'||mergeSettlementMemberId)?.code;
+  if(reset){mergeSettlementPaymentDraft=new Map();mergePaymentRows=first?[{method:first,walletId:null,memberId:mergeSettlementMemberId||null,wallets:[],amountCents:mergeAmountCents()}]:[];}else{syncMergePaymentRows();mergePaymentRows.forEach(row=>{if(!row.memberId&&mergeSettlementMemberId)row.memberId=mergeSettlementMemberId;});}
+  container.innerHTML=mergePaymentRows.map((row,index)=>{const method=methods.find(item=>item.code===row.method)||methods[0];const isMember=method?.methodKind==='MEMBER_BALANCE';const member=state.members.find(item=>item.id===(row.memberId||mergeSettlementMemberId));const note=isMember?(member?`${member.name} · 余额 ${money(member.balance||0)}`:'请选择付款会员和会员卡'):(method?.cashCounted?'计入现金':'');const walletSelect=isMember?`<select data-merge-payment-wallet aria-label="第 ${index+1} 条支付会员卡"><option value="">选择会员卡</option>${walletOptions(row.wallets,row.walletId)}</select><button type="button" data-merge-payment-member-search="${index}">${member?`付款人：${memberBusinessEscape(member.name)}`:'选择付款人'}</button>`:'';return `<div class="payment-option payment-option-row" data-merge-payment-row="${index}"><span><select data-merge-payment-method aria-label="第 ${index+1} 条支付方式">${paymentMethodOptions(row.method)}</select><small>${memberBusinessEscape(note)}</small>${walletSelect}</span><span class="payment-amount-control"><i>¥</i><input type="number" min="0" step="0.01" data-merge-payment-amount value="${memberBusinessEscape((row.amountCents||0)/100)}"><button type="button" data-fill-merge-payment="${index}">填入剩余</button><button type="button" data-remove-merge-payment="${index}" aria-label="删除第 ${index+1} 条支付">×</button></span></div>`;}).join('')+(methods.length?'<button type="button" class="button secondary" data-add-merge-payment>添加支付明细</button>':'<p class="empty-state">当前门店没有可用的收款方式</p>');
+   updateMergeSettlementAllocation();
+   mergePaymentRows.forEach(row => { if (row.walletLoading || !row.memberId || row.wallets?.length) return; row.walletLoading = true; loadSettlementWallets(row.memberId).then(wallets => { row.wallets = wallets; row.walletId = row.walletId || wallets.find(item => item.isDefault)?.id || wallets[0]?.id || null; renderMergePaymentMethods(); }).catch(() => toast('会员卡加载失败，请重新选择付款人')); });
 }
 
 function updateMergeSettlementAllocation(){
-  document.querySelectorAll('[data-merge-payment-amount]').forEach(input=>mergeSettlementPaymentDraft.set(input.dataset.mergePaymentAmount,input.value));
+  syncMergePaymentRows();
   const original=mergeOriginalCents(),amount=mergeAmountCents(),allocated=mergePayments().reduce((sum,item)=>sum+item.amountCents,0),remaining=amount-allocated;
   document.querySelector('#merge-original-total').textContent=money(original/100);document.querySelector('#merge-adjustment').textContent=money((original-amount)/100);document.querySelector('#merge-allocated').textContent=money(allocated/100);document.querySelector('#merge-remaining').textContent=remaining===0?money(0):`${remaining<0?'-':''}${money(Math.abs(remaining)/100)}`;document.querySelector('#merge-remaining').classList.toggle('settlement-overpaid',remaining<0);
-  const memberPayment=mergePayments().find(payment=>activePaymentMethods.find(method=>method.code===payment.method)?.methodKind==='MEMBER_BALANCE');const member=state.members.find(item=>item.id===mergeSettlementMemberId);const validMember=!memberPayment||(member&&memberPayment.amountCents<=Math.round(Number(member.balance||0)*100));
-  const waiveReason=document.querySelector('#merge-waive-reason')?.value.trim()||'';document.querySelector('#submit-merge-settlement').disabled=mergeSelectedGroups().length<2||(!mergeIsWaived()&&amount<1)||(mergeIsWaived()&&(!waiveReason||amount!==0))||remaining!==0||(amount>0&&!mergePayments().length)||!validMember;
+  const memberPayments=mergePayments().filter(payment=>activePaymentMethods.find(method=>method.code===payment.method)?.methodKind==='MEMBER_BALANCE');const validMember=!memberPayments.some(payment=>!payment.walletId);
+  const waiveReason=document.querySelector('#merge-waive-reason')?.value.trim()||'';document.querySelector('#submit-merge-settlement').disabled=mergeSelectedGroups().length<1||(!mergeIsWaived()&&amount<1)||(mergeIsWaived()&&(!waiveReason||amount!==0))||remaining!==0||(amount>0&&!mergePayments().length)||!validMember;
 }
 
 async function openMergeSettlement(){
   setupMergeSettlementDialog();closeSettlementActions();mergeSettlementSelection.clear();mergeSettlementMemberId=null;mergeSettlementPaymentDraft=new Map();document.querySelector('#merge-room-search').value='';document.querySelector('#merge-settlement-waive').checked=false;document.querySelector('#merge-waive-reason').value='';document.querySelector('#merge-waive-reason-wrap').hidden=true;
   const [pendingLoaded,paymentResponse]=await Promise.all([loadPendingServiceSessions({silent:true}),fetch('http://localhost:8080/api/v1/payment-methods',{headers:storeContextHeaders()})]);if(!pendingLoaded||!paymentResponse.ok)return toast('合并结算资料加载失败');activePaymentMethods=(await paymentResponse.json()).filter(item=>item.active!==false);
-  const groups=new Map();state.pendingServiceSessions.forEach(session=>{const key=`${session.businessDate||''}|${session.roomCode}`;if(!groups.has(key))groups.set(key,{businessDate:session.businessDate||'',roomCode:session.roomCode,sessions:[]});groups.get(key).sessions.push(session);});mergeSettlementGroups=[...groups.values()].sort((a,b)=>String(a.roomCode).localeCompare(String(b.roomCode),'zh-CN',{numeric:true}));renderMergeMember();renderMergeSettlement({resetAmount:true});document.querySelector('#merge-settlement-dialog').showModal();
+  const groups=new Map();state.pendingServiceSessions.forEach(session=>{const bedKey=session.bedId||session.bedCode||'unassigned';const key=`${session.businessDate||''}|${session.roomCode}|${bedKey}`;if(!groups.has(key))groups.set(key,{businessDate:session.businessDate||'',roomCode:session.roomCode,bedId:session.bedId||null,bedCode:session.bedCode||'',bedName:session.bedName||'',sessions:[]});groups.get(key).sessions.push(session);});mergeSettlementGroups=[...groups.values()].sort((a,b)=>`${a.roomCode}|${a.bedCode}`.localeCompare(`${b.roomCode}|${b.bedCode}`,'zh-CN',{numeric:true}));renderMergeMember();renderMergeSettlement({resetAmount:true});document.querySelector('#merge-settlement-dialog').showModal();
 }
 
 function renderMergeSettlement({resetAmount=false}={}){
   const selectedDates=new Set(mergeSelectedGroups().map(group=>group.businessDate).filter(Boolean));const activeDate=selectedDates.size===1?[...selectedDates][0]:null;const keyword=document.querySelector('#merge-room-search')?.value.trim().toLowerCase()||'';
-  document.querySelector('#merge-settlement-rooms').innerHTML=mergeSettlementGroups.map((group,index)=>({group,index})).filter(({group})=>!keyword||`${group.roomCode} ${group.sessions.map(item=>`${item.serviceNo||''} ${item.serviceNameSnapshot||''} ${item.technicianName||''}`).join(' ')}`.toLowerCase().includes(keyword)).map(({group,index})=>{const selected=mergeSettlementSelection.has(index);const disabled=!selected&&activeDate&&group.businessDate!==activeDate;const total=group.sessions.reduce((sum,item)=>sum+Number(item.servicePriceCents||0),0);return `<button type="button" class="merge-settlement-room${selected?' selected':''}" data-merge-room="${index}" ${disabled?'disabled':''}><i>${selected?'✓':''}</i><span><b>${memberBusinessEscape(group.roomCode)} 房</b><small>${roomTransferEscape(group.businessDate||'当前营业日')} · ${roomTransferEscape(group.sessions.length)} 项 · ${group.sessions.map(item=>memberBusinessEscape(item.serviceNo||'')).join('、')}</small></span><strong>${money(total/100)}</strong></button>`;}).join('')||'<p class="merge-settlement-empty">没有匹配的待结算房间</p>';
-  const selected=mergeSelectedGroups();document.querySelector('#merge-settlement-selected').innerHTML=selected.length?selected.map(group=>`<div><span><b>${memberBusinessEscape(group.roomCode)} 房</b><small>${group.sessions.map(item=>memberBusinessEscape(item.serviceNameSnapshot)).join('、')}</small></span><strong>${money(group.sessions.reduce((sum,item)=>sum+Number(item.servicePriceCents||0),0)/100)}</strong></div>`).join(''):'<p>请选择两个或以上房间</p>';
+   document.querySelector('#merge-settlement-rooms').innerHTML=mergeSettlementGroups.map((group,index)=>({group,index})).filter(({group})=>!keyword||`${group.roomCode} ${group.bedCode} ${group.bedName} ${group.sessions.map(item=>`${item.serviceNo||''} ${item.serviceNameSnapshot||''} ${item.technicianName||''}`).join(' ')}`.toLowerCase().includes(keyword)).map(({group,index})=>{const selected=mergeSettlementSelection.has(index);const disabled=!selected&&activeDate&&group.businessDate!==activeDate;const total=group.sessions.reduce((sum,item)=>sum+Number(item.servicePriceCents||0),0);const bedLabel=group.bedCode||group.bedName||'未指定床位';return `<button type="button" class="merge-settlement-room${selected?' selected':''}" data-merge-room="${index}" ${disabled?'disabled':''}><i>${selected?'✓':''}</i><span><b>${memberBusinessEscape(group.roomCode)} 房 · ${memberBusinessEscape(bedLabel)}</b><small>${roomTransferEscape(group.businessDate||'当前营业日')} · ${roomTransferEscape(group.sessions.length)} 项 · ${group.sessions.map(item=>memberBusinessEscape(item.serviceNo||'')).join('、')}</small></span><strong>${money(total/100)}</strong></button>`;}).join('')||'<p class="merge-settlement-empty">没有匹配的待结算房间 / 床位</p>';
+   const selected=mergeSelectedGroups();document.querySelector('#merge-settlement-selected').innerHTML=selected.length?selected.map(group=>`<div><span><b>${memberBusinessEscape(group.roomCode)} 房 · ${memberBusinessEscape(group.bedCode||group.bedName||'未指定床位')}</b><small>${group.sessions.map(item=>memberBusinessEscape(item.serviceNameSnapshot)).join('、')}</small></span><strong>${money(group.sessions.reduce((sum,item)=>sum+Number(item.servicePriceCents||0),0)/100)}</strong></div>`).join(''):'<p>请选择一个或多个房间 / 床位</p>';
   if(resetAmount)document.querySelector('#merge-settlement-amount').value=mergeIsWaived()?'0.00':(mergeOriginalCents()/100).toFixed(2);renderMergePaymentMethods({reset:resetAmount});
 }
 
 async function submitMergeSettlement(event){
-  event.preventDefault();const groups=mergeSelectedGroups();if(groups.length<2)return toast('请至少选择两个房间');if(new Set(groups.map(group=>group.businessDate)).size>1)return toast('不同营业日的订单需要分开结算');const sessions=mergeSelectedSessions(),amount=mergeAmountCents(),waived=mergeIsWaived(),waiveReason=document.querySelector('#merge-waive-reason').value.trim(),payments=mergePayments();if(waived&&amount!==0)return toast('免单结算的实收金额必须为 0.00 元');if(amount===0&&(!waived||!waiveReason))return toast('0.00 元结算必须勾选免单并填写原因');if(amount>0&&amount<1)return toast('普通结算最低实收金额为 0.01 元');if(payments.reduce((sum,item)=>sum+item.amountCents,0)!==amount)return toast('收款金额合计必须等于实收金额');const member=state.members.find(item=>item.id===mergeSettlementMemberId);const memberPayment=payments.find(payment=>activePaymentMethods.find(method=>method.code===payment.method)?.methodKind==='MEMBER_BALANCE');if(memberPayment&&!member)return toast('会员余额结算必须选择会员');if(memberPayment&&memberPayment.amountCents>Math.round(Number(member.balance||0)*100))return toast('会员余额不足，请调整组合支付金额');
+  event.preventDefault();const groups=mergeSelectedGroups();if(groups.length<1)return toast('请至少选择一个房间 / 床位');if(new Set(groups.map(group=>group.businessDate)).size>1)return toast('不同营业日的订单需要分开结算');const sessions=mergeSelectedSessions(),amount=mergeAmountCents(),waived=mergeIsWaived(),waiveReason=document.querySelector('#merge-waive-reason').value.trim(),payments=mergePayments();if(waived&&amount!==0)return toast('免单结算的实收金额必须为 0.00 元');if(amount===0&&(!waived||!waiveReason))return toast('0.00 元结算必须勾选免单并填写原因');if(amount>0&&amount<1)return toast('普通结算最低实收金额为 0.01 元');if(payments.reduce((sum,item)=>sum+item.amountCents,0)!==amount)return toast('收款金额合计必须等于实收金额');
   const submit=document.querySelector('#submit-merge-settlement');submit.disabled=true;const printWindow=storePrintSetting?.autoPrint&&!localPrintBridgeOnline?window.open('','massage-merge-receipt','popup,width=480,height=720'):null;
   try{const response=await fetch('http://localhost:8080/api/v1/sales-orders/settle',{method:'POST',headers:storeContextHeaders(true),body:JSON.stringify({memberId:mergeSettlementMemberId,settlementAmountCents:amount,waiveReason:waived?waiveReason:null,lines:sessions.map(item=>({serviceItemId:item.serviceItemId,serviceSessionId:item.id,durationMinutes:Number(item.plannedDurationMinutes)})),payments})});if(!response.ok){if(printWindow)printWindow.close();return toast(await responseMessage(response,'合并结算失败，请刷新订单后重试'));}const order=await response.json();document.querySelector('#merge-settlement-dialog').close();mergeSettlementSelection.clear();await Promise.all([loadPendingServiceSessions({silent:true}),loadFoundationData({silent:true}),loadSalesOrders(),loadDailyReport()]);if(printWindow){const detailResponse=await fetch(`http://localhost:8080/api/v1/sales-orders/${order.id}`,{headers:storeContextHeaders()});if(detailResponse.ok)printOrder(await detailResponse.json(),printWindow).catch(()=>{printWindow.close();toast('订单已完成，小票打印失败');});else printWindow.close();}toast(`合并结算成功，订单 ${order.orderNo}`);}catch{if(printWindow)printWindow.close();toast('合并结算服务连接失败');}finally{submit.disabled=false;updateMergeSettlementAllocation();}
 }
@@ -4294,6 +4335,7 @@ document.querySelector('.settlement-action-grid').addEventListener('click',event
 document.querySelector('#close-order-panel').addEventListener('click', () => setOrderDrawer(false));
 document.querySelector('#order-drawer-backdrop').addEventListener('click', () => setOrderDrawer(false));
 let settlementMemberTarget = 'single';
+function confirmExternalPayer(memberId, primaryMemberId){if(String(memberId)===String(primaryMemberId))return true;const member=state.members.find(item=>String(item.id)===String(memberId));return window.confirm(`确认使用${member?.name||'所选会员'}的会员卡为本单付款？`);}
 function openSettlementMemberSearch(target = 'single') {
   settlementMemberTarget = target;
   const input = document.querySelector('#member-search');
@@ -4305,8 +4347,10 @@ function openSettlementMemberSearch(target = 'single') {
 document.querySelector('#change-member').addEventListener('click', openSettlementMemberSearch);
 document.querySelector('#settlement-select-member').addEventListener('click', openSettlementMemberSearch);
 document.querySelector('#close-member-dialog').addEventListener('click', () => document.querySelector('#member-dialog').close());
-document.querySelector('#select-guest-member').addEventListener('click', () => {
+ document.querySelector('#select-guest-member').addEventListener('click', () => {
   if (settlementMemberTarget === 'merge') { mergeSettlementMemberId = null; renderMergeMember(); }
+  else if (settlementMemberTarget === 'payment' && settlementPaymentTarget) { syncSettlementPaymentRows(); settlementPaymentRows[settlementPaymentTarget.index].memberId = null; settlementPaymentRows[settlementPaymentTarget.index].walletId = null; settlementPaymentRows[settlementPaymentTarget.index].wallets = []; settlementPaymentTarget = null; renderSettlementPaymentMethods(); }
+  else if (settlementMemberTarget === 'merge-payment' && settlementPaymentTarget) { syncMergePaymentRows(); mergePaymentRows[settlementPaymentTarget.index].memberId = null; mergePaymentRows[settlementPaymentTarget.index].walletId = null; mergePaymentRows[settlementPaymentTarget.index].wallets = []; settlementPaymentTarget = null; renderMergePaymentMethods(); }
   else { state.selectedMemberId = null; renderMemberCard(); renderSettlementPaymentMethods(); }
   document.querySelector('#member-dialog').close();
   toast('本单已设为散客结算');
@@ -4506,7 +4550,7 @@ document.querySelector('#service-session-records').addEventListener('click', eve
   const history = event.target.closest('[data-change-history-session]');
   if (history) openServiceChangeHistory(history.dataset.changeHistorySession);
 });
-document.querySelector('#member-results').addEventListener('click', event => { const button = event.target.closest('[data-member]'); if (!button) return; if(settlementMemberTarget==='merge'){mergeSettlementMemberId=button.dataset.member;renderMergeMember();}else{state.selectedMemberId=button.dataset.member;renderMemberCard();renderSettlementPaymentMethods();}document.querySelector('#member-dialog').close();toast('订单会员已更新'); });
+document.querySelector('#member-results').addEventListener('click', async event => { const button = event.target.closest('[data-member]'); if (!button) return; if(settlementMemberTarget==='payment'&&settlementPaymentTarget){const index=settlementPaymentTarget.index;syncSettlementPaymentRows();const memberId=button.dataset.member;if(!confirmExternalPayer(memberId,state.selectedMemberId))return;settlementPaymentRows[index].memberId=memberId;settlementPaymentRows[index].walletId=null;try{settlementPaymentRows[index].wallets=await loadSettlementWallets(memberId);settlementPaymentRows[index].walletId=settlementPaymentRows[index].wallets.find(item=>item.isDefault)?.id||settlementPaymentRows[index].wallets[0]?.id||null;}catch{toast('会员卡加载失败，请稍后重试');}settlementPaymentTarget=null;renderSettlementPaymentMethods();}else if(settlementMemberTarget==='merge-payment'&&settlementPaymentTarget){const index=settlementPaymentTarget.index;syncMergePaymentRows();const memberId=button.dataset.member;if(!confirmExternalPayer(memberId,mergeSettlementMemberId))return;mergePaymentRows[index].memberId=memberId;mergePaymentRows[index].walletId=null;try{mergePaymentRows[index].wallets=await loadSettlementWallets(memberId);mergePaymentRows[index].walletId=mergePaymentRows[index].wallets.find(item=>item.isDefault)?.id||mergePaymentRows[index].wallets[0]?.id||null;}catch{toast('会员卡加载失败，请稍后重试');}settlementPaymentTarget=null;renderMergePaymentMethods();}else if(settlementMemberTarget==='merge'){mergeSettlementMemberId=button.dataset.member;renderMergeMember();}else{state.selectedMemberId=button.dataset.member;renderMemberCard();renderSettlementPaymentMethods();}document.querySelector('#member-dialog').close();toast(settlementMemberTarget==='payment'||settlementMemberTarget==='merge-payment'?'付款会员卡已更新':'订单会员已更新'); });
 document.querySelector('#refresh-state').addEventListener('click', () => syncOperationalState({ manual: true }));
 document.querySelector('#sort-techs').addEventListener('click', () => loadFoundationData({ silent:true }).then(() => toast('已按当日轮钟队列刷新')).catch(() => toast('轮钟队列刷新失败')));
 document.querySelector('#close-clock-out-confirm').addEventListener('click', () => { clockOutConfirmation = null; document.querySelector('#clock-out-confirm-dialog').close(); });
@@ -5103,7 +5147,17 @@ document.querySelector('#close-settlement-dialog').addEventListener('click', () 
 document.querySelector('#settlement-amount').addEventListener('input', () => { if (settlementIsWaived()) { document.querySelector('#settlement-waive').checked=false; document.querySelector('#settlement-waive-reason-wrap').setAttribute('hidden',''); } updateSettlementAllocation(); });
 document.querySelector('#settlement-waive').addEventListener('change', event => { const checked=event.currentTarget.checked; const amount=document.querySelector('#settlement-amount'); const wrap=document.querySelector('#settlement-waive-reason-wrap'); if(checked){ amount.value='0.00'; settlementPaymentDraft=new Map(); } else { amount.value=(settlementTotalCents()/100).toFixed(2); } wrap.toggleAttribute('hidden', !checked); renderSettlementPaymentMethods(); updateSettlementAllocation(); });
 document.querySelector('#payment-options').addEventListener('input',event=>{if(event.target.matches('[data-payment-amount]'))updateSettlementAllocation();});
-document.querySelector('#payment-options').addEventListener('click',event=>{const button=event.target.closest('[data-fill-payment]');if(!button||button.disabled)return;const totalCents=settlementAmountCents();const inputs=[...document.querySelectorAll('[data-payment-amount]')];const current=inputs.find(input=>input.dataset.paymentAmount===button.dataset.fillPayment);const otherCents=inputs.filter(input=>input!==current).reduce((sum,input)=>sum+Math.round(Math.max(0,Number(input.value)||0)*100),0);current.value=(Math.max(0,totalCents-otherCents)/100).toFixed(2);updateSettlementAllocation();});
+document.querySelector('#payment-options').addEventListener('change',async event=>{
+  const row=event.target.closest('[data-payment-row]');if(!row)return;
+  const index=Number(row.dataset.paymentRow);syncSettlementPaymentRows();
+  if(event.target.matches('[data-payment-method]')){const payment=settlementPaymentRows[index];const method=activePaymentMethods.find(item=>item.code===payment?.method);if(method?.methodKind!=='MEMBER_BALANCE'){payment.walletId=null;payment.wallets=[];payment.memberId=null;payment.walletLoading=false;}else if(!payment.wallets?.length&&payment.memberId){try{payment.wallets=await loadSettlementWallets(payment.memberId);}catch{toast('会员卡加载失败，请重新选择付款人');}}renderSettlementPaymentMethods();}
+});
+document.querySelector('#payment-options').addEventListener('click',event=>{
+  const add=event.target.closest('[data-add-payment-row]');if(add){syncSettlementPaymentRows();settlementPaymentRows.push({method:activePaymentMethods.find(item=>item.methodKind!=='MEMBER_BALANCE'||state.selectedMemberId)?.code||activePaymentMethods[0]?.code||'',walletId:null,memberId:state.selectedMemberId||null,wallets:[],amountCents:0});return renderSettlementPaymentMethods();}
+  const remove=event.target.closest('[data-remove-payment]');if(remove){syncSettlementPaymentRows();settlementPaymentRows.splice(Number(remove.dataset.removePayment),1);return renderSettlementPaymentMethods();}
+  const payer=event.target.closest('[data-payment-member-search]');if(payer){settlementPaymentTarget={kind:'single',index:Number(payer.dataset.paymentMemberSearch)};return openSettlementMemberSearch('payment');}
+  const button=event.target.closest('[data-fill-payment]');if(!button||button.disabled)return;syncSettlementPaymentRows();const index=Number(button.dataset.fillPayment);const current=document.querySelector(`[data-payment-row="${index}"] [data-payment-amount]`);const otherCents=settlementPaymentRows.reduce((sum,row,rowIndex)=>rowIndex===index?sum:sum+Number(row.amountCents||0),0);if(current)current.value=(Math.max(0,settlementAmountCents()-otherCents)/100).toFixed(2);updateSettlementAllocation();
+});
 document.querySelector('#settlement-dialog form').addEventListener('submit', async event => {
   event.preventDefault();
   const totalCents=settlementAmountCents();
@@ -5115,10 +5169,9 @@ document.querySelector('#settlement-dialog form').addEventListener('submit', asy
   if(totalCents>0 && totalCents<1) return toast('普通结算最低实收金额为 0.01 元');
   if(totalCents>0 && !payments.length)return toast('请至少填写一种收款金额');
   if(paidCents!==totalCents)return toast(`收款金额与应收不一致，还差 ${money(Math.abs(totalCents-paidCents)/100)}`);
-  const memberPayment=payments.find(payment=>activePaymentMethods.find(method=>method.code===payment.method)?.methodKind==='MEMBER_BALANCE');
-  const member=state.members.find(item=>item.id===state.selectedMemberId);
-  if(memberPayment&&!member)return toast('会员余额付款需要先选择会员');
-  if(memberPayment&&memberPayment.amountCents>Math.round(Number(member.balance||0)*100))return toast('会员余额不足，请调整会员余额金额或补充其他收款方式');
+  const memberPayments=payments.filter(payment=>activePaymentMethods.find(method=>method.code===payment.method)?.methodKind==='MEMBER_BALANCE');
+  const memberPayment=memberPayments[0];
+  if(memberPayments.some(payment=>!payment.walletId))return toast('每条会员卡支付都必须选择实际会员卡');
   const submitButton = event.currentTarget.querySelector('.pay-button');
   if (submitButton.disabled) return;
   const originalSubmitText = submitButton.textContent;

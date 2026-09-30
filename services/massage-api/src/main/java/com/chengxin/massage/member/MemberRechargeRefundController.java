@@ -107,16 +107,16 @@ public class MemberRechargeRefundController {
     if (refund.bonusReclaimCents() != bonusReclaim(original, refund.amountCents())) {
       throw conflict("Recharge bonus association changed; cancel and review this refund");
     }
-    Wallet wallet = jdbc.sql("select w.id,w.balance_cents from member_wallet w where w.member_id=:member for update").param("member", refund.memberId()).query(Wallet.class).single();
+    Wallet wallet = jdbc.sql("select w.id,w.member_id,w.balance_cents from member_wallet w where w.id=:wallet for update").param("wallet", original.walletId()).query(Wallet.class).single();
     long totalDeduction = refund.amountCents() + refund.bonusReclaimCents();
     if (wallet.balanceCents() < totalDeduction) throw conflict("Member balance is insufficient for this refund");
     long after = wallet.balanceCents() - totalDeduction;
     jdbc.sql("update member_wallet set balance_cents=:after,updated_at=now(),version=version+1 where id=:id").param("after", after).param("id", wallet.id()).update();
     LocalDate date = businessClock.businessDate(store, OffsetDateTime.now());
     jdbc.sql("insert into wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,payment_method,payment_method_name_snapshot,source,note,business_date) values(:id,:tenant,:store,:wallet,:member,'ADJUSTMENT',:amount,:before,:after,:payment,:paymentName,'RECHARGE_REFUND',:note,:date)")
-      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", store).param("wallet", wallet.id()).param("member", refund.memberId()).param("amount", -refund.amountCents()).param("before", wallet.balanceCents()).param("after", wallet.balanceCents()-refund.amountCents()).param("payment", refund.paymentMethod()).param("paymentName", refund.paymentMethodNameSnapshot()).param("note", refund.refundNo()).param("date", date).update();
+      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", store).param("wallet", wallet.id()).param("member", wallet.memberId()).param("amount", -refund.amountCents()).param("before", wallet.balanceCents()).param("after", wallet.balanceCents()-refund.amountCents()).param("payment", refund.paymentMethod()).param("paymentName", refund.paymentMethodNameSnapshot()).param("note", refund.refundNo()).param("date", date).update();
     if (refund.bonusReclaimCents() > 0) jdbc.sql("insert into wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,source,note,business_date) values(:id,:tenant,:store,:wallet,:member,'ADJUSTMENT',:amount,:before,:after,'RECHARGE_REFUND_BONUS',:note,:date)")
-      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", store).param("wallet", wallet.id()).param("member", refund.memberId()).param("amount", -refund.bonusReclaimCents()).param("before", wallet.balanceCents()-refund.amountCents()).param("after", after).param("note", refund.refundNo()).param("date", date).update();
+      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", store).param("wallet", wallet.id()).param("member", wallet.memberId()).param("amount", -refund.bonusReclaimCents()).param("before", wallet.balanceCents()-refund.amountCents()).param("after", after).param("note", refund.refundNo()).param("date", date).update();
     jdbc.sql("update member_recharge_refund set status='COMPLETED',completed_by_user_id=:actor,completed_by_name_snapshot=:actorName,completed_at=now(),business_date=:date where id=:id")
       .param("actor", actor.userId()).param("actorName", actor.displayName()).param("date", date).param("id", id).update();
     RefundRow completed = find(store, id);
@@ -139,7 +139,7 @@ public class MemberRechargeRefundController {
 
   private RechargeTransaction lockRecharge(UUID store, UUID member, UUID transaction) {
     return jdbc.sql("""
-      select wt.id,wt.member_id,coalesce(wt.corrected_amount_cents,wt.amount_cents) amount_cents,wt.recharge_id,
+      select wt.id,wt.member_id,wt.wallet_id,coalesce(wt.corrected_amount_cents,wt.amount_cents) amount_cents,wt.recharge_id,
         coalesce((select sum(b.amount_cents) from wallet_transaction b where b.recharge_id=wt.id
           and b.transaction_type='BONUS' and b.wallet_id=wt.wallet_id and b.member_id=wt.member_id
           and b.store_id=wt.store_id and b.tenant_id=wt.tenant_id),0) bonus_amount_cents
@@ -166,8 +166,8 @@ public class MemberRechargeRefundController {
   private ResponseStatusException conflict(String message) { return new ResponseStatusException(HttpStatus.CONFLICT, message); }
 
   record CreateInput(@NotNull UUID memberId, @NotNull UUID originalTransactionId, @NotNull @Min(1) Long amountCents, @NotBlank @Size(max=240) String reason, @NotBlank @Size(max=80) String requestKey) {}
-  record RechargeTransaction(UUID id, UUID memberId, Long amountCents, UUID rechargeId, Long bonusAmountCents) {}
+  record RechargeTransaction(UUID id, UUID memberId, UUID walletId, Long amountCents, UUID rechargeId, Long bonusAmountCents) {}
   record RefundForUpdate(UUID id, UUID memberId, String refundNo, String status, Long amountCents, Long bonusReclaimCents, String paymentMethod, String paymentMethodNameSnapshot) {}
-  record Wallet(UUID id, Long balanceCents) {}
+  record Wallet(UUID id, UUID memberId, Long balanceCents) {}
   record RefundRow(UUID id, UUID memberId, String memberName, String memberPhone, UUID originalTransactionId, String refundNo, String status, Long amountCents, Long bonusReclaimCents, String reason, String requestedByNameSnapshot, String completedByNameSnapshot, OffsetDateTime createdAt, OffsetDateTime completedAt) {}
 }

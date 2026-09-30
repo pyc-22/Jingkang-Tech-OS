@@ -13,7 +13,7 @@ test('order detail remains readable after adding more actions', () => {
   assert.doesNotMatch(css, /\.order-detail-card\s*\{[^}]*width:510px/);
   assert.match(css, /\.order-detail-actions\s*\{[^}]*flex-wrap:wrap/);
   assert.match(css, /\.order-detail-list \.member-result\s*\{[^}]*grid-template-columns:minmax\(0,1fr\) auto/);
-  assert.match(html, /app\.js\?v=20260929-manager-rewards-v2/);
+  assert.match(html, /app\.js\?v=20260930-operational-state-v1/);
 });
 
 test('order detail opens a read-only full reversal covering every remaining item', () => {
@@ -29,4 +29,9 @@ test('refund dialog no longer exposes editable row selection controls', () => {
   assert.doesNotMatch(app, /choice\.classList\.toggle\('is-selected',event\.target\.checked\)/);
   assert.doesNotMatch(app, /if\(event\.target\.checked\)amount\.focus\(\)/);
   assert.match(css, /\.refund-line-choice\s*\{\s*cursor:default;\s*\}/);
+});
+
+test('refund for re-settlement is distinguished from order void', () => {
+  assert.match(app, /订单不会作废，服务回待结算且继续占床/);
+  assert.match(app, /已收款订单请先整单退款；订单保留待结算服务/);
 });

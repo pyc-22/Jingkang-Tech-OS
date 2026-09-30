@@ -4,6 +4,7 @@ import com.chengxin.massage.admin.AdminSessionService;
 import com.chengxin.massage.admin.StoreContextService;
 import com.chengxin.massage.audit.AuditService;
 import com.chengxin.massage.operations.BusinessClockService;
+import com.chengxin.massage.operations.OperationalStateService;
 import com.chengxin.massage.catalog.ServiceItemVersionService.ResolvedServiceItem;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -42,11 +43,12 @@ public class ServiceReservationController {
   private final ServiceItemVersionService itemVersions;
   private final ServiceDispatchEventService dispatchEvents;
   private final TechnicianSchedulePolicy schedulePolicy;
+  private final RoomStateService roomStates;
 
   @Value("${massage.dispatch.acceptance-timeout-seconds:300}")
   private int acceptanceTimeoutSeconds;
 
-  ServiceReservationController(JdbcClient jdbc, StoreContextService storeContext, AdminSessionService adminSessions, AuditService audits, BusinessClockService businessClock, ServiceItemVersionService itemVersions, ServiceDispatchEventService dispatchEvents, TechnicianSchedulePolicy schedulePolicy) {
+  ServiceReservationController(JdbcClient jdbc, StoreContextService storeContext, AdminSessionService adminSessions, AuditService audits, BusinessClockService businessClock, ServiceItemVersionService itemVersions, ServiceDispatchEventService dispatchEvents, TechnicianSchedulePolicy schedulePolicy, RoomStateService roomStates) {
     this.jdbc = jdbc;
     this.storeContext = storeContext;
     this.adminSessions = adminSessions;
@@ -55,6 +57,7 @@ public class ServiceReservationController {
     this.itemVersions = itemVersions;
     this.dispatchEvents = dispatchEvents;
     this.schedulePolicy = schedulePolicy;
+    this.roomStates = roomStates;
   }
 
   @GetMapping
@@ -106,16 +109,16 @@ public class ServiceReservationController {
     if (shouldRejectBusyTechnician(hasActiveSession(storeId, input.technicianId()), reservation.reservationType())) {
       throw conflict("Technician is still serving; dispatch after clock-out");
     }
-    if (hasActiveSession(storeId, reservation.roomId())) throw conflict("Reservation room already has an active service");
+    UUID bedId = availableBed(storeId, reservation.roomId());
     String roomStatus = latestRoomStatus(storeId, reservation.roomId());
-    if ("PENDING_PAYMENT".equals(roomStatus)) throw conflict("当前服务已下钟，待前台完成收款后再执行预约");
     if ("CLEANING".equals(roomStatus)) throw conflict("预约房间正在清洁，请完成清洁后再执行预约");
     if ("MAINTENANCE".equals(roomStatus)) throw conflict("预约房间正在维修");
     UUID sessionId = UUID.randomUUID();
     OffsetDateTime acceptanceDeadline = OffsetDateTime.now().plusSeconds(acceptanceTimeoutSeconds);
     String clockType = "BOOKED_CALL".equals(reservation.reservationType()) ? "BOOKED_CALL" : "BOOKED_QUEUE";
-    jdbc.sql("insert into service_session(id,tenant_id,store_id,technician_id,room_id,service_item_id,service_name_snapshot,service_price_cents,planned_duration_minutes,started_at,expected_end_at,status,note,clock_type,price_version_id,counts_as_clock_snapshot,acceptance_deadline_at) values(:id,:tenant,:store,:technician,:room,:service,:name,:price,:duration,null,null,'PENDING_ACCEPTANCE',:note,:clockType,:priceVersion,:countsAsClock,:deadline)")
+    jdbc.sql("insert into service_session(id,tenant_id,store_id,technician_id,room_id,bed_id,service_item_id,service_name_snapshot,service_price_cents,planned_duration_minutes,started_at,expected_end_at,status,note,clock_type,price_version_id,counts_as_clock_snapshot,acceptance_deadline_at) values(:id,:tenant,:store,:technician,:room,:bed,:service,:name,:price,:duration,null,null,'PENDING_ACCEPTANCE',:note,:clockType,:priceVersion,:countsAsClock,:deadline)")
       .param("id", sessionId).param("tenant", TENANT_ID).param("store", storeId).param("technician", input.technicianId()).param("room", reservation.roomId())
+      .param("bed", bedId)
       .param("service", service.id()).param("name", service.name()).param("price", service.priceCents()).param("duration", input.plannedDurationMinutes())
       .param("note", reservation.note()).param("clockType", clockType).param("priceVersion", service.priceVersionId()).param("countsAsClock", service.countsAsClock()).param("deadline", acceptanceDeadline).update();
     UUID participantId = UUID.randomUUID();
@@ -138,19 +141,20 @@ public class ServiceReservationController {
   }
   private ResolvedServiceItem service(UUID storeId, UUID id) { return itemVersions.activeItem(storeId, id, businessClock.currentBusinessDate(storeId)).orElseThrow(() -> badRequest("Service item is unavailable")); }
   private void ensureActive(UUID storeId, String table, UUID id, String message) { if (!jdbc.sql("select exists(select 1 from " + table + " where id=:id and store_id=:store and active=true)").param("id", id).param("store", storeId).query(Boolean.class).single()) throw badRequest(message); }
-  private boolean hasActiveSession(UUID storeId, UUID id) { return jdbc.sql("select exists(select 1 from service_session session where session.store_id=:store and ((session.room_id=:id and session.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','IN_SERVICE')) or (session.technician_id=:id and session.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE'))))").param("store", storeId).param("id", id).query(Boolean.class).single(); }
+  private boolean hasActiveSession(UUID storeId, UUID id) { return jdbc.sql("select exists(select 1 from service_session session where session.store_id=:store and ((session.room_id=:id and " + OperationalStateService.occupyingServicePredicate("session") + ") or (session.technician_id=:id and session.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE'))))").param("store", storeId).param("id", id).query(Boolean.class).single(); }
 
   static boolean shouldRejectBusyTechnician(boolean busy, String reservationType) {
     return busy && !List.of("BOOKED_QUEUE", "BOOKED_CALL").contains(reservationType);
   }
   private String latestRoomStatus(UUID storeId, UUID id) { return jdbc.sql("select status from room_status_event where store_id=:store and room_id=:room order by occurred_at desc,id desc limit 1").param("store", storeId).param("room", id).query(String.class).optional().orElse("IDLE"); }
+  private UUID availableBed(UUID storeId, UUID roomId) {
+    String sql = "select b.id from room_bed b where b.store_id=:store and b.room_id=:room and b.active and not exists(select 1 from service_session s where s.store_id=:store and s.bed_id=b.id and "
+      + OperationalStateService.occupyingServicePredicate("s") + ") order by b.sort_order,b.id limit 1 for update";
+    return jdbc.sql(sql)
+      .param("store", storeId).param("room", roomId).query(UUID.class).optional().orElseThrow(() -> conflict("预约房间没有可用床位"));
+  }
   private void recordRoomStatus(UUID storeId, UUID roomId, String status, String reason) {
-    lockRoom(storeId, roomId);
-    boolean active = jdbc.sql("select exists(select 1 from service_session where store_id=:store and room_id=:room and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'))")
-      .param("store", storeId).param("room", roomId).query(Boolean.class).single();
-    String effective = active && "RESERVED".equals(status) ? "IN_SERVICE" : status;
-    jdbc.sql("insert into room_status_event(id,tenant_id,store_id,room_id,status,reason,source,occurred_at) values(:id,:tenant,:store,:room,:status,:reason,'SERVICE_RESERVATION',clock_timestamp())")
-      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("room", roomId).param("status", effective).param("reason", reason).update();
+    roomStates.record(storeId, roomId, status, reason, "SERVICE_RESERVATION");
   }
   private void validateType(String type) { if (!"BOOKED_CALL".equals(type) && !"BOOKED_QUEUE".equals(type)) throw badRequest("Unsupported reservation type"); }
   private String sql(String where) { return "select sr.id,sr.room_id,r.code room_code,sr.technician_id,t.name technician_name,sr.service_item_id,sr.reservation_type,sr.status,sr.service_name_snapshot,sr.service_price_cents,sr.planned_duration_minutes,sr.note,sr.created_at,sr.dispatched_at from service_reservation sr join room r on r.id=sr.room_id left join technician t on t.id=sr.technician_id " + where + " order by sr.created_at"; }

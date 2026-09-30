@@ -4,6 +4,7 @@ import com.chengxin.massage.admin.AdminSessionService;
 import com.chengxin.massage.admin.StoreContextService;
 import com.chengxin.massage.audit.AuditService;
 import com.chengxin.massage.mobile.MobileSessionService;
+import com.chengxin.massage.operations.OperationalStateService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -209,13 +210,13 @@ public class ServiceRoomTransferController {
   }
 
   private boolean acceptsAnotherService(String status) {
-    return "IDLE".equals(status) || "RESERVED".equals(status) || "IN_SERVICE".equals(status);
+    return "IDLE".equals(status) || "RESERVED".equals(status) || "IN_SERVICE".equals(status) || "PENDING_PAYMENT".equals(status);
   }
 
   private void ensureRoomCapacity(UUID storeId, UUID roomId, int pendingTransferReservations) {
     long capacity = jdbc.sql("select count(*) from room_bed where store_id=:store and room_id=:room and active=true")
       .param("store", storeId).param("room", roomId).query(Long.class).single();
-    long occupied = jdbc.sql("select count(*) from service_session where store_id=:store and room_id=:room and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE')")
+    long occupied = jdbc.sql("select count(*) from service_session s where s.store_id=:store and s.room_id=:room and " + OperationalStateService.occupyingServicePredicate("s"))
       .param("store", storeId).param("room", roomId).query(Long.class).single();
     if (occupied + pendingTransferReservations >= capacity) throw conflict("Target room has no available bed");
   }
@@ -231,7 +232,7 @@ public class ServiceRoomTransferController {
   }
 
   private boolean hasActiveSession(UUID storeId, UUID roomId) {
-    return jdbc.sql("select exists(select 1 from service_session where store_id=:store and room_id=:room and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','IN_SERVICE'))")
+    return jdbc.sql("select exists(select 1 from service_session session where session.store_id=:store and session.room_id=:room and " + OperationalStateService.occupyingServicePredicate("session") + ")")
       .param("store", storeId).param("room", roomId).query(Boolean.class).single();
   }
 
@@ -271,8 +272,8 @@ public class ServiceRoomTransferController {
   private UUID targetBedForUpdate(UUID storeId, UUID roomId, int pendingTransferReservations) {
     return jdbc.sql("""
       select b.id from room_bed b where b.room_id=:room and b.store_id=:store and b.active=true
-        and not exists(select 1 from service_session s where s.bed_id=b.id
-          and s.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'))
+        and not exists(select 1 from service_session s where s.bed_id=b.id and """ + OperationalStateService.occupyingServicePredicate("s") + """
+        )
        order by b.sort_order,b.id limit 1 offset :reserved for update of b
        """).param("room", roomId).param("store", storeId).param("reserved", pendingTransferReservations).query(UUID.class).optional()
       .orElseThrow(() -> conflict("Target room has no available bed"));

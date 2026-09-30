@@ -56,7 +56,7 @@ public class MemberController {
                     @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                     @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     storeContext.currentStore(authorization, requestedStoreId);
-    return jdbc.sql("select m.id,m.code,m.name,m.phone,w.balance_cents from member m join member_wallet w on w.member_id=m.id where m.tenant_id=:tenant and m.active=true and (m.name ilike :q or m.phone ilike :q or m.code ilike :q) order by m.created_at desc limit 30")
+    return jdbc.sql("select m.id,m.code,m.name,m.phone,w.balance_cents from member m join member_wallet w on w.member_id=m.id and w.is_default where m.tenant_id=:tenant and m.active=true and (m.name ilike :q or m.phone ilike :q or m.code ilike :q or exists(select 1 from member_wallet search_wallet where search_wallet.member_id=m.id and search_wallet.active and search_wallet.account_code ilike :q)) order by m.created_at desc limit 30")
       .param("tenant", TENANT_ID).param("q", "%" + query + "%").query(Member.class).list();
   }
 
@@ -232,8 +232,7 @@ public class MemberController {
                   @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     Member before = member(id);
-    Wallet wallet = wallet(id);
-    if (wallet.balanceCents() > 0) return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", "会员仍有余额，请先处理余额后再停用归档"));
+    if (wallets(id).stream().anyMatch(wallet -> wallet.balanceCents() > 0)) return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", "会员仍有余额，请先处理余额后再停用归档"));
     boolean unsettled = jdbc.sql("select exists(select 1 from sales_order where member_id=:member and status not in ('SETTLED','CANCELLED'))")
       .param("member", id).query(Boolean.class).single();
     if (unsettled) return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", "会员存在未结算订单，请先完成结算或取消订单"));
@@ -251,8 +250,7 @@ public class MemberController {
     adminSessions.requireTenantAdmin(authorization);
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     Member before = member(id);
-    Wallet wallet = wallet(id);
-    if (wallet.balanceCents() != 0) return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", "会员余额不为零，只能停用归档"));
+    if (wallets(id).stream().anyMatch(wallet -> wallet.balanceCents() != 0)) return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", "会员余额不为零，只能停用归档"));
     boolean hasHistory = jdbc.sql("select exists(select 1 from wallet_transaction where member_id=:member) or exists(select 1 from sales_order where member_id=:member) or exists(select 1 from member_recharge_refund where member_id=:member)")
       .param("member", id).query(Boolean.class).single();
     if (hasHistory) return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", "会员存在资金流水、订单或退款记录，只能停用归档"));
@@ -276,17 +274,21 @@ public class MemberController {
     lockMember(id);
     Member before = member(id);
     List<MemberCleanupReportService.Report> affectedReports = cleanupReports.lockReports(TENANT_ID, id);
-    Wallet wallet = wallet(id);
-    if (wallet.balanceCents() <= 0) return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", "会员余额已为零，请直接停用归档"));
+    List<Wallet> wallets = wallets(id);
+    if (wallets.stream().noneMatch(wallet -> wallet.balanceCents() > 0)) return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", "会员余额已为零，请直接停用归档"));
+    if (wallets.stream().anyMatch(wallet -> wallet.balanceCents() < 0)) return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", "会员卡存在负余额，请先核对流水"));
     boolean unsettled = jdbc.sql("select exists(select 1 from sales_order where member_id=:member and status not in ('SETTLED','CANCELLED'))")
       .param("member", id).query(Boolean.class).single();
     if (unsettled) return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", "会员存在未结算订单，请先完成结算或取消订单"));
-    long balance = wallet.balanceCents();
-    jdbc.sql("insert into wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,source,note,business_date) values(:id,:tenant,:store,:wallet,:member,'ADJUSTMENT',:amount,:before,0,'ADMIN_TEST_CLEANUP',:note,:businessDate)")
-      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("wallet", wallet.id()).param("member", id)
-      .param("amount", -balance).param("before", balance).param("note", input.reason().trim()).param("businessDate", businessClock.currentBusinessDate(storeId)).update();
-    jdbc.sql("update member_wallet set balance_cents=0,updated_at=now(),version=version+1 where id=:wallet")
-      .param("wallet", wallet.id()).update();
+    for (Wallet wallet : wallets) {
+      long balance = wallet.balanceCents();
+      if (balance == 0) continue;
+      jdbc.sql("insert into wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,source,note,business_date) values(:id,:tenant,:store,:wallet,:member,'ADJUSTMENT',:amount,:before,0,'ADMIN_TEST_CLEANUP',:note,:businessDate)")
+        .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("wallet", wallet.id()).param("member", id)
+        .param("amount", -balance).param("before", balance).param("note", input.reason().trim()).param("businessDate", businessClock.currentBusinessDate(storeId)).update();
+      jdbc.sql("update member_wallet set balance_cents=0,updated_at=now(),version=version+1 where id=:wallet")
+        .param("wallet", wallet.id()).update();
+    }
     jdbc.sql("update member set active=false,updated_at=now(),version=version+1 where id=:member and tenant_id=:tenant")
       .param("member", id).param("tenant", TENANT_ID).update();
     audits.record(authorization, storeId, "MEMBER", "MEMBER_TEST_BALANCE_CLEARED_AND_DEACTIVATED", "member", id,
@@ -296,7 +298,7 @@ public class MemberController {
   }
 
   private Member member(UUID id) {
-    return jdbc.sql("select m.id,m.code,m.name,m.phone,w.balance_cents from member m join member_wallet w on w.member_id=m.id where m.id=:id and m.tenant_id=:tenant")
+    return jdbc.sql("select m.id,m.code,m.name,m.phone,w.balance_cents from member m join member_wallet w on w.member_id=m.id and w.is_default where m.id=:id and m.tenant_id=:tenant")
       .param("id", id).param("tenant", TENANT_ID).query(Member.class).single();
   }
 
@@ -336,8 +338,14 @@ public class MemberController {
 
   private Wallet wallet(UUID memberId) {
     lockMember(memberId);
-    return jdbc.sql("select w.id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.member_id=:member and m.tenant_id=:tenant for update")
+    return jdbc.sql("select w.id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.member_id=:member and w.is_default and w.active and m.tenant_id=:tenant for update")
       .param("member", memberId).param("tenant", TENANT_ID).query(Wallet.class).single();
+  }
+
+  private List<Wallet> wallets(UUID memberId) {
+    lockMember(memberId);
+    return jdbc.sql("select id,balance_cents from member_wallet where member_id=:member and tenant_id=:tenant order by id for update")
+      .param("member", memberId).param("tenant", TENANT_ID).query(Wallet.class).list();
   }
 
   private void lockMember(UUID memberId) {
@@ -346,11 +354,11 @@ public class MemberController {
   }
 
   private String memberCenterSql(String memberFilter) {
-    return "select m.id,m.code,m.name,m.phone,registered.name registered_store_name,w.balance_cents,coalesce(totals.recharge_cents,0) recharge_cents,coalesce(totals.bonus_cents,0) bonus_cents,coalesce(totals.consumption_cents,0) consumption_cents,totals.last_consumption_at,latest.amount_cents last_recharge_cents,latest.technician_name_snapshot last_recharge_technician_name,latest.employee_name_snapshot last_recharge_employee_name,latest.created_at last_recharge_at,activity.transaction_type last_activity_type,activity.created_at last_activity_at,m.created_at from member m join member_wallet w on w.member_id=m.id join store registered on registered.id=m.registered_store_id left join lateral (select sum(coalesce(corrected_amount_cents,amount_cents)) filter (where transaction_type='RECHARGE') recharge_cents,sum(amount_cents) filter (where transaction_type='BONUS') bonus_cents,sum(-amount_cents) filter (where transaction_type='CONSUMPTION') consumption_cents,max(created_at) filter (where transaction_type='CONSUMPTION') last_consumption_at from wallet_transaction where member_id=m.id and store_id=:store) totals on true left join lateral (select coalesce(corrected_amount_cents,amount_cents) amount_cents,technician_name_snapshot,employee_name_snapshot,created_at from wallet_transaction where member_id=m.id and store_id=:store and transaction_type='RECHARGE' order by created_at desc limit 1) latest on true left join lateral (select transaction_type,created_at from wallet_transaction where member_id=m.id and store_id=:store order by created_at desc limit 1) activity on true where m.tenant_id=:tenant and m.active=true and (m.code ilike :q or m.name ilike :q or m.phone ilike :q)" + memberFilter + " order by activity.created_at desc nulls last,m.created_at desc limit 300";
+    return "select m.id,m.code,m.name,m.phone,registered.name registered_store_name,w.balance_cents,coalesce(totals.recharge_cents,0) recharge_cents,coalesce(totals.bonus_cents,0) bonus_cents,coalesce(totals.consumption_cents,0) consumption_cents,totals.last_consumption_at,latest.amount_cents last_recharge_cents,latest.technician_name_snapshot last_recharge_technician_name,latest.employee_name_snapshot last_recharge_employee_name,latest.created_at last_recharge_at,activity.transaction_type last_activity_type,activity.created_at last_activity_at,m.created_at from member m join member_wallet w on w.member_id=m.id and w.is_default join store registered on registered.id=m.registered_store_id left join lateral (select sum(coalesce(corrected_amount_cents,amount_cents)) filter (where transaction_type='RECHARGE') recharge_cents,sum(amount_cents) filter (where transaction_type='BONUS') bonus_cents,sum(-amount_cents) filter (where transaction_type='CONSUMPTION') consumption_cents,max(created_at) filter (where transaction_type='CONSUMPTION') last_consumption_at from wallet_transaction where member_id=m.id and store_id=:store) totals on true left join lateral (select coalesce(corrected_amount_cents,amount_cents) amount_cents,technician_name_snapshot,employee_name_snapshot,created_at from wallet_transaction where member_id=m.id and store_id=:store and transaction_type='RECHARGE' order by created_at desc limit 1) latest on true left join lateral (select transaction_type,created_at from wallet_transaction where member_id=m.id and store_id=:store order by created_at desc limit 1) activity on true where m.tenant_id=:tenant and m.active=true and (m.code ilike :q or m.name ilike :q or m.phone ilike :q)" + memberFilter + " order by activity.created_at desc nulls last,m.created_at desc limit 300";
   }
 
   private List<MemberWalletTransaction> memberTransactions(UUID storeId, UUID memberId) {
-    return jdbc.sql("select wt.id,wt.transaction_type,wt.amount_cents,wt.balance_before_cents,wt.balance_after_cents,wt.payment_method,wt.payment_method_name_snapshot,wt.technician_id,wt.technician_name_snapshot,wt.employee_id,wt.employee_name_snapshot,wt.source,wt.note,wt.created_at,wt.business_date,coalesce(wt.corrected_amount_cents,wt.amount_cents) recharge_amount_cents,wt.correction_version,exists(select 1 from member_recharge_refund r where r.original_transaction_id=wt.id and r.status in ('PENDING','COMPLETED')) refund_locked,o.order_no,coalesce((select string_agg(line.item_name_snapshot || case when line.quantity > 1 then ' x' || line.quantity else '' end,'、' order by line.id) from sales_order_line line where line.order_id=o.id),'') service_items,coalesce((select string_agg(distinct technician_name,'、') from (select technician.name technician_name from sales_order_line line join sales_order_service_session link on link.order_line_id=line.id join service_session session on session.id=link.service_session_id left join technician technician on technician.id=session.technician_id where line.order_id=o.id and technician.name is not null) names),'') service_technician_names,coalesce((select string_agg(distinct coalesce(room.code,room.name),'、') from sales_order_line line join sales_order_service_session link on link.order_line_id=line.id join service_session session on session.id=link.service_session_id left join room room on room.id=session.room_id where line.order_id=o.id and room.id is not null),'') room_names,(select max(session.ended_at) from sales_order_line line join sales_order_service_session link on link.order_line_id=line.id join service_session session on session.id=link.service_session_id where line.order_id=o.id) service_ended_at from wallet_transaction wt left join sales_order o on wt.transaction_type='CONSUMPTION' and o.id=case when wt.note ~* '^[0-9a-f-]{36}$' then wt.note::uuid end and o.store_id=wt.store_id where wt.store_id=:store and wt.member_id=:member order by wt.created_at desc limit 200")
+    return jdbc.sql("select wt.id,wt.wallet_id,w.account_code,w.account_name,wt.transaction_type,wt.amount_cents,wt.balance_before_cents,wt.balance_after_cents,wt.payment_method,wt.payment_method_name_snapshot,wt.technician_id,wt.technician_name_snapshot,wt.employee_id,wt.employee_name_snapshot,wt.source,wt.note,wt.created_at,wt.business_date,coalesce(wt.corrected_amount_cents,wt.amount_cents) recharge_amount_cents,wt.correction_version,exists(select 1 from member_recharge_refund r where r.original_transaction_id=wt.id and r.status in ('PENDING','COMPLETED')) refund_locked,o.order_no,coalesce((select string_agg(line.item_name_snapshot || case when line.quantity > 1 then ' x' || line.quantity else '' end,'、' order by line.id) from sales_order_line line where line.order_id=o.id),'') service_items,coalesce((select string_agg(distinct technician_name,'、') from (select technician.name technician_name from sales_order_line line join sales_order_service_session link on link.order_line_id=line.id join service_session session on session.id=link.service_session_id left join technician technician on technician.id=session.technician_id where line.order_id=o.id and technician.name is not null) names),'') service_technician_names,coalesce((select string_agg(distinct coalesce(room.code,room.name),'、') from sales_order_line line join sales_order_service_session link on link.order_line_id=line.id join service_session session on session.id=link.service_session_id left join room room on room.id=session.room_id where line.order_id=o.id and room.id is not null),'') room_names,(select max(session.ended_at) from sales_order_line line join sales_order_service_session link on link.order_line_id=line.id join service_session session on session.id=link.service_session_id where line.order_id=o.id) service_ended_at from wallet_transaction wt left join member_wallet w on w.id=wt.wallet_id left join sales_order o on wt.transaction_type='CONSUMPTION' and o.id=case when wt.note ~* '^[0-9a-f-]{36}$' then wt.note::uuid end and o.store_id=wt.store_id where wt.store_id=:store and wt.member_id=:member order by wt.created_at desc limit 200")
       .param("store", storeId).param("member", memberId).query(MemberWalletTransaction.class).list();
   }
 
@@ -386,7 +394,7 @@ public class MemberController {
   record ExistingMember(UUID id, Boolean active) {}
   record MemberCodeAllocation(String memberCodePrefix, Integer memberNumber) {}
   record MemberCenterRow(UUID id, String code, String name, String phone, String registeredStoreName, Long balanceCents, Long rechargeCents, Long bonusCents, Long consumptionCents, java.time.OffsetDateTime lastConsumptionAt, Long lastRechargeCents, String lastRechargeTechnicianName, String lastRechargeEmployeeName, java.time.OffsetDateTime lastRechargeAt, String lastActivityType, java.time.OffsetDateTime lastActivityAt, java.time.OffsetDateTime createdAt) {}
-  record MemberWalletTransaction(UUID id, String transactionType, Long amountCents, Long balanceBeforeCents, Long balanceAfterCents, String paymentMethod, String paymentMethodNameSnapshot, UUID technicianId, String technicianNameSnapshot, UUID employeeId, String employeeNameSnapshot, String source, String note, java.time.OffsetDateTime createdAt, java.time.LocalDate businessDate, Long rechargeAmountCents, Long correctionVersion, Boolean refundLocked, String orderNo, String serviceItems, String serviceTechnicianNames, String roomNames, java.time.OffsetDateTime serviceEndedAt) {}
+  record MemberWalletTransaction(UUID id, UUID walletId, String accountCode, String accountName, String transactionType, Long amountCents, Long balanceBeforeCents, Long balanceAfterCents, String paymentMethod, String paymentMethodNameSnapshot, UUID technicianId, String technicianNameSnapshot, UUID employeeId, String employeeNameSnapshot, String source, String note, java.time.OffsetDateTime createdAt, java.time.LocalDate businessDate, Long rechargeAmountCents, Long correctionVersion, Boolean refundLocked, String orderNo, String serviceItems, String serviceTechnicianNames, String roomNames, java.time.OffsetDateTime serviceEndedAt) {}
   record MemberRecharge(UUID id, java.time.LocalDate businessDate, Long rechargeAmountCents, String paymentMethod,
                         String paymentMethodNameSnapshot, String technicianNameSnapshot, String employeeNameSnapshot,
                         String note, Long correctionVersion, Boolean refundLocked) {}

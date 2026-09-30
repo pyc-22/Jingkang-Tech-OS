@@ -53,13 +53,13 @@ class ExpenseClaimQueryServiceTest {
   }
 
   @Test void workbookHasNumericAmountsAndLiteralUserText() throws Exception {
-    var item=new ExpenseClaimQueryService.ClaimItem(UUID.randomUUID(),"EX-1",UUID.randomUUID(),"Store",UUID.randomUUID(),"Travel",LocalDate.parse("2026-08-31"),12345L,"SUBMITTED",OffsetDateTime.parse("2026-09-01T01:02:00Z"),null,UUID.randomUUID(),"=1+1","<script>alert(1)</script>",0L);
+    var item=new ExpenseClaimQueryService.ClaimItem(UUID.randomUUID(),"EX-1",UUID.randomUUID(),"Store",UUID.randomUUID(),"Water stock","Travel",LocalDate.parse("2026-08-31"),12345L,"SUBMITTED",OffsetDateTime.parse("2026-09-01T01:02:00Z"),null,UUID.randomUUID(),"=1+1","<script>alert(1)</script>",0L);
     try(var book=new XSSFWorkbook(new ByteArrayInputStream(ExpenseClaimQueryService.workbook(List.of(item))))) {
       var sheet=book.getSheetAt(0);var row=sheet.getRow(1);
       assertThat(sheet.getLastRowNum()).isEqualTo(1);
-      assertThat(row.getCell(3).getNumericCellValue()).isEqualTo(123.45);
-      assertThat(row.getCell(5).getCellType()).isEqualTo(CellType.STRING);
-      assertThat(row.getCell(5).getStringCellValue()).isEqualTo("=1+1");
+      assertThat(row.getCell(4).getNumericCellValue()).isEqualTo(123.45);
+      assertThat(row.getCell(6).getCellType()).isEqualTo(CellType.STRING);
+      assertThat(row.getCell(6).getStringCellValue()).isEqualTo("=1+1");
       assertThat(row.getCell(1).getStringCellValue()).isEqualTo("2026-09-01 09:02");
       assertThat(sheet.getPaneInformation().isFreezePane()).isTrue();
     }

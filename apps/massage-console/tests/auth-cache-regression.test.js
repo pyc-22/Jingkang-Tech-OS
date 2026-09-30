@@ -11,6 +11,7 @@ const root = path.resolve(__dirname, '..', '..', '..');
 const consoleRoot = path.join(root, 'apps', 'massage-console');
 const app = fs.readFileSync(path.join(consoleRoot, 'app.js'), 'utf8');
 const index = fs.readFileSync(path.join(consoleRoot, 'index.html'), 'utf8');
+const managerHtml = fs.readFileSync(path.join(consoleRoot, 'manager-mobile.html'), 'utf8');
 
 function response(body, status = 200, headers = { 'Content-Type': 'application/json' }) {
   return new Response(typeof body === 'string' ? body : JSON.stringify(body), { status, headers });
@@ -167,8 +168,11 @@ test('entry versions changed assets independently and keeps the new room node', 
   const appVersion = index.match(/app\.js\?v=([^"']+)/)?.[1];
   const cssVersion = index.match(/styles\.css\?v=([^"']+)/)?.[1];
   assert.ok(appVersion);
-  assert.equal(appVersion, '20260929-manager-rewards-v2');
+  assert.equal(appVersion, '20260930-operational-state-v1');
   assert.equal(cssVersion, '20260926-auth-hardening-v1');
+  assert.ok(index.includes('expense-ui.js?v=20260930-operational-state-v1'));
+  assert.ok(managerHtml.includes('expense-ui.js?v=20260930-operational-state-v1'));
+  assert.ok(managerHtml.includes('manager-mobile.js?v=20260930-operational-state-v1'));
   assert.match(index, /id="idle-room-count"/);
   assert.match(app, /if \(idleCount\) idleCount\.textContent/);
   assert.match(app, /if \(availableCount\) availableCount\.textContent/);
@@ -214,7 +218,7 @@ test('static server sends entry no-cache, versioned asset long-cache, validators
   assert.ok(entry.headers.get('etag'));
   assert.ok(entry.headers.get('last-modified'));
 
-  const asset = await fetch(`${staticBase}/app.js?v=20260929-manager-rewards-v2`);
+  const asset = await fetch(`${staticBase}/app.js?v=20260930-operational-state-v1`);
   assert.equal(asset.status, 200);
   assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable');
   const etag = asset.headers.get('etag');
@@ -222,10 +226,10 @@ test('static server sends entry no-cache, versioned asset long-cache, validators
   assert.ok(etag);
   assert.ok(lastModified);
 
-  const byTag = await fetch(`${staticBase}/app.js?v=20260929-manager-rewards-v2`, { headers: { 'If-None-Match': etag } });
+  const byTag = await fetch(`${staticBase}/app.js?v=20260930-operational-state-v1`, { headers: { 'If-None-Match': etag } });
   assert.equal(byTag.status, 304);
   assert.equal(await byTag.text(), '');
-  const byDate = await fetch(`${staticBase}/app.js?v=20260929-manager-rewards-v2`, { headers: { 'If-Modified-Since': lastModified } });
+  const byDate = await fetch(`${staticBase}/app.js?v=20260930-operational-state-v1`, { headers: { 'If-Modified-Since': lastModified } });
   assert.equal(byDate.status, 304);
   assert.equal(await byDate.text(), '');
 

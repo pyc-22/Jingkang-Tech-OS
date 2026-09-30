@@ -21,7 +21,8 @@ test('settled payment correction is versioned, audited, and refund protected', (
 
 test('member balance difference is synchronized during payment correction', () => {
   assert.match(controller, /newMemberPayment - oldMemberPayment/);
-  assert.match(controller, /consumeWallet\(storeId, order\.memberId\(\), memberDelta/);
+  assert.match(controller, /for \(ResolvedCorrectionPayment payment : afterPayments\)/);
+  assert.match(controller, /consumeWallet\(storeId, wallet, payment\.amountCents\(\), id, correctionBusinessDate\)/);
   assert.match(controller, /restoreWalletForCorrection/);
   assert.match(controller, /'ORDER_CORRECTION'/);
 });

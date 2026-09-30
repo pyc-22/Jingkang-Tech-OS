@@ -7,6 +7,7 @@ import java.net.URLEncoder;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -57,11 +58,13 @@ public class FinanceExpenseClaimController {
       @RequestParam(required = false) String claimNo,
       @RequestParam(required = false) LocalDate from,
       @RequestParam(required = false) LocalDate to,
-      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+      HttpServletResponse response) {
+    noStore(response);
     sessions.requirePermission(authorization, "EXPENSE_REVIEW");
     sessions.requirePermission(authorization, "EXPENSE_ALL_STORE_VIEW");
     String normalizedStatus = normalizeStatus(status);
-    StringBuilder sql = new StringBuilder("select c.id,c.claim_no,c.store_id,s.name store_name,c.expense_category_id,coalesce(parent.name || ' / ','') || category.name category_name,c.expense_date,c.amount_cents,c.payee_name,c.receipt_type,c.status,c.submitted_at,c.updated_at,c.applicant_user_id,applicant.display_name applicant_name,(select count(*) from expense_attachment a where a.claim_id=c.id and a.active=true)::bigint attachment_count,exists(select 1 from expense_attachment a where a.claim_id=c.id and a.active=true and a.attachment_kind='EXPENSE_PROOF') has_expense_proof from expense_claim c join store s on s.id=c.store_id join app_user applicant on applicant.id=c.applicant_user_id join expense_category category on category.id=c.expense_category_id left join expense_category parent on parent.id=category.parent_id where c.tenant_id=:tenant");
+    StringBuilder sql = new StringBuilder("select c.id,c.claim_no,c.store_id,s.name store_name,c.expense_category_id,c.title,coalesce(parent.name || ' / ','') || category.name category_name,c.expense_date,c.amount_cents,c.payee_name,c.receipt_type,c.status,c.submitted_at,c.updated_at,c.applicant_user_id,applicant.display_name applicant_name,(select count(*) from expense_attachment a where a.claim_id=c.id and a.active=true)::bigint attachment_count,exists(select 1 from expense_attachment a where a.claim_id=c.id and a.active=true and a.attachment_kind='EXPENSE_PROOF') has_expense_proof from expense_claim c join store s on s.id=c.store_id join app_user applicant on applicant.id=c.applicant_user_id join expense_category category on category.id=c.expense_category_id left join expense_category parent on parent.id=category.parent_id where c.tenant_id=:tenant");
     if (!normalizedStatus.isBlank()) sql.append(" and c.status=:status");
     if (storeId != null) sql.append(" and c.store_id=:store");
     if (applicantUserId != null) sql.append(" and c.applicant_user_id=:applicant");
@@ -82,7 +85,9 @@ public class FinanceExpenseClaimController {
   @GetMapping("/{id}")
   FinanceClaimDetail detail(
       @PathVariable UUID id,
-      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+      HttpServletResponse response) {
+    noStore(response);
     sessions.requirePermission(authorization, "EXPENSE_REVIEW");
     sessions.requirePermission(authorization, "EXPENSE_ALL_STORE_VIEW");
     ExpenseClaimController.ClaimRow claim = claim(id);
@@ -94,7 +99,9 @@ public class FinanceExpenseClaimController {
       @PathVariable UUID claimId,
       @PathVariable UUID attachmentId,
       @RequestParam(defaultValue = "false") boolean download,
-      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+      HttpServletResponse response) {
+    noStore(response);
     sessions.requirePermission(authorization, "EXPENSE_REVIEW");
     sessions.requirePermission(authorization, "EXPENSE_ALL_STORE_VIEW");
     ExpenseClaimController.ClaimRow claim = claim(claimId);
@@ -272,7 +279,7 @@ public class FinanceExpenseClaimController {
   }
 
   private ExpenseClaimController.ClaimRow claim(UUID id) {
-    return jdbc.sql("select c.id,c.claim_no,c.store_id,s.name store_name,c.applicant_user_id,applicant.display_name applicant_name,c.expense_category_id,coalesce(parent.name || ' / ','') || category.name category_name,c.expense_date,c.amount_cents,c.payee_name,c.payment_source,c.receipt_type,c.invoice_no,c.description,c.no_receipt_reason,c.status,c.duplicate_warning::text duplicate_warning,c.submitted_at,c.reviewed_by_user_id,c.reviewed_at,c.review_note,c.created_at,c.updated_at,c.version from expense_claim c join store s on s.id=c.store_id join app_user applicant on applicant.id=c.applicant_user_id join expense_category category on category.id=c.expense_category_id left join expense_category parent on parent.id=category.parent_id where c.id=:id and c.tenant_id=:tenant")
+    return jdbc.sql("select c.id,c.claim_no,c.store_id,s.name store_name,c.applicant_user_id,applicant.display_name applicant_name,c.expense_category_id,c.title,coalesce(parent.name || ' / ','') || category.name category_name,c.expense_date,c.amount_cents,c.payee_name,c.payment_source,c.receipt_type,c.invoice_no,c.description,c.no_receipt_reason,c.status,c.duplicate_warning::text duplicate_warning,c.submitted_at,c.reviewed_by_user_id,c.reviewed_at,c.review_note,c.created_at,c.updated_at,c.version from expense_claim c join store s on s.id=c.store_id join app_user applicant on applicant.id=c.applicant_user_id join expense_category category on category.id=c.expense_category_id left join expense_category parent on parent.id=category.parent_id where c.id=:id and c.tenant_id=:tenant")
       .param("id", id).param("tenant", TENANT_ID).query(ExpenseClaimController.ClaimRow.class).optional().orElseThrow(() -> notFound("Expense claim not found"));
   }
 
@@ -301,6 +308,7 @@ public class FinanceExpenseClaimController {
   }
   private void requireComment(String comment, String message) { if (comment == null || comment.isBlank()) throw bad(message); }
   private String blankToNull(String value) { return value == null || value.isBlank() ? null : value.trim(); }
+  private void noStore(HttpServletResponse response) { response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store, max-age=0"); }
   private ResponseStatusException bad(String message) { return new ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, message); }
   private ResponseStatusException conflict(String message) { return new ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT, message); }
   private ResponseStatusException notFound(String message) { return new ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, message); }
@@ -310,7 +318,7 @@ public class FinanceExpenseClaimController {
                                 @NotBlank String action, @NotBlank @Size(max = 2000) String comment) {}
   public record CategoryAssignmentInput(@NotNull UUID categoryId, @Size(max = 2000) String comment) {}
   public record PaymentInput(@NotNull @Positive Long amountCents, @NotBlank @Size(max = 50) String paymentMethod, @NotNull LocalDate paymentDate, @Size(max = 160) String paymentReference, @Size(max = 2000) String note) {}
-  public record FinanceClaimSummary(UUID id, String claimNo, UUID storeId, String storeName, UUID expenseCategoryId, String categoryName, LocalDate expenseDate, Long amountCents, String payeeName, String receiptType, String status, OffsetDateTime submittedAt, OffsetDateTime updatedAt, UUID applicantUserId, String applicantName, Long attachmentCount, Boolean hasExpenseProof) {}
+  public record FinanceClaimSummary(UUID id, String claimNo, UUID storeId, String storeName, UUID expenseCategoryId, String title, String categoryName, LocalDate expenseDate, Long amountCents, String payeeName, String receiptType, String status, OffsetDateTime submittedAt, OffsetDateTime updatedAt, UUID applicantUserId, String applicantName, Long attachmentCount, Boolean hasExpenseProof) {}
   public record FinanceClaimDetail(ExpenseClaimController.ClaimRow claim, List<ExpenseClaimController.Attachment> attachments, List<ExpenseClaimController.ReviewHistory> history, PaymentDetail payment) {}
   public record PaymentDetail(UUID id, Long amountCents, String paymentMethod, LocalDate paymentDate, String paymentReference, String note, String status, UUID createdByUserId, OffsetDateTime createdAt) {}
   private record CategoryInfo(UUID id, String code, String name, Boolean active) {}

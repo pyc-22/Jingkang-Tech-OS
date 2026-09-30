@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.http.HttpHeaders;
 import com.chengxin.massage.admin.StoreContextService;
 import com.chengxin.massage.audit.AuditService;
+import com.chengxin.massage.operations.OperationalStateService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,7 +36,8 @@ public class RoomController {
   private final JdbcClient jdbc;
   private final StoreContextService storeContext;
   private final AuditService audits;
-  RoomController(JdbcClient jdbc, StoreContextService storeContext, AuditService audits) { this.jdbc = jdbc; this.storeContext = storeContext; this.audits = audits; }
+  private final OperationalStateService operationalState;
+  RoomController(JdbcClient jdbc, StoreContextService storeContext, AuditService audits, OperationalStateService operationalState) { this.jdbc = jdbc; this.storeContext = storeContext; this.audits = audits; this.operationalState = operationalState; }
 
   @GetMapping
   List<Room> rooms(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization, @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
@@ -54,8 +56,7 @@ public class RoomController {
   @GetMapping("/statuses")
   List<RoomStatus> statuses(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization, @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
-    return jdbc.sql("select distinct on (room_id) room_id,status,reason,occurred_at from room_status_event where store_id=:store order by room_id,occurred_at desc,id desc")
-      .param("store",storeId).query(RoomStatus.class).list();
+    return operationalState.live(storeId).rooms().stream().map(room -> new RoomStatus(room.roomId(), room.status(), room.reason(), room.occurredAt())).toList();
   }
 
   @PostMapping("/{roomId}/status")
@@ -64,8 +65,7 @@ public class RoomController {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     lockRoom(storeId, roomId);
     StatusAudit before = latestStatus(storeId, roomId);
-    boolean hasActiveService = jdbc.sql("select exists(select 1 from service_session where store_id=:store and room_id=:room and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'))")
-      .param("store", storeId).param("room", roomId).query(Boolean.class).single();
+    boolean hasActiveService = hasOccupyingService(storeId, roomId, null);
     if (hasActiveService && !"IN_SERVICE".equals(input.status())) {
       LOGGER.warn("Room status change rejected: storeId={}, roomId={}, requestedStatus={}, currentStatus={}, activeService={}, reason={}",
         storeId, roomId, input.status(), before.status(), true, input.reason());
@@ -89,8 +89,7 @@ public class RoomController {
       LOGGER.warn("Complete cleaning rejected: storeId={}, roomId={}, currentStatus={}, roomActive=false", storeId, roomId, before.status());
       throw new ResponseStatusException(HttpStatus.CONFLICT, "房间已停用");
     }
-    boolean hasActiveService = jdbc.sql("select exists(select 1 from service_session where store_id=:store and room_id=:room and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'))")
-      .param("store", storeId).param("room", roomId).query(Boolean.class).single();
+    boolean hasActiveService = hasOccupyingService(storeId, roomId, null);
     if (hasActiveService) {
       LOGGER.warn("Complete cleaning rejected: storeId={}, roomId={}, currentStatus={}, activeService=true", storeId, roomId, before.status());
       throw new ResponseStatusException(HttpStatus.CONFLICT, "房间存在进行中的服务，无法完成清洁");
@@ -122,8 +121,7 @@ public class RoomController {
       LOGGER.warn("Confirm payment rejected: storeId={}, roomId={}, currentStatus={}, expectedStatus=PENDING_PAYMENT", storeId, roomId, status);
       throw new ResponseStatusException(HttpStatus.CONFLICT, "仅待付款房间可以确认已付款");
     }
-    boolean hasActiveService = jdbc.sql("select exists(select 1 from service_session where store_id=:store and room_id=:room and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'))")
-      .param("store", storeId).param("room", roomId).query(Boolean.class).single();
+    boolean hasActiveService = hasOccupyingService(storeId, roomId, null);
     if (hasActiveService) {
       LOGGER.warn("Confirm payment rejected: storeId={}, roomId={}, currentStatus={}, activeService=true", storeId, roomId, status);
       throw new ResponseStatusException(HttpStatus.CONFLICT, "房间仍有进行中的服务，无法确认付款");
@@ -210,12 +208,19 @@ public class RoomController {
   }
 
   private void requireUnoccupied(UUID storeId, UUID roomId, UUID bedId) {
-    boolean occupied = jdbc.sql("""
-      select exists(select 1 from service_session where store_id=:store and room_id=:room
-        and (cast(:bed as uuid) is null or bed_id=:bed)
-        and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'))
-      """).param("store", storeId).param("room", roomId).param("bed", bedId).query(Boolean.class).single();
+    boolean occupied = hasOccupyingService(storeId, roomId, bedId);
     if (occupied) throw new ResponseStatusException(HttpStatus.CONFLICT, "Room or bed has an active service");
+  }
+
+  private boolean hasOccupyingService(UUID storeId, UUID roomId, UUID bedId) {
+    return jdbc.sql("""
+      select exists(
+        select 1 from service_session session
+        where session.store_id=:store and session.room_id=:room
+          and (cast(:bed as uuid) is null or session.bed_id=:bed)
+          and """ + OperationalStateService.occupyingServicePredicate("session") + """
+      )
+      """).param("store", storeId).param("room", roomId).param("bed", bedId).query(Boolean.class).single();
   }
 
   private void resizeBeds(UUID storeId, Room room) {

@@ -113,10 +113,11 @@ class HistoricalBackfillSalesOrderContractTest {
 
     assertThat(method)
         .contains("ensureHistoricalMember(storeId, input.memberId())")
-        .contains("consumeHistoricalWallet(storeId, input.memberId(), payment.amountCents(), orderId, input.backfillDate())");
+        .contains("Wallet wallet = resolveWallet(storeId, input.memberId(), payment.walletId(), method)")
+        .contains("consumeWallet(storeId, wallet, payment.amountCents(), orderId, input.backfillDate())");
     assertThat(source)
-        .contains("m.tenant_id=:tenant and m.active=true")
         .contains("w.tenant_id=:tenant")
+        .contains("m.active")
         .contains("where id=:id")
         .doesNotContain("m.registered_store_id=:store")
         .doesNotContain("w.opened_store_id=:store");
@@ -128,7 +129,7 @@ class HistoricalBackfillSalesOrderContractTest {
         "src/main/java/com/chengxin/massage/sales/SalesOrderController.java"));
     int settlement = source.indexOf("@PostMapping(\"/settle\")");
     assertThat(settlement).isGreaterThanOrEqualTo(0);
-    assertThat(source.indexOf("consumeWallet(storeId, input.memberId(), payment.amountCents(), orderId, businessDate)", settlement))
+    assertThat(source.indexOf("Wallet wallet = resolveWallet(storeId, input.memberId(), payment.walletId(), method)", settlement))
         .isGreaterThanOrEqualTo(settlement);
   }
 

@@ -63,6 +63,11 @@ class BusinessPermissionFilterTest {
   void protectsReportsAccountsAndRefunds() {
     assertThat(filter.requiredPermissionsFor("/api/v1/operations/daily-report", "GET"))
       .containsExactly("REPORT_VIEW");
+    for (String path : List.of("/api/v1/operations/live-state", "/api/v1/operations/live-room-status",
+        "/api/v1/operations/live-technician-status")) {
+      assertThat(filter.requiredPermissionsFor(path, "GET"))
+        .containsExactly("FRONTDESK_SETTLE", "REPORT_VIEW");
+    }
     assertThat(filter.requiredPermissionsFor("/api/v1/admin/technician-accounts", "GET"))
       .containsExactly("ACCOUNT_MANAGE");
     assertThat(filter.requiredPermissionsFor("/api/v1/refunds", "GET"))

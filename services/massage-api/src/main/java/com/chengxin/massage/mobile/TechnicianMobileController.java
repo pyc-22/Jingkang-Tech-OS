@@ -27,6 +27,7 @@ import com.chengxin.massage.catalog.TechnicianSchedulePolicy;
 import com.chengxin.massage.audit.AuditOutcomeFilter;
 import com.chengxin.massage.audit.AuditService;
 import com.chengxin.massage.operations.BusinessClockService;
+import com.chengxin.massage.operations.OperationalStateService;
 import com.chengxin.massage.catalog.ServiceItemVersionService;
 import com.chengxin.massage.catalog.ServiceDispatchEventService;
 import com.chengxin.massage.catalog.ServiceDispatchLifecycle;
@@ -258,7 +259,7 @@ public class TechnicianMobileController {
     if (!eligibility.eligible()) return new MobileClockOptions(List.of(), List.of(), false, eligibility.reason());
     LocalDate businessDate = businessClock.currentBusinessDate(technician.storeId());
     List<ServiceItemOption> services = itemVersions.activeItems(technician.storeId(), businessDate, false).stream().map(this::option).toList();
-    List<RoomOption> rooms = jdbc.sql("select r.id,r.code,r.name from room r where r.store_id=:store and r.active=true and not exists(select 1 from service_session ss where ss.store_id=r.store_id and ss.room_id=r.id and ss.status='IN_SERVICE') and coalesce((select event.status from room_status_event event where event.store_id=r.store_id and event.room_id=r.id order by event.occurred_at desc,event.id desc limit 1),'IDLE')='IDLE' order by r.code")
+    List<RoomOption> rooms = jdbc.sql("select r.id,r.code,r.name from room r where r.store_id=:store and r.active=true and exists(select 1 from room_bed bed where bed.store_id=r.store_id and bed.room_id=r.id and bed.active and not exists(select 1 from service_session ss where ss.store_id=r.store_id and ss.bed_id=bed.id and " + OperationalStateService.occupyingServicePredicate("ss") + ")) and coalesce((select event.status from room_status_event event where event.store_id=r.store_id and event.room_id=r.id order by event.occurred_at desc,event.id desc limit 1),'IDLE') in ('IDLE','RESERVED','IN_SERVICE','PENDING_PAYMENT') order by r.code")
       .param("store", technician.storeId()).query(RoomOption.class).list();
     return new MobileClockOptions(services, rooms, true, eligibility.reason());
   }

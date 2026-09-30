@@ -37,6 +37,7 @@ import com.chengxin.massage.admin.StoreContextService;
 import com.chengxin.massage.admin.AdminSessionService;
 import com.chengxin.massage.audit.AuditService;
 import com.chengxin.massage.operations.BusinessClockService;
+import com.chengxin.massage.operations.OperationalStateService;
 import com.chengxin.massage.catalog.ServiceItemVersionService;
 import com.chengxin.massage.catalog.ServiceItemVersionService.ResolvedServiceItem;
 import com.chengxin.massage.catalog.ServiceItemVersionService.CommissionRuleVersion;
@@ -79,7 +80,7 @@ public class SalesOrderController {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     int safeSize = Math.min(size, 200);
     int safePage = Math.max(page, 0);
-    StringBuilder sql = new StringBuilder("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version,o.is_historical_backfill historical_backfill,o.backfill_date backfill_date,o.backfill_by backfill_by,o.backfill_at backfill_at,backfill_actor.display_name backfill_by_name from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id left join app_user backfill_actor on backfill_actor.id=o.backfill_by where o.store_id=:store and (o.order_no ilike :q or o.settlement_no ilike :q or coalesce(m.name,'') ilike :q or coalesce(m.phone,'') ilike :q)");
+    StringBuilder sql = new StringBuilder("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id and is_default),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version,o.is_historical_backfill historical_backfill,o.backfill_date backfill_date,o.backfill_by backfill_by,o.backfill_at backfill_at,backfill_actor.display_name backfill_by_name from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id left join app_user backfill_actor on backfill_actor.id=o.backfill_by where o.store_id=:store and (o.order_no ilike :q or o.settlement_no ilike :q or coalesce(m.name,'') ilike :q or coalesce(m.phone,'') ilike :q)");
     if (from != null) sql.append(" and o.business_date >= :fromDate");
     if (to != null) sql.append(" and o.business_date <= :toDate");
     if (!paymentMethod.isBlank()) sql.append(" and exists (select 1 from payment_record filter_payment where filter_payment.order_id=o.id and filter_payment.payment_method=:paymentMethod)");
@@ -133,9 +134,9 @@ public class SalesOrderController {
                                                      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                                                      @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
-    String sql = "select ss.id,upper('FW-' || substr(replace(ss.id::text,'-',''),1,12)) service_no,ss.service_item_id,ss.service_name_snapshot,ss.service_price_cents + coalesce((select sum(extension.service_price_cents) from service_session_extension extension where extension.service_session_id=ss.id),0) service_price_cents,ss.planned_duration_minutes,ss.ended_at,ss.business_date,coalesce((select string_agg(technician.name,'、' order by participant.slot_no,participant.sequence_no) from service_session_participant participant join technician technician on technician.id=participant.technician_id where participant.service_session_id=ss.id and participant.status='COMPLETED'),t.name) technician_name,ss.room_id,r.code room_code,ss.clock_type,coalesce((select string_agg(extension.service_name_snapshot || ' ' || extension.planned_duration_minutes || '分钟', '、' order by extension.added_at) from service_session_extension extension where extension.service_session_id=ss.id),'') extension_summary from service_session ss join technician t on t.id=ss.technician_id left join room r on r.id=ss.room_id where ss.store_id=:store";
+    String sql = "select ss.id,upper('FW-' || substr(replace(ss.id::text,'-',''),1,12)) service_no,ss.service_item_id,ss.service_name_snapshot,ss.service_price_cents + coalesce((select sum(extension.service_price_cents) from service_session_extension extension where extension.service_session_id=ss.id),0) service_price_cents,ss.planned_duration_minutes,ss.ended_at,ss.business_date,coalesce((select string_agg(technician.name,'、' order by participant.slot_no,participant.sequence_no) from service_session_participant participant join technician technician on technician.id=participant.technician_id where participant.service_session_id=ss.id and participant.status='COMPLETED'),t.name) technician_name,ss.room_id,r.code room_code,ss.bed_id,bed.code bed_code,bed.name bed_name,ss.clock_type,coalesce((select string_agg(extension.service_name_snapshot || ' ' || extension.planned_duration_minutes || '分钟', '、' order by extension.added_at) from service_session_extension extension where extension.service_session_id=ss.id),'') extension_summary from service_session ss join technician t on t.id=ss.technician_id left join room r on r.id=ss.room_id left join room_bed bed on bed.id=ss.bed_id where ss.store_id=:store";
     if (roomId != null) sql += " and ss.room_id=:roomId";
-    sql += " and ss.status='COMPLETED' and not exists(select 1 from sales_order_service_session link join sales_order linked_order on linked_order.id=link.order_id where link.service_session_id=ss.id and linked_order.status <> 'CANCELLED' and linked_order.refund_status <> 'FULL') order by ss.ended_at desc limit 100";
+    sql += " and " + OperationalStateService.completedUnsettledPredicate("ss") + " order by ss.ended_at desc limit 100";
     JdbcClient.StatementSpec statement = jdbc.sql(sql).param("store", storeId);
     if (roomId != null) statement = statement.param("roomId", roomId);
     return statement.query(PendingServiceSession.class).list();
@@ -154,11 +155,11 @@ public class SalesOrderController {
                      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                      @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
-    OrderSummary order = jdbc.sql("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version,o.is_historical_backfill historical_backfill,o.backfill_date backfill_date,o.backfill_by backfill_by,o.backfill_at backfill_at,backfill_actor.display_name backfill_by_name from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id left join app_user backfill_actor on backfill_actor.id=o.backfill_by where o.id=:id and o.store_id=:store")
+    OrderSummary order = jdbc.sql("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id and is_default),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version,o.is_historical_backfill historical_backfill,o.backfill_date backfill_date,o.backfill_by backfill_by,o.backfill_at backfill_at,backfill_actor.display_name backfill_by_name from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id left join app_user backfill_actor on backfill_actor.id=o.backfill_by where o.id=:id and o.store_id=:store")
       .param("id", id).param("store", storeId).query(OrderSummary.class).single();
     List<OrderLine> lines = jdbc.sql("select line.id,line.service_item_id,line.item_name_snapshot,line.unit_price_cents,line.duration_minutes,line.quantity,line.line_amount_cents,link.service_session_id,session.technician_id,coalesce((select string_agg(technician.name,'、' order by participant.slot_no,participant.sequence_no) from service_session_participant participant join technician technician on technician.id=participant.technician_id where participant.service_session_id=session.id and participant.status='COMPLETED'),technician.name) technician_name,room.code room_code,room.name room_name,session.ended_at service_ended_at,session.clock_type,coalesce((select count(*) from service_session_participant participant where participant.service_session_id=session.id and participant.status='COMPLETED'),0) participant_count from sales_order_line line left join sales_order_service_session link on link.order_line_id=line.id left join service_session session on session.id=link.service_session_id left join technician technician on technician.id=session.technician_id left join room room on room.id=session.room_id where line.order_id=:id")
       .param("id", id).query(OrderLine.class).list();
-    List<Payment> payments = jdbc.sql("select id,payment_method,payment_method_name_snapshot,amount_cents,created_at from payment_record where order_id=:id order by created_at")
+    List<Payment> payments = jdbc.sql("select payment.id,payment.payment_method,payment.payment_method_name_snapshot,payment.wallet_id,w.account_code,w.account_name,payer.id payer_member_id,payer.name payer_member_name,payer.code payer_member_code,payment.amount_cents,payment.created_at from payment_record payment left join member_wallet w on w.id=payment.wallet_id left join member payer on payer.id=w.member_id where payment.order_id=:id order by payment.created_at")
       .param("id", id).query(Payment.class).list();
     return new OrderDetail(order, lines, payments, loadBusinessCorrections(storeId, id));
   }
@@ -205,13 +206,13 @@ public class SalesOrderController {
     if (reason.isBlank()) throw bad("作废原因不能为空");
     if ("CANCELLED".equals(state.status())) throw conflict("订单已经作废");
     if (!"SETTLED".equals(state.status()) && !"DRAFT".equals(state.status())) throw conflict("当前订单状态不能作废");
-    if (state.paidCents() > 0 || state.paymentCount() > 0) throw conflict("已收款订单请使用整单红冲，不能直接作废");
+    if (state.paidCents() > 0 || state.paymentCount() > 0) throw conflict("已收款订单不能直接作废；整单退款后服务回待结算，可重新结账");
     if (state.refundCount() > 0) throw conflict("订单已有退款记录，不能直接作废");
     OffsetDateTime cancelledAt = OffsetDateTime.now();
     if (state.commissionCount() > 0) reverseCommissionsForVoid(id, state.orderNo(), cancelledAt, businessClock.businessDate(storeId, cancelledAt));
     jdbc.sql("update sales_order set status='CANCELLED',cancel_reason=:reason,cancelled_at=:cancelledAt where id=:id and store_id=:store")
       .param("id", id).param("store", storeId).param("reason", reason).param("cancelledAt", cancelledAt).update();
-    OrderSummary cancelled = jdbc.sql("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version,o.is_historical_backfill historical_backfill,o.backfill_date backfill_date,o.backfill_by backfill_by,o.backfill_at backfill_at,backfill_actor.display_name backfill_by_name from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id left join app_user backfill_actor on backfill_actor.id=o.backfill_by where o.id=:id and o.store_id=:store")
+    OrderSummary cancelled = jdbc.sql("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id and is_default),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version,o.is_historical_backfill historical_backfill,o.backfill_date backfill_date,o.backfill_by backfill_by,o.backfill_at backfill_at,backfill_actor.display_name backfill_by_name from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id left join app_user backfill_actor on backfill_actor.id=o.backfill_by where o.id=:id and o.store_id=:store")
       .param("id", id).param("store", storeId).query(OrderSummary.class).single();
     audits.record(authorization, storeId, "SALES", "ORDER_VOIDED", "sales_order", id, "Sales order voided: " + reason, state, cancelled);
     return cancelled;
@@ -321,11 +322,12 @@ public class SalesOrderController {
     }
     for (PaymentInput payment : input.payments()) {
       PaymentMethod method = paymentMethod(storeId, payment.method());
-      if ("MEMBER_BALANCE".equals(method.methodKind())) consumeHistoricalWallet(storeId, input.memberId(), payment.amountCents(), orderId, input.backfillDate());
+      Wallet wallet = resolveWallet(storeId, input.memberId(), payment.walletId(), method);
+      if ("MEMBER_BALANCE".equals(method.methodKind())) consumeWallet(storeId, wallet, payment.amountCents(), orderId, input.backfillDate());
       paymentNames.add(method.name());
-      jdbc.sql("insert into payment_record(id,tenant_id,store_id,order_id,payment_method,payment_method_name_snapshot,amount_cents) values(:id,:tenant,:store,:order,:method,:name,:amount)")
+      jdbc.sql("insert into payment_record(id,tenant_id,store_id,order_id,payment_method,payment_method_name_snapshot,wallet_id,amount_cents) values(:id,:tenant,:store,:order,:method,:name,:wallet,:amount)")
         .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("order", orderId)
-        .param("method", method.code()).param("name", method.name()).param("amount", payment.amountCents()).update();
+        .param("method", method.code()).param("name", method.name()).param("wallet", wallet == null ? null : wallet.id()).param("amount", payment.amountCents()).update();
     }
     HistoricalBackfillResult result = new HistoricalBackfillResult(orderId, orderNo, settlementNo,
       input.backfillDate(), receivable, paid, actor.userId(), actor.displayName());
@@ -400,6 +402,7 @@ public class SalesOrderController {
     for (Line line : lines) {
       if (line.serviceSessionId() != null && !linkedSessions.add(line.serviceSessionId())) throw bad("同一服务不能在一笔订单中重复结算");
     }
+    validateSettlementUnits(storeId, lines);
     if (correctionSource != null) validateCorrectionServiceSessions(storeId, correctionSource.id(), lines);
     Set<LocalDate> serviceBusinessDates = new HashSet<>();
     for (Line line : lines) if (line.businessDate() != null) serviceBusinessDates.add(line.businessDate());
@@ -439,9 +442,10 @@ public class SalesOrderController {
     }
     for (PaymentInput payment : input.payments()) {
       PaymentMethod method = paymentMethod(storeId, payment.method());
-      if ("MEMBER_BALANCE".equals(method.methodKind())) consumeWallet(storeId, input.memberId(), payment.amountCents(), orderId, businessDate);
-      jdbc.sql("insert into payment_record(id,tenant_id,store_id,order_id,payment_method,payment_method_name_snapshot,amount_cents) values(:id,:tenant,:store,:order,:method,:name,:amount)")
-        .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("order", orderId).param("method", method.code()).param("name", method.name()).param("amount", payment.amountCents()).update();
+      Wallet wallet = resolveWallet(storeId, input.memberId(), payment.walletId(), method);
+      if ("MEMBER_BALANCE".equals(method.methodKind())) consumeWallet(storeId, wallet, payment.amountCents(), orderId, businessDate);
+      jdbc.sql("insert into payment_record(id,tenant_id,store_id,order_id,payment_method,payment_method_name_snapshot,wallet_id,amount_cents) values(:id,:tenant,:store,:order,:method,:name,:wallet,:amount)")
+        .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("order", orderId).param("method", method.code()).param("name", method.name()).param("wallet", wallet == null ? null : wallet.id()).param("amount", payment.amountCents()).update();
     }
     if (correctionSource == null) updateLinkedServiceRoomStates(storeId, materializedLines, orderNo);
     Order settled = new Order(orderId, orderNo, total, paid, "SETTLED", settledAt);
@@ -481,6 +485,32 @@ public class SalesOrderController {
     return "SO" + date + String.format(java.util.Locale.ROOT, "%08d", sequence);
   }
 
+  /**
+   * A selected service session is the smallest settlement unit. Its main service
+   * and every extension are materialized into one order line, so a later AA
+   * settlement can only select another complete session.
+   */
+  private void validateSettlementUnits(UUID storeId, List<Line> lines) {
+    List<UUID> sessions = lines.stream().map(Line::serviceSessionId).filter(java.util.Objects::nonNull).distinct().toList();
+    if (sessions.isEmpty()) return;
+    List<SettlementUnit> units = jdbc.sql("""
+      select ss.id service_session_id,ss.bed_id,ss.room_id,
+             ss.service_price_cents + coalesce(sum(extension.service_price_cents),0) total_cents,
+             count(extension.id) extension_count
+      from service_session ss
+      left join service_session_extension extension on extension.service_session_id=ss.id
+      where ss.id in (:sessions) and ss.store_id=:store
+      group by ss.id,ss.bed_id,ss.room_id,ss.service_price_cents
+      """).param("sessions", sessions).param("store", storeId).query(SettlementUnit.class).list();
+    if (units.size() != sessions.size()) throw bad("待结算服务不属于当前门店，请刷新后重试");
+    Map<UUID, SettlementUnit> bySession = units.stream().collect(java.util.stream.Collectors.toMap(SettlementUnit::serviceSessionId, item -> item));
+    for (Line line : lines) {
+      if (line.serviceSessionId() == null) continue;
+      SettlementUnit unit = bySession.get(line.serviceSessionId());
+      if (unit == null || !unit.totalCents().equals(Long.valueOf(line.priceCents()))) throw conflict("服务主项与加钟必须在同一张订单中结算");
+    }
+  }
+
   @PostMapping("/{id}/financial-corrections")
   @Transactional
   FinancialCorrectionResult correctFinancials(@PathVariable UUID id, @Valid @RequestBody FinancialCorrectionInput input,
@@ -501,22 +531,29 @@ public class SalesOrderController {
     long newPaid = input.settlementAmountCents();
     long paymentTotal = input.payments().stream().mapToLong(PaymentInput::amountCents).sum();
     if (newPaid != paymentTotal) throw bad("支付方式合计必须等于修改后的实收金额");
-    List<Payment> beforePayments = jdbc.sql("select id,payment_method,payment_method_name_snapshot,amount_cents,created_at from payment_record where order_id=:order order by created_at,id")
+    List<Payment> beforePayments = jdbc.sql("select payment.id,payment.payment_method,payment.payment_method_name_snapshot,payment.wallet_id,w.account_code,w.account_name,payer.id payer_member_id,payer.name payer_member_name,payer.code payer_member_code,payment.amount_cents,payment.created_at from payment_record payment left join member_wallet w on w.id=payment.wallet_id left join member payer on payer.id=w.member_id where payment.order_id=:order order by payment.created_at,payment.id")
       .param("order", id).query(Payment.class).list();
     List<ResolvedCorrectionPayment> afterPayments = new ArrayList<>();
-    Set<String> correctionMethods = new HashSet<>();
     for (PaymentInput payment : input.payments()) {
       PaymentMethod method = paymentMethod(storeId, payment.method());
-      if (!correctionMethods.add(method.code())) throw bad("同一收款方式不能重复填写");
-      afterPayments.add(new ResolvedCorrectionPayment(method.code(), method.name(), method.methodKind(), payment.amountCents()));
+      Wallet wallet = resolveWallet(storeId, order.memberId(), payment.walletId(), method);
+      afterPayments.add(new ResolvedCorrectionPayment(method.code(), method.name(), method.methodKind(), wallet == null ? null : wallet.id(), payment.amountCents()));
     }
     long oldMemberPayment = beforePayments.stream().filter(payment -> "MEMBER_BALANCE".equals(payment.paymentMethod())).mapToLong(Payment::amountCents).sum();
     long newMemberPayment = afterPayments.stream().filter(payment -> "MEMBER_BALANCE".equals(payment.methodKind())).mapToLong(ResolvedCorrectionPayment::amountCents).sum();
-    if (newMemberPayment > 0 && order.memberId() == null) throw bad("使用会员余额时订单必须关联会员");
     long memberDelta = newMemberPayment - oldMemberPayment;
     LocalDate correctionBusinessDate = businessClock.businessDate(storeId, OffsetDateTime.now());
-    if (memberDelta > 0) consumeWallet(storeId, order.memberId(), memberDelta, id, correctionBusinessDate);
-    else if (memberDelta < 0) restoreWalletForCorrection(storeId, order.memberId(), -memberDelta, id, correctionBusinessDate);
+    for (Payment payment : beforePayments) {
+      if ("MEMBER_BALANCE".equals(payment.paymentMethod()) && payment.walletId() != null) {
+        restoreWalletForCorrection(storeId, payment.walletId(), payment.amountCents(), id, correctionBusinessDate);
+      }
+    }
+    for (ResolvedCorrectionPayment payment : afterPayments) {
+      if ("MEMBER_BALANCE".equals(payment.methodKind())) {
+        Wallet wallet = walletById(payment.walletId());
+        consumeWallet(storeId, wallet, payment.amountCents(), id, correctionBusinessDate);
+      }
+    }
 
     int version = order.financialCorrectionVersion() + 1;
     UUID correctionId = UUID.randomUUID();
@@ -528,9 +565,9 @@ public class SalesOrderController {
     for (ResolvedCorrectionPayment payment : afterPayments) snapshotCorrectionPayment(correctionId, "AFTER", payment.code(), payment.name(), payment.amountCents());
     jdbc.sql("delete from payment_record where order_id=:order").param("order", id).update();
     for (ResolvedCorrectionPayment payment : afterPayments) {
-      jdbc.sql("insert into payment_record(id,tenant_id,store_id,order_id,payment_method,payment_method_name_snapshot,amount_cents) values(:id,:tenant,:store,:order,:method,:name,:amount)")
+      jdbc.sql("insert into payment_record(id,tenant_id,store_id,order_id,payment_method,payment_method_name_snapshot,wallet_id,amount_cents) values(:id,:tenant,:store,:order,:method,:name,:wallet,:amount)")
         .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("order", id)
-        .param("method", payment.code()).param("name", payment.name()).param("amount", payment.amountCents()).update();
+        .param("method", payment.code()).param("name", payment.name()).param("wallet", payment.walletId()).param("amount", payment.amountCents()).update();
     }
     jdbc.sql("update sales_order set paid_cents=:paid,financial_correction_version=:version where id=:id and store_id=:store")
       .param("paid", newPaid).param("version", version).param("id", id).param("store", storeId).update();
@@ -611,15 +648,13 @@ public class SalesOrderController {
     return normalized;
   }
 
-  private void restoreWalletForCorrection(UUID transactionStoreId, UUID memberId, long amount, UUID orderId, LocalDate businessDate) {
-    if (memberId == null) throw bad("原订单没有关联会员余额");
-    Wallet wallet = jdbc.sql("select w.id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.member_id=:member and m.tenant_id=:tenant for update")
-      .param("member", memberId).param("tenant", TENANT_ID).query(Wallet.class).single();
+  private void restoreWalletForCorrection(UUID transactionStoreId, UUID walletId, long amount, UUID orderId, LocalDate businessDate) {
+    Wallet wallet = walletById(walletId);
     long after = wallet.balanceCents() + amount;
     jdbc.sql("update member_wallet set balance_cents=:balance,updated_at=now(),version=version+1 where id=:id")
       .param("balance", after).param("id", wallet.id()).update();
     jdbc.sql("insert into wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,source,note,business_date) values(:id,:tenant,:store,:wallet,:member,'REFUND',:amount,:before,:after,'ORDER_CORRECTION',:note,:businessDate)")
-      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", transactionStoreId).param("wallet", wallet.id()).param("member", memberId)
+      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", transactionStoreId).param("wallet", wallet.id()).param("member", wallet.memberId())
       .param("amount", amount).param("before", wallet.balanceCents()).param("after", after).param("note", orderId.toString()).param("businessDate", businessDate).update();
   }
 
@@ -795,7 +830,7 @@ public class SalesOrderController {
     List<UUID> orderedRoomIds = roomIds.stream().sorted().toList();
     lockRoomsForSettlement(storeId, orderedRoomIds);
     for (UUID roomId : orderedRoomIds) {
-      boolean hasUnsettledServices = jdbc.sql("select exists(select 1 from service_session session where session.store_id=:store and session.room_id=:room and session.status='COMPLETED' and not exists(select 1 from sales_order_service_session link join sales_order linked_order on linked_order.id=link.order_id where link.service_session_id=session.id and linked_order.status <> 'CANCELLED' and linked_order.refund_status <> 'FULL'))")
+      boolean hasUnsettledServices = jdbc.sql("select exists(select 1 from service_session session where session.store_id=:store and session.room_id=:room and " + OperationalStateService.completedUnsettledPredicate("session") + ")")
         .param("store", storeId).param("room", roomId).query(Boolean.class).single();
       String nextStatus = roomStatusAfterSettlement(hasUnsettledServices);
       String reason = hasUnsettledServices
@@ -836,7 +871,7 @@ public class SalesOrderController {
       ServiceSessionForSettlement session = jdbc.sql("select ss.id,ss.service_item_id,ss.service_name_snapshot,ss.service_price_cents + coalesce((select sum(extension.service_price_cents) from service_session_extension extension where extension.service_session_id=ss.id),0) service_price_cents,ss.planned_duration_minutes,coalesce((select string_agg(extension.service_name_snapshot || ' ' || extension.planned_duration_minutes || '分钟', '、' order by extension.added_at) from service_session_extension extension where extension.service_session_id=ss.id),'') extension_summary,ss.business_date from service_session ss where ss.id=:id and ss.store_id=:store and ss.status='COMPLETED' for update of ss")
         .param("id", input.serviceSessionId()).param("store", storeId).query(ServiceSessionForSettlement.class).optional()
         .orElseThrow(() -> bad("服务不存在、尚未完成或已经作废，请刷新待结算列表"));
-      boolean alreadyLinked = jdbc.sql("select exists(select 1 from sales_order_service_session link join sales_order linked_order on linked_order.id=link.order_id where link.service_session_id=:session and linked_order.status <> 'CANCELLED' and linked_order.refund_status <> 'FULL')")
+      boolean alreadyLinked = jdbc.sql("select exists(select 1 from service_session ss where ss.id=:session and " + OperationalStateService.activeSettlementPredicate("ss") + ")")
         .param("session", session.id()).query(Boolean.class).single();
       if (alreadyLinked) throw conflict("该服务已经结算，不能重复收款");
       List<SettlementParticipant> participants = jdbc.sql("select id,slot_no,sequence_no,participation_type,allocation_bp,status,replaced_participant_id from service_session_participant where service_session_id=:session and store_id=:store order by slot_no,sequence_no")
@@ -862,18 +897,20 @@ public class SalesOrderController {
     List<ManualTechnicianAllocation> allocations = normalizeManualAllocations(storeId, input.technicians());
     String clockType = normalizeClockType(input.clockType());
     if (input.roomId() != null) {
-      boolean roomExists = jdbc.sql("""
+      String roomAvailabilitySql = """
         select exists(
           select 1 from room room
           where room.id=:room and room.store_id=:store and room.active=true
             and not exists(
               select 1 from service_session active_session
               where active_session.store_id=:store and active_session.room_id=room.id
-                and active_session.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'))
+                and """ + OperationalStateService.occupyingServicePredicate("active_session") + """
+            )
             and coalesce((select event.status from room_status_event event
                           where event.store_id=:store and event.room_id=room.id
                           order by event.occurred_at desc,event.id desc limit 1),'IDLE')='IDLE')
-        """)
+        """;
+      boolean roomExists = jdbc.sql(roomAvailabilitySql)
         .param("room", input.roomId()).param("store", storeId).query(Boolean.class).single();
       if (!roomExists) throw bad("所选房间不可用、非空闲或不属于当前门店");
     }
@@ -975,7 +1012,7 @@ public class SalesOrderController {
   }
 
   private void linkServiceSession(UUID storeId, UUID orderId, UUID orderLineId, UUID serviceSessionId) {
-    boolean alreadyLinked = jdbc.sql("select exists(select 1 from sales_order_service_session link join sales_order linked_order on linked_order.id=link.order_id where link.service_session_id=:session and linked_order.status <> 'CANCELLED' and linked_order.refund_status <> 'FULL')")
+    boolean alreadyLinked = jdbc.sql("select exists(select 1 from service_session ss where ss.id=:session and " + OperationalStateService.activeSettlementPredicate("ss") + ")")
       .param("session", serviceSessionId).query(Boolean.class).single();
     if (alreadyLinked) throw conflict("该服务已经在有效订单中结算");
     try {
@@ -1049,31 +1086,44 @@ public class SalesOrderController {
     }
   }
 
+  private Wallet resolveWallet(UUID storeId, UUID orderMemberId, UUID requestedWalletId, PaymentMethod method) {
+    if (!"MEMBER_BALANCE".equals(method.methodKind())) {
+      if (requestedWalletId != null) throw bad("外部支付方式不能指定会员卡");
+      return null;
+    }
+    if (requestedWalletId == null && orderMemberId == null) throw bad("使用会员余额付款时必须先选择会员或会员卡");
+    String sql = "select w.id,w.member_id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.tenant_id=:tenant and w.active and m.active and "
+      + (requestedWalletId == null ? "w.member_id=:member and w.is_default" : "w.id=:wallet") + " for update of w";
+    var statement = jdbc.sql(sql).param("tenant", TENANT_ID);
+    if (requestedWalletId == null) statement = statement.param("member", orderMemberId);
+    else statement = statement.param("wallet", requestedWalletId);
+    return statement.query(Wallet.class).optional().orElseThrow(() -> bad(requestedWalletId == null ? "使用会员余额付款时必须先选择会员" : "所选会员卡不存在、已停用或不可用"));
+  }
+
+  private Wallet walletById(UUID walletId) {
+    if (walletId == null) throw bad("会员卡不能为空");
+    return jdbc.sql("select w.id,w.member_id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.id=:wallet and w.tenant_id=:tenant and w.active and m.active for update")
+      .param("wallet", walletId).param("tenant", TENANT_ID).query(Wallet.class).optional()
+      .orElseThrow(() -> bad("所选会员卡不存在、已停用或不可用"));
+  }
+
   private void consumeWallet(UUID transactionStoreId, UUID memberId, long amount, UUID orderId, LocalDate businessDate) {
-    if (memberId == null) throw bad("使用会员余额付款时必须先选择会员");
-    Wallet wallet = jdbc.sql("select w.id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.member_id=:member and m.tenant_id=:tenant for update")
-      .param("member", memberId).param("tenant", TENANT_ID).query(Wallet.class).single();
+    consumeWallet(transactionStoreId, resolveWallet(transactionStoreId, memberId, null, new PaymentMethod("MEMBER_BALANCE", "会员余额", "MEMBER_BALANCE")), amount, orderId, businessDate);
+  }
+
+  private void consumeWallet(UUID transactionStoreId, Wallet wallet, long amount, UUID orderId, LocalDate businessDate) {
+    if (wallet == null) throw bad("使用会员余额付款时必须先选择会员卡");
     if (wallet.balanceCents() < amount) throw new ResponseStatusException(HttpStatus.CONFLICT, "会员余额不足，请调整付款方式或充值");
     long after = wallet.balanceCents() - amount;
     jdbc.sql("update member_wallet set balance_cents=:balance,updated_at=now(),version=version+1 where id=:id")
       .param("balance", after).param("id", wallet.id()).update();
     jdbc.sql("insert into wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,source,note,business_date) values(:id,:tenant,:store,:wallet,:member,'CONSUMPTION',:amount,:before,:after,'ORDER',:note,:businessDate)")
-      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", transactionStoreId).param("wallet", wallet.id()).param("member", memberId)
+      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", transactionStoreId).param("wallet", wallet.id()).param("member", wallet.memberId())
       .param("amount", -amount).param("before", wallet.balanceCents()).param("after", after).param("note", orderId.toString()).param("businessDate", businessDate).update();
   }
 
   private void consumeHistoricalWallet(UUID transactionStoreId, UUID memberId, long amount, UUID orderId, LocalDate businessDate) {
-    if (memberId == null) throw bad("使用会员余额付款时必须先选择会员");
-    Wallet wallet = jdbc.sql("select w.id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.member_id=:member and m.tenant_id=:tenant and m.active=true and w.tenant_id=:tenant for update")
-      .param("member", memberId).param("tenant", TENANT_ID).query(Wallet.class).optional()
-      .orElseThrow(() -> bad("会员钱包不存在"));
-    if (wallet.balanceCents() < amount) throw new ResponseStatusException(HttpStatus.CONFLICT, "会员余额不足，请调整付款方式或充值");
-    long after = wallet.balanceCents() - amount;
-    jdbc.sql("update member_wallet set balance_cents=:balance,updated_at=now(),version=version+1 where id=:id")
-      .param("balance", after).param("id", wallet.id()).update();
-    jdbc.sql("insert into wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,source,note,business_date) values(:id,:tenant,:store,:wallet,:member,'CONSUMPTION',:amount,:before,:after,'ORDER',:note,:businessDate)")
-      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", transactionStoreId).param("wallet", wallet.id()).param("member", memberId)
-      .param("amount", -amount).param("before", wallet.balanceCents()).param("after", after).param("note", orderId.toString()).param("businessDate", businessDate).update();
+    consumeWallet(transactionStoreId, resolveWallet(transactionStoreId, memberId, null, new PaymentMethod("MEMBER_BALANCE", "会员余额", "MEMBER_BALANCE")), amount, orderId, businessDate);
   }
 
   private PaymentMethod paymentMethod(UUID storeId, String code) {
@@ -1100,16 +1150,17 @@ public class SalesOrderController {
     }
   }
   record ServiceSessionForSettlement(UUID id, UUID serviceItemId, String serviceNameSnapshot, Integer servicePriceCents, Short plannedDurationMinutes, String extensionSummary, LocalDate businessDate) {}
-  record Wallet(UUID id, Long balanceCents) {}
+  record Wallet(UUID id, UUID memberId, Long balanceCents) {}
   record Order(UUID id, String orderNo, Long receivableCents, Long paidCents, String status, OffsetDateTime settledAt) {}
   record ExistingSessionOrder(UUID serviceSessionId, UUID id, String orderNo, Long receivableCents, Long paidCents, String status, OffsetDateTime settledAt) {}
   record OrderSummary(UUID id, String orderNo, String settlementNo, String cashierNameSnapshot, String status, String refundStatus, Long receivableCents, Long paidCents, OffsetDateTime createdAt, OffsetDateTime settledAt, String cancelReason, OffsetDateTime cancelledAt, UUID memberId, String memberName, String memberPhone, Long memberBalanceCents, UUID correctedFromOrderId, String correctedFromOrderNo, String correctionReason, Integer financialCorrectionVersion, Integer businessCorrectionVersion, Boolean historicalBackfill, LocalDate backfillDate, UUID backfillBy, OffsetDateTime backfillAt, String backfillByName) {}
   record OrderVoidState(String status, Long paidCents, String orderNo, Long paymentCount, Long commissionCount, Long refundCount) {}
   record OrderLine(UUID id, UUID serviceItemId, String itemNameSnapshot, Long unitPriceCents, Short durationMinutes, Short quantity, Long lineAmountCents,
                    UUID serviceSessionId, UUID technicianId, String technicianName, String roomCode, String roomName, OffsetDateTime serviceEndedAt, String clockType, Long participantCount) {}
-  record Payment(UUID id, String paymentMethod, String paymentMethodNameSnapshot, Long amountCents, OffsetDateTime createdAt) {}
+  record Payment(UUID id, String paymentMethod, String paymentMethodNameSnapshot, UUID walletId, String accountCode, String accountName,
+                 UUID payerMemberId, String payerMemberName, String payerMemberCode, Long amountCents, OffsetDateTime createdAt) {}
   record FinancialCorrectionOrder(UUID id, UUID memberId, String orderNo, String status, String refundStatus, Long paidCents, Integer financialCorrectionVersion, LocalDate businessDate) {}
-  record ResolvedCorrectionPayment(String code, String name, String methodKind, Long amountCents) {}
+  record ResolvedCorrectionPayment(String code, String name, String methodKind, UUID walletId, Long amountCents) {}
   record FinancialCorrectionInput(@NotNull @Min(0) Long settlementAmountCents, @NotNull List<@Valid PaymentInput> payments,
                                   @NotBlank @Size(max = 240) String reason, @NotNull @Min(0) Integer expectedVersion) {}
   record FinancialCorrectionResult(UUID orderId, String orderNo, Integer version, Long oldPaidCents, Long newPaidCents, Long memberBalanceDeltaCents, String reason) {}
@@ -1138,7 +1189,8 @@ public class SalesOrderController {
                                     String status, String refundStatus) {}
   record ResolvedHistoricalLine(ResolvedServiceItem item, Short durationMinutes, String clockType,
                                 List<HistoricalTechnicianAllocation> allocations, UUID roomId) {}
-  record PendingServiceSession(UUID id, String serviceNo, UUID serviceItemId, String serviceNameSnapshot, Integer servicePriceCents, Short plannedDurationMinutes, OffsetDateTime endedAt, LocalDate businessDate, String technicianName, UUID roomId, String roomCode, String clockType, String extensionSummary) {}
+  record PendingServiceSession(UUID id, String serviceNo, UUID serviceItemId, String serviceNameSnapshot, Integer servicePriceCents, Short plannedDurationMinutes, OffsetDateTime endedAt, LocalDate businessDate, String technicianName, UUID roomId, String roomCode, UUID bedId, String bedCode, String bedName, String clockType, String extensionSummary) {}
+  record SettlementUnit(UUID serviceSessionId, UUID bedId, UUID roomId, Long totalCents, Long extensionCount) {}
   record SettleInput(UUID memberId, @NotEmpty List<@Valid LineInput> lines, @NotNull List<@Valid PaymentInput> payments,
                      Long settlementAmountCents, String waiveReason, UUID correctedFromOrderId, @Size(max = 240) String correctionReason) {}
   record CorrectionSource(UUID id, String orderNo, String status, String refundStatus) {}
@@ -1151,7 +1203,9 @@ public class SalesOrderController {
     }
   }
   record ManualTechnicianAllocation(@NotNull UUID technicianId, @Min(1) @Max(10000) Integer allocationBp) {}
-  record PaymentInput(@NotBlank String method, @NotNull @Min(1) Long amountCents) {}
+  record PaymentInput(@NotBlank String method, @NotNull @Min(1) Long amountCents, UUID walletId) {
+    PaymentInput(String method, Long amountCents) { this(method, amountCents, null); }
+  }
   record HistoricalBackfillInput(@NotNull LocalDate backfillDate, UUID memberId,
                                  @NotEmpty List<@Valid HistoricalBackfillLineInput> lines,
                                  @NotNull List<@Valid PaymentInput> payments,

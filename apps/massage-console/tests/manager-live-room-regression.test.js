@@ -9,7 +9,7 @@ const html = fs.readFileSync(path.join(root, 'manager-mobile.html'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'manager-mobile.css'), 'utf8');
 
 test('manager home loads and renders live room details', () => {
-  assert.match(manager, /managerOptionalJson\('\/operations\/live-room-status',\[\]\)/);
+  assert.match(manager, /managerOptionalJson\('\/operations\/live-state'/);
   assert.match(manager, /renderManagerLiveRooms\(liveRooms\)/);
   assert.match(html, /id="manager-live-room-list"/);
   assert.match(html, /id="manager-live-room-summary"/);
@@ -30,11 +30,11 @@ test('live rooms expose service, technician, clock type, beds and timing', () =>
 
 test('manager mobile assets use the dispatch clock cache version', () => {
   assert.match(html, /manager-mobile\.css\?v=20260918-expense-workspace-v1/);
-  assert.match(html, /manager-mobile\.js\?v=20260929-manager-rewards-v2/);
+  assert.match(html, /manager-mobile\.js\?v=20260930-operational-state-v1/);
 });
 
 test('manager home loads and groups independent live technician status', () => {
-  assert.match(manager, /managerOptionalJson\('\/operations\/live-technician-status'/);
+  assert.match(manager, /managerLiveTechnicianOverview=\{businessDate:liveState\?\.businessDate/);
   assert.match(manager, /renderManagerLiveTechnicians\(liveTechnicians\)/);
   assert.match(manager, /\['PENDING_ACCEPTANCE','ACCEPTED'\]\.includes\(item\.status\)/);
   assert.match(manager, /item\.status==='IN_SERVICE'/);

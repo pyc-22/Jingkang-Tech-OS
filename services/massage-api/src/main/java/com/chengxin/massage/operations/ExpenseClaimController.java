@@ -8,6 +8,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -62,7 +63,9 @@ public class ExpenseClaimController {
 
   @GetMapping("/categories")
   List<ExpenseCategory> categories(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
-                                   @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+                                   @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId,
+                                   HttpServletResponse response) {
+    noStore(response);
     storeContext.currentStore(authorization, requestedStoreId);
     sessions.requirePermission(authorization, "EXPENSE_STORE_VIEW");
     return jdbc.sql("select id,parent_id,code,name,category_level,receipt_required,no_receipt_allowed,sort_order from expense_category where tenant_id=:tenant and active=true order by category_level,sort_order,code")
@@ -74,11 +77,13 @@ public class ExpenseClaimController {
                           @RequestParam(required = false) LocalDate from,
                           @RequestParam(required = false) LocalDate to,
                           @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
-                          @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+                          @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId,
+                          HttpServletResponse response) {
+    noStore(response);
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     sessions.requirePermission(authorization, "EXPENSE_STORE_VIEW");
     String normalizedStatus = normalizeStatus(status);
-    StringBuilder sql = new StringBuilder("select c.id,c.claim_no,c.store_id,s.name store_name,c.expense_category_id,coalesce(parent.name || ' / ','') || category.name category_name,c.expense_date,c.amount_cents,c.payee_name,c.receipt_type,c.status,c.submitted_at,c.updated_at from expense_claim c join store s on s.id=c.store_id join expense_category category on category.id=c.expense_category_id left join expense_category parent on parent.id=category.parent_id where c.tenant_id=:tenant and c.store_id=:store");
+    StringBuilder sql = new StringBuilder("select c.id,c.claim_no,c.store_id,s.name store_name,c.expense_category_id,c.title,coalesce(parent.name || ' / ','') || category.name category_name,c.expense_date,c.amount_cents,c.payee_name,c.receipt_type,c.status,c.submitted_at,c.updated_at from expense_claim c join store s on s.id=c.store_id join expense_category category on category.id=c.expense_category_id left join expense_category parent on parent.id=category.parent_id where c.tenant_id=:tenant and c.store_id=:store");
     if (!normalizedStatus.isBlank()) sql.append(" and c.status=:status");
     if (from != null) sql.append(" and c.expense_date>=:from");
     if (to != null) sql.append(" and c.expense_date<=:to");
@@ -93,7 +98,9 @@ public class ExpenseClaimController {
   @GetMapping("/{id}")
   ClaimDetail detail(@PathVariable UUID id,
                      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
-                     @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+                     @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId,
+                     HttpServletResponse response) {
+    noStore(response);
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     sessions.requirePermission(authorization, "EXPENSE_STORE_VIEW");
     return detail(claim(id, storeId), storeId);
@@ -102,7 +109,9 @@ public class ExpenseClaimController {
   @GetMapping("/{claimId}/attachments/{attachmentId}")
   ResponseEntity<byte[]> attachment(@PathVariable UUID claimId, @PathVariable UUID attachmentId,
                                     @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
-                                    @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+                                    @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId,
+                                    HttpServletResponse response) {
+    noStore(response);
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     sessions.requirePermission(authorization, "EXPENSE_STORE_VIEW");
     claim(claimId, storeId);
@@ -129,9 +138,9 @@ public class ExpenseClaimController {
     UUID id = UUID.randomUUID();
     String claimNo = claimNo();
     try {
-      jdbc.sql("insert into expense_claim(id,tenant_id,store_id,claim_no,applicant_user_id,expense_category_id,expense_date,amount_cents,payee_name,payment_source,receipt_type,invoice_no,description,no_receipt_reason) values(:id,:tenant,:store,:claimNo,:applicant,:category,:date,:amount,:payee,:source,:receipt,:invoice,:description,:reason)")
+      jdbc.sql("insert into expense_claim(id,tenant_id,store_id,claim_no,applicant_user_id,expense_category_id,title,expense_date,amount_cents,payee_name,payment_source,receipt_type,invoice_no,description,no_receipt_reason) values(:id,:tenant,:store,:claimNo,:applicant,:category,:title,:date,:amount,:payee,:source,:receipt,:invoice,:description,:reason)")
         .param("id", id).param("tenant", TENANT_ID).param("store", storeId).param("claimNo", claimNo).param("applicant", actor)
-        .param("category", input.expenseCategoryId()).param("date", input.expenseDate()).param("amount", input.amountCents()).param("payee", blankToNull(input.payeeName()))
+        .param("category", input.expenseCategoryId()).param("title", input.title().trim()).param("date", input.expenseDate()).param("amount", input.amountCents()).param("payee", blankToNull(input.payeeName()))
         .param("source", normalizeSource(input.paymentSource())).param("receipt", receiptType).param("invoice", blankToNull(input.invoiceNo()))
         .param("description", input.description().trim()).param("reason", blankToNull(input.noReceiptReason())).update();
     } catch (DataIntegrityViolationException exception) {
@@ -154,8 +163,8 @@ public class ExpenseClaimController {
     ExpenseCategory selectedCategory = category(input.expenseCategoryId(), true);
     String receiptType = normalizeReceipt(input.receiptType());
     validateReceiptPolicy(selectedCategory, receiptType, input.noReceiptReason());
-    jdbc.sql("update expense_claim set expense_category_id=:category,expense_date=:date,amount_cents=:amount,payee_name=:payee,payment_source=:source,receipt_type=:receipt,invoice_no=:invoice,description=:description,no_receipt_reason=:reason,updated_at=now(),version=version+1 where id=:id and store_id=:store and applicant_user_id=:applicant and status in ('DRAFT','RETURNED')")
-      .param("id", id).param("store", storeId).param("applicant", actor).param("category", input.expenseCategoryId()).param("date", input.expenseDate())
+    jdbc.sql("update expense_claim set expense_category_id=:category,title=:title,expense_date=:date,amount_cents=:amount,payee_name=:payee,payment_source=:source,receipt_type=:receipt,invoice_no=:invoice,description=:description,no_receipt_reason=:reason,updated_at=now(),version=version+1 where id=:id and store_id=:store and applicant_user_id=:applicant and status in ('DRAFT','RETURNED')")
+      .param("id", id).param("store", storeId).param("applicant", actor).param("category", input.expenseCategoryId()).param("title", input.title().trim()).param("date", input.expenseDate())
       .param("amount", input.amountCents()).param("payee", blankToNull(input.payeeName())).param("source", normalizeSource(input.paymentSource()))
       .param("receipt", receiptType).param("invoice", blankToNull(input.invoiceNo())).param("description", input.description().trim())
       .param("reason", blankToNull(input.noReceiptReason())).update();
@@ -174,6 +183,7 @@ public class ExpenseClaimController {
     UUID actor = sessions.requireAuthenticatedUserId(authorization);
     ClaimRow before = ownedClaim(id, storeId, actor);
     if (!("DRAFT".equals(before.status()) || "RETURNED".equals(before.status()))) throw conflict("Only draft or returned claims can be submitted");
+    if (before.title() == null || before.title().isBlank()) throw bad("报销标题不能为空");
     ExpenseCategory selectedCategory = category(before.expenseCategoryId(), true);
     validateReceiptPolicy(selectedCategory, before.receiptType(), before.noReceiptReason());
     if (!"NO_RECEIPT".equals(before.receiptType()) && !hasAttachment(id, "EXPENSE_PROOF")) throw bad("Please upload an invoice or receipt before submitting");
@@ -262,7 +272,7 @@ public class ExpenseClaimController {
   }
 
   private ClaimRow claim(UUID id, UUID storeId) {
-    return jdbc.sql("select c.id,c.claim_no,c.store_id,s.name store_name,c.applicant_user_id,applicant.display_name applicant_name,c.expense_category_id,coalesce(parent.name || ' / ','') || category.name category_name,c.expense_date,c.amount_cents,c.payee_name,c.payment_source,c.receipt_type,c.invoice_no,c.description,c.no_receipt_reason,c.status,c.duplicate_warning::text duplicate_warning,c.submitted_at,c.reviewed_by_user_id,c.reviewed_at,c.review_note,c.created_at,c.updated_at,c.version from expense_claim c join store s on s.id=c.store_id join app_user applicant on applicant.id=c.applicant_user_id join expense_category category on category.id=c.expense_category_id left join expense_category parent on parent.id=category.parent_id where c.id=:id and c.store_id=:store and c.tenant_id=:tenant")
+    return jdbc.sql("select c.id,c.claim_no,c.store_id,s.name store_name,c.applicant_user_id,applicant.display_name applicant_name,c.expense_category_id,c.title,coalesce(parent.name || ' / ','') || category.name category_name,c.expense_date,c.amount_cents,c.payee_name,c.payment_source,c.receipt_type,c.invoice_no,c.description,c.no_receipt_reason,c.status,c.duplicate_warning::text duplicate_warning,c.submitted_at,c.reviewed_by_user_id,c.reviewed_at,c.review_note,c.created_at,c.updated_at,c.version from expense_claim c join store s on s.id=c.store_id join app_user applicant on applicant.id=c.applicant_user_id join expense_category category on category.id=c.expense_category_id left join expense_category parent on parent.id=category.parent_id where c.id=:id and c.store_id=:store and c.tenant_id=:tenant")
       .param("id", id).param("store", storeId).param("tenant", TENANT_ID).query(ClaimRow.class).optional().orElseThrow(() -> notFound("Expense claim not found"));
   }
 
@@ -340,15 +350,16 @@ public class ExpenseClaimController {
   private String normalizeAttachmentKind(String value) { return normalize(value, List.of("EXPENSE_PROOF","NO_RECEIPT_EXPLANATION","PAYMENT_PROOF"), "attachment kind"); }
   private String normalize(String value, List<String> supported, String label) { String normalized = value == null ? "" : value.trim().toUpperCase(java.util.Locale.ROOT); if (!supported.contains(normalized)) throw bad("Unsupported " + label); return normalized; }
   private String blankToNull(String value) { return value == null || value.isBlank() ? null : value.trim(); }
+  private void noStore(HttpServletResponse response) { response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store, max-age=0"); }
   private ResponseStatusException bad(String message) { return new ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, message); }
   private ResponseStatusException conflict(String message) { return new ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT, message); }
   private ResponseStatusException notFound(String message) { return new ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, message); }
 
   public record ExpenseCategory(UUID id, UUID parentId, String code, String name, Short categoryLevel, Boolean receiptRequired, Boolean noReceiptAllowed, Integer sortOrder) {}
-  public record ClaimSummary(UUID id, String claimNo, UUID storeId, String storeName, UUID expenseCategoryId, String categoryName, LocalDate expenseDate, Long amountCents, String payeeName, String receiptType, String status, OffsetDateTime submittedAt, OffsetDateTime updatedAt) {}
-  public record ClaimRow(UUID id, String claimNo, UUID storeId, String storeName, UUID applicantUserId, String applicantName, UUID expenseCategoryId, String categoryName, LocalDate expenseDate, Long amountCents, String payeeName, String paymentSource, String receiptType, String invoiceNo, String description, String noReceiptReason, String status, String duplicateWarning, OffsetDateTime submittedAt, UUID reviewedByUserId, OffsetDateTime reviewedAt, String reviewNote, OffsetDateTime createdAt, OffsetDateTime updatedAt, Long version) {}
+  public record ClaimSummary(UUID id, String claimNo, UUID storeId, String storeName, UUID expenseCategoryId, String title, String categoryName, LocalDate expenseDate, Long amountCents, String payeeName, String receiptType, String status, OffsetDateTime submittedAt, OffsetDateTime updatedAt) {}
+  public record ClaimRow(UUID id, String claimNo, UUID storeId, String storeName, UUID applicantUserId, String applicantName, UUID expenseCategoryId, String title, String categoryName, LocalDate expenseDate, Long amountCents, String payeeName, String paymentSource, String receiptType, String invoiceNo, String description, String noReceiptReason, String status, String duplicateWarning, OffsetDateTime submittedAt, UUID reviewedByUserId, OffsetDateTime reviewedAt, String reviewNote, OffsetDateTime createdAt, OffsetDateTime updatedAt, Long version) {}
   public record ClaimDetail(ClaimRow claim, List<Attachment> attachments, List<ReviewHistory> history) {}
   public record Attachment(UUID id, UUID claimId, String attachmentKind, String storageKey, String originalFilename, String contentType, Long fileSizeBytes, String sha256, UUID uploadedByUserId, OffsetDateTime createdAt) {}
   public record ReviewHistory(UUID id, String action, String fromStatus, String toStatus, String comment, UUID actorUserId, String actorName, OffsetDateTime createdAt) {}
-  public record ClaimInput(@NotNull UUID expenseCategoryId, @NotNull LocalDate expenseDate, @NotNull @Positive Long amountCents, @Size(max = 160) String payeeName, @NotBlank String paymentSource, @NotBlank String receiptType, @Size(max = 100) String invoiceNo, @NotBlank @Size(max = 4000) String description, @Size(max = 4000) String noReceiptReason) {}
+  public record ClaimInput(@NotNull UUID expenseCategoryId, @NotBlank @Size(max = 200) String title, @NotNull LocalDate expenseDate, @NotNull @Positive Long amountCents, @Size(max = 160) String payeeName, @NotBlank String paymentSource, @NotBlank String receiptType, @Size(max = 100) String invoiceNo, @NotBlank @Size(max = 4000) String description, @Size(max = 4000) String noReceiptReason) {}
 }

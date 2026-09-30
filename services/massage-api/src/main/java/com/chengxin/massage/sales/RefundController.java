@@ -119,7 +119,7 @@ public class RefundController {
     RefundDetail refund = refundDetail(storeId, refundId);
     List<RefundLine> lines = jdbc.sql("select rl.id,rl.order_line_id,rl.quantity,rl.refund_cents from sales_refund_line rl where rl.refund_id=:refund")
       .param("refund", refundId).query(RefundLine.class).list();
-    List<RefundPaymentView> payments = jdbc.sql("select id,original_payment_id,payment_method,amount_cents,status,created_at,completed_at from refund_payment_record where refund_id=:refund order by created_at")
+    List<RefundPaymentView> payments = jdbc.sql("select id,original_payment_id,wallet_id,payment_method,amount_cents,status,created_at,completed_at from refund_payment_record where refund_id=:refund order by created_at")
       .param("refund", refundId).query(RefundPaymentView.class).list();
     return new RefundView(refund, lines, payments);
   }
@@ -132,7 +132,7 @@ public class RefundController {
     if (!List.of("ALL", "PENDING", "COMPLETED", "CANCELLED").contains(status)) throw bad("Unsupported refund status");
     List<RefundListRow> rows = jdbc.sql("select r.id,r.order_id,r.refund_no,r.refund_kind,r.status,r.total_cents,r.signed_total_cents,r.reason,r.requested_by_name_snapshot,r.completed_by_name_snapshot,r.created_at,r.completed_at,o.order_no,m.name member_name,m.phone member_phone from sales_refund r join sales_order o on o.id=r.order_id left join member m on m.id=o.member_id where r.store_id=:store and (:status='ALL' or r.status=:status) order by r.created_at desc limit 200")
       .param("store", storeId).param("status", status).query(RefundListRow.class).list();
-    return rows.stream().map(row -> new RefundManagementRow(row, jdbc.sql("select id,payment_method,amount_cents,status from refund_payment_record where refund_id=:refund order by created_at")
+    return rows.stream().map(row -> new RefundManagementRow(row, jdbc.sql("select id,wallet_id,payment_method,amount_cents,status from refund_payment_record where refund_id=:refund order by created_at")
       .param("refund", row.id()).query(RefundPaymentSummary.class).list())).toList();
   }
 
@@ -145,7 +145,7 @@ public class RefundController {
     AuthenticatedIdentity actor = adminSessions.authenticatedIdentity(authorization);
     monthlyTiers.lockStore(storeId);
     ensureRefundStore(storeId, refundId);
-    RefundPayment payment = jdbc.sql("select id,refund_id,payment_method,status from refund_payment_record where id=:id and refund_id=:refund for update")
+    RefundPayment payment = jdbc.sql("select id,refund_id,wallet_id,payment_method,status from refund_payment_record where id=:id and refund_id=:refund for update")
       .param("id", refundPaymentId).param("refund", refundId).query(RefundPayment.class).single();
     if (!"PENDING".equals(payment.status())) return find(storeId, refundId);
     if ("MEMBER_BALANCE".equals(payment.paymentMethod())) throw bad("Member balance refunds are completed automatically");
@@ -199,7 +199,7 @@ public class RefundController {
   }
 
   private void validatePayment(UUID orderId, UUID paymentId, long requestedAmount, List<RefundPaymentInput> requestedPayments) {
-    OriginalPayment payment = jdbc.sql("select id,payment_method,amount_cents from payment_record where id=:id and order_id=:order")
+    OriginalPayment payment = jdbc.sql("select id,wallet_id,payment_method,amount_cents from payment_record where id=:id and order_id=:order")
       .param("id", paymentId).param("order", orderId).query(OriginalPayment.class).single();
     if (requestedPayments.stream().filter(item -> paymentId.equals(item.originalPaymentId())).anyMatch(item -> !payment.paymentMethod().equals(item.paymentMethod()))) throw bad("Refund payment method does not match original payment");
     long prior = jdbc.sql("select coalesce(sum(rp.amount_cents),0) from refund_payment_record rp join sales_refund r on r.id=rp.refund_id where rp.original_payment_id=:payment and r.status <> 'CANCELLED'")
@@ -210,21 +210,22 @@ public class RefundController {
   private void createPayment(UUID storeId, UUID refundId, Order order, String refundNo, RefundPaymentInput input, LocalDate businessDate, boolean autoCompleteMember) {
     boolean memberBalance = "MEMBER_BALANCE".equals(input.paymentMethod());
     String status = memberBalance && autoCompleteMember ? "COMPLETED" : "PENDING";
-    jdbc.sql("insert into refund_payment_record(id,tenant_id,store_id,refund_id,original_payment_id,payment_method,amount_cents,status,completed_at) values(:id,:tenant,:store,:refund,:original,:method,:amount,:status,case when :status='COMPLETED' then now() else null end)")
+    UUID walletId = jdbc.sql("select wallet_id from payment_record where id=:id and order_id=:order").param("id", input.originalPaymentId()).param("order", order.id()).query(UUID.class).optional().orElse(null);
+    jdbc.sql("insert into refund_payment_record(id,tenant_id,store_id,refund_id,original_payment_id,wallet_id,payment_method,amount_cents,status,completed_at) values(:id,:tenant,:store,:refund,:original,:wallet,:method,:amount,:status,case when :status='COMPLETED' then now() else null end)")
       .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("refund", refundId).param("original", input.originalPaymentId())
-      .param("method", input.paymentMethod()).param("amount", input.amountCents()).param("status", status).update();
-    if (memberBalance && autoCompleteMember) restoreWallet(storeId, order.memberId(), input.amountCents(), refundNo, businessDate);
+      .param("wallet", walletId).param("method", input.paymentMethod()).param("amount", input.amountCents()).param("status", status).update();
+    if (memberBalance && autoCompleteMember) restoreWallet(storeId, walletId, input.amountCents(), refundNo, businessDate);
   }
 
-  private void restoreWallet(UUID transactionStoreId, UUID memberId, long amount, String refundNo, LocalDate businessDate) {
-    if (memberId == null) throw bad("The original order has no member balance to restore");
-    Wallet wallet = jdbc.sql("select w.id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.member_id=:member and m.tenant_id=:tenant for update")
-      .param("member", memberId).param("tenant", TENANT_ID).query(Wallet.class).single();
+  private void restoreWallet(UUID transactionStoreId, UUID walletId, long amount, String refundNo, LocalDate businessDate) {
+    if (walletId == null) throw bad("原会员卡不存在，退款无法归回原卡");
+    Wallet wallet = jdbc.sql("select w.id,w.member_id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.id=:wallet and m.tenant_id=:tenant for update")
+      .param("wallet", walletId).param("tenant", TENANT_ID).query(Wallet.class).single();
     long after = wallet.balanceCents() + amount;
     jdbc.sql("update member_wallet set balance_cents=:balance,updated_at=now(),version=version+1 where id=:id")
       .param("balance", after).param("id", wallet.id()).update();
     jdbc.sql("insert into wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,source,note,business_date) values(:id,:tenant,:store,:wallet,:member,'REFUND',:amount,:before,:after,'ORDER_REFUND',:note,:businessDate)")
-      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", transactionStoreId).param("wallet", wallet.id()).param("member", memberId)
+      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", transactionStoreId).param("wallet", wallet.id()).param("member", wallet.memberId())
       .param("amount", amount).param("before", wallet.balanceCents()).param("after", after).param("note", refundNo).param("businessDate", businessDate).update();
   }
 
@@ -235,10 +236,10 @@ public class RefundController {
     if (pendingExternal == 0 && "PENDING".equals(refund.status())) {
       OffsetDateTime completedAt = OffsetDateTime.now();
       LocalDate businessDate = refund.businessDate();  // 使用原订单的 business_date
-      List<MemberRefundPayment> memberPayments = jdbc.sql("select id,amount_cents from refund_payment_record where refund_id=:refund and payment_method='MEMBER_BALANCE' and status='PENDING' for update")
+      List<MemberRefundPayment> memberPayments = jdbc.sql("select id,wallet_id,amount_cents from refund_payment_record where refund_id=:refund and payment_method='MEMBER_BALANCE' and status='PENDING' for update")
         .param("refund", refundId).query(MemberRefundPayment.class).list();
       for (MemberRefundPayment payment : memberPayments) {
-        restoreWallet(storeId, refund.memberId(), payment.amountCents(), refund.refundNo(), businessDate);
+        restoreWallet(storeId, payment.walletId(), payment.amountCents(), refund.refundNo(), businessDate);
         jdbc.sql("update refund_payment_record set status='COMPLETED',completed_at=:completed where id=:id")
           .param("completed", completedAt).param("id", payment.id()).update();
       }
@@ -353,19 +354,19 @@ public class RefundController {
   record Order(UUID id, UUID memberId, String status, Long paidCents, String orderNo, LocalDate businessDate) {}
   record OrderLine(UUID id, Long lineAmountCents) {}
   record RefundableLine(UUID id, Long remainingCents) {}
-  record OriginalPayment(UUID id, String paymentMethod, Long amountCents) {}
-  record Wallet(UUID id, Long balanceCents) {}
-  record RefundPayment(UUID id, UUID refundId, String paymentMethod, String status) {}
+  record OriginalPayment(UUID id, UUID walletId, String paymentMethod, Long amountCents) {}
+  record Wallet(UUID id, UUID memberId, Long balanceCents) {}
+  record RefundPayment(UUID id, UUID refundId, UUID walletId, String paymentMethod, String status) {}
   record RefundForUpdate(UUID id, UUID orderId, String status) {}
   record RefundCompletion(UUID id, UUID orderId, String refundNo, String status, String refundKind, UUID memberId, LocalDate businessDate) {}
-  record MemberRefundPayment(UUID id, Long amountCents) {}
+  record MemberRefundPayment(UUID id, UUID walletId, Long amountCents) {}
   record RefundResult(UUID id, String refundNo, String refundKind, String status, Long totalCents, Long signedTotalCents, String requestedByNameSnapshot, String completedByNameSnapshot, OffsetDateTime createdAt, OffsetDateTime completedAt) {}
   record RefundDetail(UUID id, String refundNo, String refundKind, String status, Long totalCents, Long signedTotalCents, String reason, LocalDate businessDate, String requestedByNameSnapshot, String completedByNameSnapshot, OffsetDateTime createdAt, OffsetDateTime completedAt) {}
   record RefundListRow(UUID id, UUID orderId, String refundNo, String refundKind, String status, Long totalCents, Long signedTotalCents, String reason, String requestedByNameSnapshot, String completedByNameSnapshot, OffsetDateTime createdAt, OffsetDateTime completedAt, String orderNo, String memberName, String memberPhone) {}
-  record RefundPaymentSummary(UUID id, String paymentMethod, Long amountCents, String status) {}
+  record RefundPaymentSummary(UUID id, UUID walletId, String paymentMethod, Long amountCents, String status) {}
   record RefundManagementRow(RefundListRow refund, List<RefundPaymentSummary> payments) {}
   record RefundLine(UUID id, UUID orderLineId, Short quantity, Long refundCents) {}
-  record RefundPaymentView(UUID id, UUID originalPaymentId, String paymentMethod, Long amountCents, String status, OffsetDateTime createdAt, OffsetDateTime completedAt) {}
+  record RefundPaymentView(UUID id, UUID originalPaymentId, UUID walletId, String paymentMethod, Long amountCents, String status, OffsetDateTime createdAt, OffsetDateTime completedAt) {}
   record RefundView(RefundDetail refund, List<RefundLine> lines, List<RefundPaymentView> payments) {}
   record CompletedRefundLine(UUID orderLineId, Long refundCents, Long lineAmountCents) {}
   record OriginalCommission(UUID id, UUID tenantId, UUID storeId, UUID orderId, UUID orderLineId, UUID serviceSessionId, UUID serviceSessionExtensionId, UUID serviceItemId, UUID technicianId, String sourceType, String clockType, String orderNoSnapshot, String technicianNameSnapshot, String serviceNameSnapshot, String ruleType, Integer ruleRateBp, Long ruleFixedCents, Long baseAmountCents, Long commissionCents, Short clockCountAdjustment, Short durationMinutesAdjustment, UUID serviceParticipantId, Integer allocationBpSnapshot, Integer servedSecondsSnapshot, UUID commissionTierPolicyVersionId, UUID commissionTierId, String commissionTierNameSnapshot, Integer commissionTierMinimumClockCountSnapshot, Integer commissionMultiplierBpSnapshot, Integer monthlyClockCountSnapshot) {}

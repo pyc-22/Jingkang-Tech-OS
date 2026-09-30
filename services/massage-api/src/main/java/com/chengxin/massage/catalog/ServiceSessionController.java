@@ -33,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import com.chengxin.massage.admin.AdminSessionService;
+import com.chengxin.massage.operations.OperationalStateService;
 import com.chengxin.massage.admin.StoreContextService;
 import com.chengxin.massage.audit.AuditService;
 import com.chengxin.massage.operations.BusinessClockService;
@@ -416,7 +417,10 @@ public class ServiceSessionController {
   }
 
   private boolean hasActiveSession(UUID storeId, String column, UUID id) {
-    return jdbc.sql("select exists(select 1 from service_session where store_id=:store and " + column + "=:id and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'))")
+    String predicate = "room".equals(column)
+      ? OperationalStateService.occupyingServicePredicate("session")
+      : "session.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE')";
+    return jdbc.sql("select exists(select 1 from service_session session where session.store_id=:store and session." + column + "=:id and " + predicate + ")")
       .param("store", storeId).param("id", id).query(Boolean.class).single();
   }
 
@@ -428,7 +432,7 @@ public class ServiceSessionController {
     ensureRoomBeds(storeId, roomId);
     String sql = "select b.id from room_bed b where b.store_id=:store and b.room_id=:room and b.active=true "
       + (requestedBedId == null ? "" : "and b.id=:bed ")
-      + "and not exists(select 1 from service_session ss where ss.store_id=:store and ss.bed_id=b.id and ss.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE')) order by b.sort_order limit 1 for update";
+      + "and not exists(select 1 from service_session ss where ss.store_id=:store and ss.bed_id=b.id and " + OperationalStateService.occupyingServicePredicate("ss") + ") order by b.sort_order limit 1 for update";
     var statement = jdbc.sql(sql).param("store", storeId).param("room", roomId);
     if (requestedBedId != null) statement = statement.param("bed", requestedBedId);
     return statement.query(UUID.class).optional().orElseThrow(() -> conflict("该房间没有可用床位"));
@@ -437,8 +441,7 @@ public class ServiceSessionController {
   private List<UUID> resolveBeds(UUID storeId, UUID roomId, int requiredCount) {
     ensureRoomBeds(storeId, roomId);
     List<UUID> beds = jdbc.sql("select b.id from room_bed b where b.store_id=:store and b.room_id=:room and b.active=true "
-        + "and not exists(select 1 from service_session ss where ss.store_id=:store and ss.bed_id=b.id "
-        + "and ss.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE')) "
+        + "and not exists(select 1 from service_session ss where ss.store_id=:store and ss.bed_id=b.id and " + OperationalStateService.occupyingServicePredicate("ss") + ") "
         + "order by b.sort_order limit :requiredCount for update")
       .param("store", storeId).param("room", roomId).param("requiredCount", requiredCount)
       .query(UUID.class).list();
@@ -459,7 +462,7 @@ public class ServiceSessionController {
     if (!Boolean.TRUE.equals(room.active())) throw badRequest("Room is unavailable");
     String roomStatus = jdbc.sql("select status from room_status_event where store_id=:store and room_id=:room order by occurred_at desc,id desc limit 1")
       .param("store", storeId).param("room", roomId).query(String.class).optional().orElse("IDLE");
-    if (Set.of("PENDING_PAYMENT", "CLEANING", "MAINTENANCE").contains(roomStatus)) {
+    if (Set.of("CLEANING", "MAINTENANCE").contains(roomStatus)) {
       throw conflict("Room status does not allow service assignment: " + roomStatus);
     }
     jdbc.sql("""

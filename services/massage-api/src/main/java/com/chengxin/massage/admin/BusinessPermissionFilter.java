@@ -149,6 +149,11 @@ public class BusinessPermissionFilter extends OncePerRequestFilter {
     if (path.startsWith("/api/v1/security-alerts")) return isRead(method) ? required("ALERT_VIEW") : required("ALERT_HANDLE");
     if (path.startsWith("/api/v1/daily-reports")) return dailyReportRequirement(path, method);
     if (path.startsWith("/api/v1/monthly-targets")) return isRead(method) ? any("REPORT_VIEW", "DAILY_REPORT_CONFIG") : required("DAILY_REPORT_CONFIG");
+    if (path.equals("/api/v1/operations/live-state")
+        || path.equals("/api/v1/operations/live-room-status")
+        || path.equals("/api/v1/operations/live-technician-status")) {
+      return isRead(method) ? any("FRONTDESK_SETTLE", "REPORT_VIEW") : required("REPORT_VIEW");
+    }
     if (path.startsWith("/api/v1/operations")) return required("REPORT_VIEW");
     if (path.startsWith("/api/v1/finance/expense-claims")) {
       return path.endsWith("/pay") ? required("EXPENSE_PAY") : required("EXPENSE_REVIEW");

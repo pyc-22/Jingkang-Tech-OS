@@ -37,8 +37,28 @@ test('single-room settlement refreshes pending services and room status after pa
 
 test('partially settled room remains pending until all completed services are linked', () => {
   assert.match(controller, /updateLinkedServiceRoomStates\(storeId, materializedLines, orderNo\)/);
-  assert.match(controller, /session\.status='COMPLETED'/);
-  assert.match(controller, /linked_order\.status <> 'CANCELLED' and linked_order\.refund_status <> 'FULL'/);
+  assert.match(controller, /ss\.status='COMPLETED'/);
+  assert.match(controller, /OperationalStateService\.completedUnsettledPredicate\("session"\)/);
   assert.match(controller, /roomStatusAfterSettlement\(hasUnsettledServices\)/);
   assert.match(controller, /hasUnsettledServices \? "PENDING_PAYMENT" : "CLEANING"/);
+});
+
+test('front desk preserves the shared live-state service details and pending-settlement label', () => {
+  assert.match(app, /COMPLETED_UNSETTLED:\['pending-payment','待结算'\]/);
+  assert.match(app, /plannedDurationMinutes:Number\(item\.plannedDurationMinutes\|\|0\)/);
+  assert.match(app, /extensionSummary:item\.extensionSummary\|\|''/);
+});
+
+test('split settlement groups pending services by room and bed and permits one selected unit', () => {
+  assert.match(app, /const bedKey=session\.bedId\|\|session\.bedCode\|\|'unassigned'/);
+  assert.match(app, /bedCode:session\.bedCode\|\|''/);
+  assert.match(app, /memberBusinessEscape\(group\.roomCode\)\} 房 · \$\{memberBusinessEscape\(bedLabel\)\}/);
+  assert.match(app, /groups\.length<1\)return toast\('请至少选择一个房间 \/ 床位'/);
+});
+
+test('switching a payment row away from member balance clears the stale wallet', () => {
+  assert.match(app, /if\(method\?\.methodKind!==\x27MEMBER_BALANCE\x27\)\{payment\.walletId=null;payment\.wallets=\[\];payment\.memberId=null/);
+  assert.match(app, /walletId: method\?\.methodKind === \x27MEMBER_BALANCE\x27 \? \(payment\.walletId \|\| null\) : null/);
+  assert.match(app, /if\(method\?\.methodKind!==\x27MEMBER_BALANCE\x27\)\{payment\.walletId=null;payment\.wallets=\[\];payment\.memberId=null/);
+  assert.match(app, /walletId:method\?\.methodKind===\x27MEMBER_BALANCE\x27\?\(item\.walletId\|\|null\):null/);
 });

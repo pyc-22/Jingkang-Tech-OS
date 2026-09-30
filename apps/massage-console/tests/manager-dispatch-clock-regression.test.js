@@ -22,8 +22,8 @@ test('manager dispatch dialog exposes the front desk clock types and required se
 test('manager loads shared eligibility, queue and live data and offers both entry points', () => {
   assert.match(manager, /managerOptionalJson\('\/technician-schedules\/clock-eligibility'/);
   assert.match(manager, /managerOptionalJson\('\/technician-queue'/);
-  assert.match(manager, /managerOptionalJson\('\/operations\/live-room-status'/);
-  assert.match(manager, /managerOptionalJson\('\/operations\/live-technician-status'/);
+  assert.match(manager, /managerOptionalJson\('\/operations\/live-state'/);
+  assert.match(manager, /managerLiveRoomsSnapshot=liveState\?\.rooms/);
   assert.match(manager, /data-manager-clock-room/);
   assert.match(manager, /data-manager-clock-tech/);
   assert.match(manager, /manager-live-room-list.*openManagerClockDialog|openManagerClockDialog.*manager-live-room-list/);
@@ -99,6 +99,7 @@ test('manager extension refresh reports stale dashboard state without overwritin
   assert.match(manager, /refreshed===true\?`\$\{result\.serviceName\} 已加钟，新的结束时间已同步`/);
   assert.match(manager, /if\(requestToken!==managerExtensionRequestToken\)return;\s+throw error;/);
   assert.match(manager, /finally\{if\(requestToken===managerExtensionRequestToken\)submit\.disabled=false;\}/);
-  assert.match(manager, /if\(managerLoading\) return null/);
+  assert.match(manager, /const requestSequence=\+\+managerRequestSequence/);
+  assert.match(manager, /if\(requestSequence!==managerRequestSequence\|\|requestedStoreId!==managerCurrentStoreId\(\)\) return null/);
   assert.match(manager, /return true;[\s\S]*?return false;/);
 });

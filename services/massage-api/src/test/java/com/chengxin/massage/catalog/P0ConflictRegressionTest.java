@@ -14,7 +14,7 @@ class P0ConflictRegressionTest {
     assertThat(source).contains("from room where id=:id and store_id=:store for update");
     assertThat(source).contains("order by occurred_at desc,id desc");
     assertThat(source).contains("isCleaningCompletionReplay");
-    assertThat(source).contains("'PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'");
+    assertThat(source).contains("OperationalStateService.occupyingServicePredicate(\"session\")");
   }
 
   @Test
@@ -31,7 +31,7 @@ class P0ConflictRegressionTest {
   void roomOccupancyChecksUseEveryDatabaseOccupyingState() throws Exception {
     String source = Files.readString(Path.of("src/main/java/com/chengxin/massage/catalog/RoomController.java"));
 
-    assertThat(source).contains("'PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE'");
+    assertThat(source).contains("OperationalStateService.occupyingServicePredicate(\"session\")");
   }
 
   @Test
@@ -61,7 +61,7 @@ class P0ConflictRegressionTest {
     assertThat(mobile).contains("roomStates.record(");
     assertThat(Files.readString(Path.of("src/main/java/com/chengxin/massage/catalog/RoomStateService.java")))
       .contains("for update").contains("source,occurred_at").contains("clock_timestamp()");
-    assertThat(reservation).contains("source,occurred_at").contains("clock_timestamp()");
+    assertThat(reservation).contains("roomStates.record(");
   }
 
   @Test
@@ -94,16 +94,16 @@ class P0ConflictRegressionTest {
     assertThat(participant).contains("participation_type,allocation_bp,status,joined_at,accepted_at,service_started_at,replaced_participant_id");
     assertThat(participant).contains("replaced_participant_id");
     assertThat(sales).contains("findExistingSettledOrder(storeId, input.lines())");
-    assertThat(sales).contains("where link.service_session_id=:session and linked_order.status <> 'CANCELLED' and linked_order.refund_status <> 'FULL'");
+    assertThat(sales).contains("OperationalStateService.activeSettlementPredicate(\"ss\")");
     assertThat(sales).contains("validateSettlementParticipants(participants)");
   }
 
   @Test
   void roomStatusReadsUseEventIdAsStableTieBreaker() throws Exception {
     String mobile = Files.readString(Path.of("src/main/java/com/chengxin/massage/mobile/TechnicianMobileController.java"));
-    String operations = Files.readString(Path.of("src/main/java/com/chengxin/massage/operations/OperationsReportController.java"));
     assertThat(mobile).contains("order by event.occurred_at desc,event.id desc limit 1");
-    assertThat(operations).contains("order by event.occurred_at desc,event.id desc limit 1");
+    String state = Files.readString(Path.of("src/main/java/com/chengxin/massage/operations/OperationalStateService.java"));
+    assertThat(state).contains("order by event.occurred_at desc,event.id desc limit 1");
   }
 
   @Test

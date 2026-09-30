@@ -24,7 +24,7 @@ public class ExpenseClaimQueryService {
   static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
   static final String CLAIM_TIME = "coalesce(c.submitted_at,c.created_at)";
   private static final String JOINS = " from expense_claim c join store s on s.id=c.store_id join app_user u on u.id=c.applicant_user_id join expense_category k on k.id=c.expense_category_id left join expense_category p on p.id=k.parent_id ";
-  private static final String COLUMNS = "c.id,c.claim_no,c.store_id,s.name store_name,c.expense_category_id,coalesce(p.name || ' / ','') || k.name category_name,c.expense_date,c.amount_cents,c.status,c.submitted_at,c.created_at,c.applicant_user_id,u.display_name applicant_name,c.description,(select count(*) from expense_attachment a where a.claim_id=c.id and a.active) attachment_count";
+  private static final String COLUMNS = "c.id,c.claim_no,c.store_id,s.name store_name,c.expense_category_id,c.title,coalesce(p.name || ' / ','') || k.name category_name,c.expense_date,c.amount_cents,c.status,c.submitted_at,c.created_at,c.applicant_user_id,u.display_name applicant_name,c.description,(select count(*) from expense_attachment a where a.claim_id=c.id and a.active) attachment_count";
   private final JdbcClient jdbc;
 
   ExpenseClaimQueryService(JdbcClient jdbc) { this.jdbc = jdbc; }
@@ -90,7 +90,7 @@ public class ExpenseClaimQueryService {
   static byte[] workbook(List<ClaimItem> items) {
     try (XSSFWorkbook book = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
       var sheet = book.createSheet("费用报销");
-      String[] headings = {"单号", "提交时间", "分类", "金额（元）", "状态", "报销人", "备注", "门店", "发生日期"};
+      String[] headings = {"单号", "提交时间", "标题", "分类", "金额（元）", "状态", "报销人", "备注", "门店", "发生日期"};
       var headingStyle = book.createCellStyle();
       var font = book.createFont(); font.setBold(true); headingStyle.setFont(font);
       var money = book.createCellStyle(); money.setDataFormat(book.createDataFormat().getFormat("#,##0.00"));
@@ -99,9 +99,9 @@ public class ExpenseClaimQueryService {
       for (ClaimItem item : items) {
         var row = sheet.createRow(sheet.getLastRowNum() + 1);
         String time = item.submittedAt() == null ? "" : item.submittedAt().atZoneSameInstant(ZONE).toLocalDateTime().toString().replace('T', ' ');
-        String[] values = {item.claimNo(), time, item.categoryName(), "", statusName(item.status()), item.applicantName(), item.description(), item.storeName(), item.expenseDate().toString()};
+        String[] values = {item.claimNo(), time, item.title() == null || item.title().isBlank() ? item.description() : item.title(), item.categoryName(), "", statusName(item.status()), item.applicantName(), item.description(), item.storeName(), item.expenseDate().toString()};
         for (int i = 0; i < values.length; i++) row.createCell(i).setCellValue(values[i] == null ? "" : values[i]);
-        row.getCell(3).setCellValue(item.amountCents() / 100.0); row.getCell(3).setCellStyle(money);
+        row.getCell(4).setCellValue(item.amountCents() / 100.0); row.getCell(4).setCellStyle(money);
       }
       sheet.createFreezePane(0, 1);
       sheet.setAutoFilter(new org.apache.poi.ss.util.CellRangeAddress(0, sheet.getLastRowNum(), 0, headings.length - 1));
@@ -114,7 +114,7 @@ public class ExpenseClaimQueryService {
   private static ResponseStatusException bad(String message) { return new ResponseStatusException(HttpStatus.BAD_REQUEST, message); }
   public record Query(LocalDate from, LocalDate to, UUID storeId, UUID categoryId, String applicant, String status, String claimNo, String sort, String direction, Integer page, Integer size) {}
   record Criteria(String where, Map<String, Object> params, String order, int page, int size) {}
-  public record ClaimItem(UUID id, String claimNo, UUID storeId, String storeName, UUID expenseCategoryId, String categoryName, LocalDate expenseDate, Long amountCents, String status, OffsetDateTime submittedAt, OffsetDateTime createdAt, UUID applicantUserId, String applicantName, String description, Long attachmentCount) {}
+  public record ClaimItem(UUID id, String claimNo, UUID storeId, String storeName, UUID expenseCategoryId, String title, String categoryName, LocalDate expenseDate, Long amountCents, String status, OffsetDateTime submittedAt, OffsetDateTime createdAt, UUID applicantUserId, String applicantName, String description, Long attachmentCount) {}
   public record Summary(Long claimCount, Long effectiveAmountCents, Long pendingCount, Long approvedCount, Long paidCount, Long approvedAmountCents, Long paidAmountCents) {}
   public record StoreOption(UUID id, String name) {}
   public record ClaimPage(List<ClaimItem> items, Long total, Summary summary, int page, int size, List<StoreOption> stores) {}

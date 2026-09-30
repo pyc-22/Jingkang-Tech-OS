@@ -16,28 +16,32 @@ class OperationsReportControllerTest {
 
   @Test
   void liveRoomsPreferActualActiveServicesAndExcludeInactiveParticipants() throws Exception {
-    String roomSql = OperationsReportController.liveRoomStatusSql();
-    String serviceSql = OperationsReportController.liveRoomServiceSql();
+    String roomSql = OperationalStateService.roomSql();
+    String serviceSql = OperationalStateService.serviceSql();
 
     assertThat(roomSql).contains("active.status='IN_SERVICE'");
     assertThat(roomSql).contains("'PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED'");
     assertThat(serviceSql).contains("participant.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')");
     assertThat(serviceSql).contains("ss.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE')");
     assertThat(serviceSql).contains("ss.status='COMPLETED'");
-    assertThat(serviceSql).contains("not exists(select 1 from sales_order_service_session link");
+    assertThat(serviceSql).contains("linked_order.status='CANCELLED'");
+    assertThat(serviceSql).contains("linked_order.status='SETTLED' and linked_order.refund_status='FULL' then true");
+    assertThat(serviceSql).contains("linked_order.status='SETTLED' then false");
+    assertThat(serviceSql).contains("order by link.created_at desc,link.id desc limit 1");
     assertThat(serviceSql).contains("bed.code bed_code");
     assertThat(serviceSql).contains("ss.clock_type");
     assertThat(serviceSql).contains("ss.started_at,ss.expected_end_at");
-    assertThat(OperationsReportController.occupiesRoomBed("REASSIGNMENT_REQUIRED")).isTrue();
-    assertThat(OperationsReportController.occupiesRoomBed("DISPATCH_CANCELLED")).isTrue();
-    String source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/java/com/chengxin/massage/operations/OperationsReportController.java"));
-    assertThat(source).contains("status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE')");
+    assertThat(OperationalStateService.occupiesBed("REASSIGNMENT_REQUIRED")).isTrue();
+    assertThat(OperationalStateService.occupiesBed("DISPATCH_CANCELLED")).isTrue();
+    assertThat(OperationalStateService.occupiesBed("COMPLETED_UNSETTLED")).isTrue();
+    String source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/java/com/chengxin/massage/operations/OperationalStateService.java"));
+    assertThat(source).contains("active.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED')");
   }
 
   @Test
   void liveTechniciansUseCurrentParticipantsAndActualDailyQueue() {
-    String technicianSql = OperationsReportController.liveTechnicianStatusSql();
-    String attentionSql = OperationsReportController.liveDispatchAttentionSql();
+    String technicianSql = OperationalStateService.technicianSql();
+    String attentionSql = OperationalStateService.attentionSql();
 
     assertThat(technicianSql).contains("technician.active=true");
     assertThat(technicianSql).contains("participant.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')");

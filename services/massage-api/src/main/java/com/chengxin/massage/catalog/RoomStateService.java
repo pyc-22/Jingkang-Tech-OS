@@ -1,5 +1,6 @@
 package com.chengxin.massage.catalog;
 
+import com.chengxin.massage.operations.OperationalStateService;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -20,13 +21,11 @@ public class RoomStateService {
     UUID tenantId = jdbc.sql("select tenant_id from room where id=:room and store_id=:store for update")
       .param("room", roomId).param("store", storeId).query(UUID.class).optional()
       .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Room is unavailable"));
-    Occupancy occupancy = jdbc.sql("""
-      select exists(select 1 from service_session where store_id=:store and room_id=:room and status='IN_SERVICE') in_service,
-             exists(select 1 from service_session where store_id=:store and room_id=:room and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED')) pending,
-             exists(select 1 from service_session s where s.store_id=:store and s.room_id=:room and s.status='COMPLETED'
-               and not exists(select 1 from sales_order_service_session link join sales_order o on o.id=link.order_id
-                 where link.service_session_id=s.id and o.status='SETTLED')) unpaid
-      """).param("store", storeId).param("room", roomId).query(Occupancy.class).single();
+    String occupancySql = "select exists(select 1 from service_session where store_id=:store and room_id=:room and status='IN_SERVICE') in_service,"
+      + " exists(select 1 from service_session where store_id=:store and room_id=:room and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED')) pending,"
+      + " exists(select 1 from service_session s where s.store_id=:store and s.room_id=:room and "
+      + OperationalStateService.completedUnsettledPredicate("s") + ") unpaid";
+    Occupancy occupancy = jdbc.sql(occupancySql).param("store", storeId).param("room", roomId).query(Occupancy.class).single();
     if (occupancy.inService()) status = "IN_SERVICE";
     else if (occupancy.pending() && Set.of("IDLE", "PENDING_PAYMENT", "CLEANING").contains(status)) status = "RESERVED";
     else if (occupancy.unpaid() && Set.of("IDLE", "CLEANING").contains(status)) status = "PENDING_PAYMENT";

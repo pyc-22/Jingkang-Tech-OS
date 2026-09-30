@@ -9,6 +9,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
+import jakarta.servlet.http.HttpServletResponse;
 import org.apache.poi.ss.usermodel.BorderStyle;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
@@ -58,7 +59,9 @@ public class FinanceExpenseReportController {
       @RequestParam(required = false) LocalDate from,
       @RequestParam(required = false) LocalDate to,
       @RequestParam(required = false) UUID storeId,
-      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+      HttpServletResponse response) {
+    noStore(response);
     requireFinanceAccess(authorization);
     DateRange range = dateRange(from, to);
     return snapshot.execute(status -> loadSummary(range, storeId));
@@ -69,7 +72,9 @@ public class FinanceExpenseReportController {
       @RequestParam(required = false) LocalDate from,
       @RequestParam(required = false) LocalDate to,
       @RequestParam(required = false) UUID storeId,
-      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+      HttpServletResponse response) {
+    noStore(response);
     requireFinanceAccess(authorization);
     DateRange range = dateRange(from, to);
     return snapshot.execute(status -> exportSnapshot(range, storeId));
@@ -130,7 +135,7 @@ public class FinanceExpenseReportController {
   private List<ExpenseExportRow> loadDetails(DateRange range, UUID storeId) {
     String where = where(storeId);
     return parameters(jdbc.sql("""
-      select c.claim_no,s.name store_name,coalesce(parent.name || ' / ','') || category.name category_name,
+      select c.claim_no,s.name store_name,c.title,coalesce(parent.name || ' / ','') || category.name category_name,
         c.expense_date,c.amount_cents,c.status,applicant.display_name applicant_name,c.payee_name,c.receipt_type,
         c.description,c.submitted_at,c.reviewed_at,coalesce(reviewer.display_name,'') reviewer_name,
         payment.payment_method,payment.payment_date,payment.payment_reference
@@ -198,13 +203,13 @@ public class FinanceExpenseReportController {
       summarySheet.createFreezePane(0, 2);
 
       Sheet detailSheet = workbook.createSheet("报销明细");
-      String[] columns = {"报销单号","门店","费用分类","发生日期","申请金额（元）","状态","申请人","收款方","票据类型","费用说明","提交时间","审核时间","审核人","付款方式","付款日期","付款凭证号"};
+      String[] columns = {"报销单号","门店","标题","费用分类","发生日期","申请金额（元）","状态","申请人","收款方","票据类型","费用说明","提交时间","审核时间","审核人","付款方式","付款日期","付款凭证号"};
       Row header = detailSheet.createRow(0);
-      for (int column = 0; column < columns.length; column++) { cell(header, column, columns[column], heading); detailSheet.setColumnWidth(column, (column == 9 ? 36 : 18) * 256); }
+      for (int column = 0; column < columns.length; column++) { cell(header, column, columns[column], heading); detailSheet.setColumnWidth(column, (column == 10 ? 36 : 18) * 256); }
       int detailIndex = 1;
       for (ExpenseExportRow item : details) {
         Row row = detailSheet.createRow(detailIndex++);
-        Object[] values = {item.claimNo(),item.storeName(),item.categoryName(),text(item.expenseDate()),cents(item.amountCents()),statusName(item.status()),item.applicantName(),item.payeeName(),item.receiptType(),item.description(),text(item.submittedAt()),text(item.reviewedAt()),item.reviewerName(),item.paymentMethod(),text(item.paymentDate()),item.paymentReference()};
+        Object[] values = {item.claimNo(),item.storeName(),item.title()==null||item.title().isBlank()?item.description():item.title(),item.categoryName(),text(item.expenseDate()),cents(item.amountCents()),statusName(item.status()),item.applicantName(),item.payeeName(),item.receiptType(),item.description(),text(item.submittedAt()),text(item.reviewedAt()),item.reviewerName(),item.paymentMethod(),text(item.paymentDate()),item.paymentReference()};
         for (int column = 0; column < values.length; column++) {
           Object value = values[column];
           if (value instanceof Number number) numericCell(row, column, number.doubleValue(), money); else cell(row, column, value == null ? "" : value.toString(), text);
@@ -273,12 +278,13 @@ public class FinanceExpenseReportController {
   private String statusName(String status) { return switch (status) { case "SUBMITTED" -> "待审核"; case "APPROVED" -> "待付款"; case "PAID" -> "已付款"; case "RETURNED" -> "已退回"; case "REJECTED" -> "已驳回"; default -> status; }; }
   private void requireFinanceAccess(String authorization) { sessions.requirePermission(authorization, "EXPENSE_REVIEW"); sessions.requirePermission(authorization, "EXPENSE_ALL_STORE_VIEW"); }
   private ResponseStatusException bad(String message) { return new ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, message); }
+  private void noStore(HttpServletResponse response) { response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store, max-age=0"); }
 
   public record FinanceExpenseSummary(LocalDate from, LocalDate to, FinanceTotals totals, List<StatusSummary> statuses, List<StoreSummary> stores, List<CategorySummary> categories) {}
   public record FinanceTotals(Long claimCount, Long totalAmountCents, Long pendingCount, Long pendingAmountCents, Long approvedCount, Long approvedAmountCents, Long paidCount, Long paidAmountCents) {}
   public record StatusSummary(String status, Long claimCount, Long amountCents) {}
   public record StoreSummary(UUID storeId, String storeName, Long claimCount, Long amountCents, Long paidAmountCents) {}
   public record CategorySummary(UUID expenseCategoryId, String categoryName, Long claimCount, Long amountCents, Long paidAmountCents) {}
-  record ExpenseExportRow(String claimNo, String storeName, String categoryName, LocalDate expenseDate, Long amountCents, String status, String applicantName, String payeeName, String receiptType, String description, OffsetDateTime submittedAt, OffsetDateTime reviewedAt, String reviewerName, String paymentMethod, LocalDate paymentDate, String paymentReference) {}
+  record ExpenseExportRow(String claimNo, String storeName, String title, String categoryName, LocalDate expenseDate, Long amountCents, String status, String applicantName, String payeeName, String receiptType, String description, OffsetDateTime submittedAt, OffsetDateTime reviewedAt, String reviewerName, String paymentMethod, LocalDate paymentDate, String paymentReference) {}
   record DateRange(LocalDate from, LocalDate to) {}
 }

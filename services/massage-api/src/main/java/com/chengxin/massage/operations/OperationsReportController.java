@@ -10,7 +10,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.List;
-import java.util.Set;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -73,20 +72,23 @@ public class OperationsReportController {
   private final AdminSessionService adminSessions;
   private final BusinessClockService businessClock;
   private final DailyReportService dailyReports;
+  private final OperationalStateService operationalState;
 
   @Autowired
   OperationsReportController(JdbcClient jdbc, StoreContextService storeContext, AdminSessionService adminSessions,
-                             BusinessClockService businessClock, DailyReportService dailyReports) {
+                             BusinessClockService businessClock, DailyReportService dailyReports,
+                             OperationalStateService operationalState) {
     this.jdbc = jdbc;
     this.storeContext = storeContext;
     this.adminSessions = adminSessions;
     this.businessClock = businessClock;
     this.dailyReports = dailyReports;
+    this.operationalState = operationalState;
   }
 
   // Kept for focused controller tests that exercise the static SQL helpers.
   OperationsReportController(JdbcClient jdbc, StoreContextService storeContext, AdminSessionService adminSessions, BusinessClockService businessClock) {
-    this(jdbc, storeContext, adminSessions, businessClock, null);
+    this(jdbc, storeContext, adminSessions, businessClock, null, new OperationalStateService(jdbc, businessClock));
   }
 
   @GetMapping("/daily-report")
@@ -163,92 +165,58 @@ public class OperationsReportController {
 
   @GetMapping("/live-room-status")
   List<LiveRoomStatus> liveRoomStatus(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
-                                      @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+                                      @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId,
+                                      HttpServletResponse response) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
-    List<LiveRoomBase> rooms = jdbc.sql(liveRoomStatusSql()).param("store", storeId).query(LiveRoomBase.class).list();
-    List<LiveRoomService> services = jdbc.sql(liveRoomServiceSql()).param("store", storeId).query(LiveRoomService.class).list();
-    Map<UUID, List<LiveRoomService>> servicesByRoom = new LinkedHashMap<>();
-    services.forEach(service -> servicesByRoom.computeIfAbsent(service.roomId(), ignored -> new ArrayList<>()).add(service));
-    return rooms.stream().map(room -> {
-      List<LiveRoomService> roomServices = servicesByRoom.getOrDefault(room.roomId(), List.of());
-      long occupied = roomServices.stream().filter(service -> occupiesRoomBed(service.serviceStatus()))
-        .map(service -> service.bedId() == null ? service.serviceSessionId() : service.bedId()).distinct().count();
-      int bedCount = Math.max(1, room.bedCount());
-      return new LiveRoomStatus(room.roomId(), room.roomCode(), room.roomName(), room.status(), bedCount,
-        Math.min(occupied, bedCount), Math.max(0, bedCount - occupied), roomServices);
-    }).toList();
+    response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store, max-age=0");
+    return operationalState.live(storeId).rooms().stream().map(room -> new LiveRoomStatus(room.roomId(), room.roomCode(), room.roomName(), room.status(), room.bedCount(), room.occupiedBedCount(), room.availableBedCount(), room.services().stream().map(service -> new LiveRoomService(service.serviceSessionId(), service.roomId(), service.bedId(), service.bedCode(), service.bedName(), service.serviceNameSnapshot(), service.clockType(), service.serviceStatus(), service.startedAt(), service.expectedEndAt(), service.technicianDisplay(), service.technicianCount())).toList())).toList();
+  }
+
+  @GetMapping("/live-state")
+  OperationalStateService.LiveState liveState(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+                                               @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId,
+                                               HttpServletResponse response) {
+    UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
+    response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store, max-age=0");
+    return operationalState.live(storeId);
   }
 
   @GetMapping("/live-technician-status")
   LiveTechnicianOverview liveTechnicianStatus(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
-                                               @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
+                                               @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId,
+                                               HttpServletResponse response) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
-    LocalDate businessDate = businessClock.currentBusinessDate(storeId);
-    List<LiveTechnicianStatus> technicians = jdbc.sql(liveTechnicianStatusSql())
-      .param("store", storeId).param("businessDate", businessDate).query(LiveTechnicianStatus.class).list();
-    LiveDispatchAttention attention = jdbc.sql(liveDispatchAttentionSql())
-      .param("store", storeId).query(LiveDispatchAttention.class).single();
-    return new LiveTechnicianOverview(businessDate.toString(), attention.reassignmentRequiredCount(),
-      attention.dispatchCancelledCount(), technicians);
+    response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store, max-age=0");
+    OperationalStateService.LiveState state = operationalState.live(storeId);
+    List<LiveTechnicianStatus> technicians = state.technicians().stream().map(item -> new LiveTechnicianStatus(item.technicianId(), item.technicianCode(), item.technicianName(), item.queuePosition(), item.status(), item.serviceSessionId(), item.roomCode(), item.roomName(), item.serviceNameSnapshot(), item.clockType(), item.startedAt(), item.expectedEndAt(), item.acceptanceDeadlineAt())).toList();
+    return new LiveTechnicianOverview(state.businessDate(), state.reassignmentRequiredCount(), state.dispatchCancelledCount(), technicians);
   }
 
   static String liveRoomStatusSql() {
-    return "select r.id room_id,r.code room_code,r.name room_name,r.bed_count," +
-      "case when exists(select 1 from service_session active where active.store_id=:store and active.room_id=r.id and active.status='IN_SERVICE') then 'IN_SERVICE' " +
-      "when exists(select 1 from service_session active where active.store_id=:store and active.room_id=r.id and active.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED')) then 'RESERVED' " +
-      "else coalesce((select event.status from room_status_event event where event.store_id=:store and event.room_id=r.id order by event.occurred_at desc,event.id desc limit 1),'IDLE') end status " +
-      "from room r where r.store_id=:store and r.active=true order by r.code";
+    return OperationalStateService.roomSql();
   }
 
   static String liveRoomServiceSql() {
-    return "select ss.id service_session_id,ss.room_id,ss.bed_id,bed.code bed_code,bed.name bed_name,ss.service_name_snapshot,ss.clock_type,ss.status service_status,ss.started_at,ss.expected_end_at," +
-      "case when ss.status='REASSIGNMENT_REQUIRED' then '待重新派单' when ss.status='DISPATCH_CANCELLED' then '待与顾客沟通' else coalesce((select string_agg(concat_ws(' · ',tech.code,tech.name),'、' order by participant.slot_no,participant.sequence_no) from service_session_participant participant join technician tech on tech.id=participant.technician_id where participant.service_session_id=ss.id and participant.store_id=:store and participant.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')),concat_ws(' · ',primary_tech.code,primary_tech.name)) end technician_display," +
-      "case when ss.status in ('REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED') then 0 else coalesce((select count(distinct participant.technician_id) from service_session_participant participant where participant.service_session_id=ss.id and participant.store_id=:store and participant.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')),1) end technician_count " +
-      "from service_session ss join technician primary_tech on primary_tech.id=ss.technician_id left join room_bed bed on bed.id=ss.bed_id " +
-      "where ss.store_id=:store and (ss.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE') " +
-      "or (ss.status='COMPLETED' and not exists(select 1 from sales_order_service_session link where link.service_session_id=ss.id))) " +
-      "order by ss.room_id,bed.sort_order nulls last,ss.created_at";
+    return OperationalStateService.serviceSql();
   }
 
   static String liveTechnicianStatusSql() {
-    return "select technician.id technician_id,technician.code technician_code,technician.name technician_name," +
-      "coalesce(queue_position.queue_position,nullif(technician.queue_order,0)) queue_position," +
-      "coalesce(current_service.participant_status,'IDLE') status,current_service.service_session_id," +
-      "room.code room_code,room.name room_name,current_service.service_name_snapshot,current_service.clock_type," +
-      "coalesce(current_service.service_started_at,current_service.started_at) started_at,current_service.expected_end_at,current_service.acceptance_deadline_at " +
-      "from technician " +
-      "left join technician_queue_day queue_day on queue_day.store_id=technician.store_id and queue_day.business_date=:businessDate " +
-      "left join technician_queue_position queue_position on queue_position.queue_day_id=queue_day.id and queue_position.technician_id=technician.id " +
-      "left join lateral (select participant.status participant_status,participant.service_session_id,participant.service_started_at,participant.acceptance_deadline_at," +
-      "session.room_id,session.service_name_snapshot,session.clock_type,session.started_at,session.expected_end_at " +
-      "from service_session_participant participant join service_session session on session.id=participant.service_session_id " +
-      "where participant.store_id=:store and participant.technician_id=technician.id " +
-      "and participant.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE') " +
-      "and session.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE') " +
-      "order by case participant.status when 'IN_SERVICE' then 0 when 'PENDING_ACCEPTANCE' then 1 else 2 end,participant.created_at desc limit 1) current_service on true " +
-      "left join room on room.id=current_service.room_id " +
-      "where technician.store_id=:store and technician.active=true " +
-      "order by case coalesce(current_service.participant_status,'IDLE') when 'IN_SERVICE' then 0 when 'PENDING_ACCEPTANCE' then 1 when 'ACCEPTED' then 2 else 3 end," +
-      "coalesce(queue_position.queue_position,nullif(technician.queue_order,0),2147483647),technician.code";
+    return OperationalStateService.technicianSql();
   }
 
   static boolean occupiesRoomBed(String status) {
-    return Set.of("PENDING_ACCEPTANCE", "ACCEPTED", "REASSIGNMENT_REQUIRED", "DISPATCH_CANCELLED", "IN_SERVICE").contains(status);
+    return OperationalStateService.occupiesBed(status);
   }
 
   static String liveDispatchAttentionSql() {
-    return "select count(*) filter(where status='REASSIGNMENT_REQUIRED') reassignment_required_count," +
-      "count(*) filter(where status='DISPATCH_CANCELLED') dispatch_cancelled_count " +
-      "from service_session where store_id=:store and status in ('REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED')";
+    return OperationalStateService.attentionSql();
   }
 
   private RoomUtilization managementRoomUtilization(UUID storeId) {
-    RoomBedSummary beds = jdbc.sql("select coalesce(sum(bed_count),0) total_bed_count from room where store_id=:store and active=true")
-      .param("store", storeId).query(RoomBedSummary.class).single();
-    Long occupied = jdbc.sql("select count(*) from service_session where store_id=:store and room_id is not null and status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED','IN_SERVICE')")
-      .param("store", storeId).query(Long.class).single();
-    long total = beds.totalBedCount() == null ? 0L : beds.totalBedCount();
-    long used = occupied == null ? 0L : Math.min(occupied, total);
+    OperationalStateService.LiveState state = operationalState.live(storeId);
+    long total = state.rooms().stream().mapToLong(room -> room.bedCount() == null ? 0L : room.bedCount()).sum();
+    long used = state.rooms().stream().mapToLong(room -> room.occupiedBedCount() == null ? 0L : room.occupiedBedCount()).sum();
+    used = Math.min(used, total);
     long rate = total == 0 ? 0 : Math.round(used * 100.0 / total);
     return new RoomUtilization(used, total, rate);
   }
@@ -413,14 +381,16 @@ public class OperationsReportController {
   }
 
   private StoreOperationSummary storeOperationSummary(UUID storeId) {
-    return jdbc.sql("select "
-      + "(select count(*) from room where store_id=:store and active=true) active_room_count,"
-      + "(select count(*) from room r where r.store_id=:store and r.active=true and coalesce((select event.status from room_status_event event where event.store_id=:store and event.room_id=r.id order by event.occurred_at desc,event.id desc limit 1),'IDLE')='IN_SERVICE') room_serving_count,"
-      + "(select count(*) from room r where r.store_id=:store and r.active=true and coalesce((select event.status from room_status_event event where event.store_id=:store and event.room_id=r.id order by event.occurred_at desc,event.id desc limit 1),'IDLE')='CLEANING') room_cleaning_count,"
-      + "(select count(*) from service_session where store_id=:store and status='IN_SERVICE') active_technician_count,"
-      + "(select count(*) from service_session session where session.store_id=:store and session.status='COMPLETED' and not exists(select 1 from sales_order_service_session link where link.service_session_id=session.id)) pending_settlement_count,"
-      + "(select count(*) from sales_refund where store_id=:store and status='PENDING') pending_refund_count")
-      .param("store", storeId).query(StoreOperationSummary.class).single();
+    OperationalStateService.LiveState state = operationalState.live(storeId);
+    long activeRooms = state.rooms().size();
+    long servingRooms = state.rooms().stream().filter(room -> "IN_SERVICE".equals(room.status())).count();
+    long cleaningRooms = state.rooms().stream().filter(room -> "CLEANING".equals(room.status())).count();
+    long activeTechnicians = state.technicians().stream().filter(technician -> !"IDLE".equals(technician.status())).count();
+    long pendingSettlement = state.rooms().stream().flatMap(room -> room.services().stream())
+      .filter(service -> "COMPLETED_UNSETTLED".equals(service.serviceStatus())).count();
+    long pendingRefund = jdbc.sql("select count(*) from sales_refund where store_id=:store and status='PENDING'")
+      .param("store", storeId).query(Long.class).single();
+    return new StoreOperationSummary(activeRooms, servingRooms, cleaningRooms, activeTechnicians, pendingSettlement, pendingRefund);
   }
 
   private List<CrossStoreTransaction> orderTransactions(AdminSessionService.AdminStore store, String keyword) {

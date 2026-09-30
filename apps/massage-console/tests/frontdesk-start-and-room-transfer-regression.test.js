@@ -110,7 +110,7 @@ test('pending technician card exposes a direct start-service action', () => {
 });
 
 test('front desk loads the updated application script without stale browser cache', () => {
-  assert.match(index, /app\.js\?v=20260929-manager-rewards-v2/);
+  assert.match(index, /app\.js\?v=20260930-operational-state-v1/);
 });
 
 test('technician-card and settlement room-transfer dialogs have unique ids', () => {
@@ -124,7 +124,8 @@ test('replaced technicians are removed from live front-desk state while history 
   assert.match(app, /activeParticipantTechnicianIds \|\| session\?\.participantTechnicianIds/);
   assert.match(app, /return \[\.\.\.new Set\(String\(raw\)\.split\(','\)/);
   assert.match(app, /sessionParticipantIds\(item\)/);
-  assert.match(app, /const roomSessions = new Map\(\)/);
+  assert.match(app, /const roomList = liveRoom\?\.services \|\| \[\]/);
+  assert.match(app, /activeParticipantTechnicianIds \|\| session\?\.participantTechnicianIds/);
   assert.match(controller, /active_participant_technician_ids/);
   assert.match(controller, /participant\.status in \('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE'\)/);
   assert.match(controller, /participant\.status in \('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE','COMPLETED'\)/);
@@ -135,7 +136,7 @@ test('replaced technicians are removed from live front-desk state while history 
 });
 
 test('room transfer targets use free bed capacity and exclude the source room', () => {
-  assert.match(app, /const occupiedBedCount = roomList\.length/);
+  assert.match(app, /const occupiedBedCount = Number\(liveRoom\?\.occupiedBedCount \|\| 0\)/);
   assert.match(app, /availableBedCount\|\|0\)>0&&\['idle','reserved','serving'\]\.includes\(room\.status\)/);
   assert.match(app, /String\(room\.apiId\)!==String\(session\?\.roomId\)/);
   assert.match(app, /function renderFrontdeskRoomTransferRooms\(\)/);

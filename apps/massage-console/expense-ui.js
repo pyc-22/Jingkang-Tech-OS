@@ -26,7 +26,7 @@ const ExpenseUI = {
     return message;
   },
   async download(url, headers) {
-    const response = await fetch(url, { headers });
+    const response = await fetch(url, { headers, cache: 'no-store' });
     if (!response.ok) throw new Error(await this.error(response));
     const href = URL.createObjectURL(await response.blob());
     const link = document.createElement('a'); link.href = href; link.download = '费用报销.xlsx';

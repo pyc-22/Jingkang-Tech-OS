@@ -9,7 +9,8 @@ const lifecycle = fs.readFileSync(path.resolve(root, '..', '..', 'services', 'ma
 const configuration = fs.readFileSync(path.resolve(root, '..', '..', 'services', 'massage-api', 'src', 'main', 'resources', 'application.yml'), 'utf8');
 
 test('expired or rejected technicians remain available while their service waits for reassignment', () => {
-  assert.match(app, /Rejected and expired participants are no longer assigned to the session/);
+  assert.match(app, /const unresolved = participants\.filter\(item => item\.status === 'REJECTED' \|\| item\.status === 'EXPIRED'\)/);
+  assert.match(app, /const allowedIds = new Set\(\[\.\.\.state\.technicians\.filter\(item => item\.state === 'available'\)/);
   assert.doesNotMatch(app, /reassignment\.forEach\(session => sessionParticipantIds\(session\)\.forEach\(id =>[\s\S]*tech\.state = 'reassign'/);
   assert.match(app, /state\.reassignmentSessions = reassignment/);
 });
