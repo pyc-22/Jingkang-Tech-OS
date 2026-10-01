@@ -14,6 +14,8 @@ class OperationalStateServiceTest {
     String serviceSql = OperationalStateService.serviceSql().toLowerCase();
 
     assertThat(roomSql).contains("then 'pending_payment'");
+    assertThat(roomSql).contains("from room_bed active_bed");
+    assertThat(roomSql).contains("active_bed.active=true");
     assertThat(roomSql).contains("linked_order.refund_status='full'");
     assertThat(roomSql).contains("when linked_order.status='settled' and linked_order.refund_status='full' then true");
     assertThat(roomSql).contains("when linked_order.status='settled' then false");

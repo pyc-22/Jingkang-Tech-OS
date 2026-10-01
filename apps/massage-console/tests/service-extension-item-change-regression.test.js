@@ -52,7 +52,7 @@ test('main item changes remain available when a session has no extensions', () =
   assert.match(app, /extensionSelect\.disabled = serviceItemChangeExtensions\.length === 0/);
   assert.match(app, /kindWrap\.hidden = !hasExtensions/);
   assert.match(app, /extensionWrap\.style\.display = 'none'/);
-  assert.match(index, /app\.js\?v=20260930-operational-state-v1/);
+  assert.match(index, /app\.js\?v=20261001-live-state-settlement-v1/);
   assert.match(index, /styles\.css\?v=20260926-auth-hardening-v1/);
   assert.match(fs.readFileSync(path.join(root, 'styles.css'), 'utf8'), /\.form-grid label\[hidden\] \{ display:none !important; \}/);
 });

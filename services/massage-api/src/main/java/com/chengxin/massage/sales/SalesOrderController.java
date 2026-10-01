@@ -288,6 +288,7 @@ public class SalesOrderController {
     if (input.settlementAmountCents() > receivable) throw bad("补单金额不能超过项目合计");
     long paid = input.payments().stream().mapToLong(PaymentInput::amountCents).sum();
     if (paid != input.settlementAmountCents()) throw bad("各收款方式合计必须等于补单金额");
+    List<ResolvedPayment> resolvedPayments = resolvePayments(storeId, input.memberId(), input.payments());
 
     jdbc.sql("""
       insert into sales_order(
@@ -320,9 +321,9 @@ public class SalesOrderController {
       createCommissionRecords(storeId, orderId, orderLineId, orderNo, settlementNo,
         materialized.serviceSessionId(), operatedAt, input.backfillDate());
     }
-    for (PaymentInput payment : input.payments()) {
-      PaymentMethod method = paymentMethod(storeId, payment.method());
-      Wallet wallet = resolveWallet(storeId, input.memberId(), payment.walletId(), method);
+    for (ResolvedPayment payment : resolvedPayments) {
+      PaymentMethod method = payment.method();
+      Wallet wallet = payment.wallet();
       if ("MEMBER_BALANCE".equals(method.methodKind())) consumeWallet(storeId, wallet, payment.amountCents(), orderId, input.backfillDate());
       paymentNames.add(method.name());
       jdbc.sql("insert into payment_record(id,tenant_id,store_id,order_id,payment_method,payment_method_name_snapshot,wallet_id,amount_cents) values(:id,:tenant,:store,:order,:method,:name,:wallet,:amount)")
@@ -417,6 +418,7 @@ public class SalesOrderController {
     long paid = input.payments().stream().mapToLong(PaymentInput::amountCents).sum();
     if (waived && !input.payments().isEmpty()) throw bad("免单不能填写收款金额");
     if (total != paid) throw bad("各收款方式合计必须等于实收金额");
+    List<ResolvedPayment> resolvedPayments = resolvePayments(storeId, input.memberId(), input.payments());
 
     UUID orderId = UUID.randomUUID();
     OffsetDateTime settledAt = OffsetDateTime.now();
@@ -440,9 +442,9 @@ public class SalesOrderController {
         createCommissionRecords(storeId, orderId, orderLineId, orderNo, settlementNo, materialized.serviceSessionId(), settledAt, businessDate);
       }
     }
-    for (PaymentInput payment : input.payments()) {
-      PaymentMethod method = paymentMethod(storeId, payment.method());
-      Wallet wallet = resolveWallet(storeId, input.memberId(), payment.walletId(), method);
+    for (ResolvedPayment payment : resolvedPayments) {
+      PaymentMethod method = payment.method();
+      Wallet wallet = payment.wallet();
       if ("MEMBER_BALANCE".equals(method.methodKind())) consumeWallet(storeId, wallet, payment.amountCents(), orderId, businessDate);
       jdbc.sql("insert into payment_record(id,tenant_id,store_id,order_id,payment_method,payment_method_name_snapshot,wallet_id,amount_cents) values(:id,:tenant,:store,:order,:method,:name,:wallet,:amount)")
         .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", storeId).param("order", orderId).param("method", method.code()).param("name", method.name()).param("wallet", wallet == null ? null : wallet.id()).param("amount", payment.amountCents()).update();
@@ -1107,19 +1109,65 @@ public class SalesOrderController {
       .orElseThrow(() -> bad("所选会员卡不存在、已停用或不可用"));
   }
 
+  /** Resolve all payments, then lock selected wallets in UUID order. */
+  private List<ResolvedPayment> resolvePayments(UUID storeId, UUID orderMemberId, List<PaymentInput> inputs) {
+    if (inputs == null || inputs.isEmpty()) return List.of();
+    List<PaymentDraft> drafts = new ArrayList<>(inputs.size());
+    Set<UUID> walletIds = new HashSet<>();
+    for (PaymentInput payment : inputs) {
+      PaymentMethod method = paymentMethod(storeId, payment.method());
+      UUID walletId = payment.walletId();
+      if (!"MEMBER_BALANCE".equals(method.methodKind())) {
+        if (walletId != null) throw bad("外部支付方式不能指定会员卡");
+      } else {
+        if (walletId == null) {
+          if (orderMemberId == null) throw bad("使用会员余额付款时必须先选择会员或会员卡");
+          walletId = jdbc.sql("select w.id from member_wallet w join member m on m.id=w.member_id where w.tenant_id=:tenant and w.member_id=:member and w.is_default and w.active and m.active order by w.id limit 1")
+            .param("tenant", TENANT_ID).param("member", orderMemberId).query(UUID.class).optional()
+            .orElseThrow(() -> bad("使用会员余额付款时必须先选择会员"));
+        }
+        walletIds.add(walletId);
+      }
+      drafts.add(new PaymentDraft(method, walletId, payment.amountCents()));
+    }
+    Map<UUID, Wallet> wallets = lockWallets(walletIds);
+    List<ResolvedPayment> resolved = new ArrayList<>(drafts.size());
+    for (PaymentDraft draft : drafts) {
+      Wallet wallet = draft.walletId() == null ? null : wallets.get(draft.walletId());
+      if ("MEMBER_BALANCE".equals(draft.method().methodKind()) && wallet == null) {
+        throw bad("所选会员卡不存在、已停用或不可用");
+      }
+      resolved.add(new ResolvedPayment(draft.method(), wallet, draft.amountCents()));
+    }
+    return resolved;
+  }
+
+  private Map<UUID, Wallet> lockWallets(Set<UUID> walletIds) {
+    if (walletIds.isEmpty()) return Map.of();
+    List<UUID> sortedWalletIds = walletIds.stream().sorted().toList();
+    List<Wallet> locked = jdbc.sql("select w.id,w.member_id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.id in (:walletIds) and w.tenant_id=:tenant and w.active and m.active order by w.id for update of w")
+      .param("walletIds", sortedWalletIds).param("tenant", TENANT_ID).query(Wallet.class).list();
+    Map<UUID, Wallet> byId = new LinkedHashMap<>();
+    for (Wallet wallet : locked) byId.put(wallet.id(), wallet);
+    if (byId.size() != sortedWalletIds.size()) throw bad("所选会员卡不存在、已停用或不可用");
+    return byId;
+  }
+
   private void consumeWallet(UUID transactionStoreId, UUID memberId, long amount, UUID orderId, LocalDate businessDate) {
     consumeWallet(transactionStoreId, resolveWallet(transactionStoreId, memberId, null, new PaymentMethod("MEMBER_BALANCE", "会员余额", "MEMBER_BALANCE")), amount, orderId, businessDate);
   }
 
   private void consumeWallet(UUID transactionStoreId, Wallet wallet, long amount, UUID orderId, LocalDate businessDate) {
     if (wallet == null) throw bad("使用会员余额付款时必须先选择会员卡");
-    if (wallet.balanceCents() < amount) throw new ResponseStatusException(HttpStatus.CONFLICT, "会员余额不足，请调整付款方式或充值");
-    long after = wallet.balanceCents() - amount;
+    Wallet current = jdbc.sql("select w.id,w.member_id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.id=:wallet and w.tenant_id=:tenant and w.active and m.active for update")
+      .param("wallet", wallet.id()).param("tenant", TENANT_ID).query(Wallet.class).single();
+    if (current.balanceCents() < amount) throw new ResponseStatusException(HttpStatus.CONFLICT, "会员余额不足，请调整付款方式或充值");
+    long after = current.balanceCents() - amount;
     jdbc.sql("update member_wallet set balance_cents=:balance,updated_at=now(),version=version+1 where id=:id")
-      .param("balance", after).param("id", wallet.id()).update();
+      .param("balance", after).param("id", current.id()).update();
     jdbc.sql("insert into wallet_transaction(id,tenant_id,store_id,wallet_id,member_id,transaction_type,amount_cents,balance_before_cents,balance_after_cents,source,note,business_date) values(:id,:tenant,:store,:wallet,:member,'CONSUMPTION',:amount,:before,:after,'ORDER',:note,:businessDate)")
-      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", transactionStoreId).param("wallet", wallet.id()).param("member", wallet.memberId())
-      .param("amount", -amount).param("before", wallet.balanceCents()).param("after", after).param("note", orderId.toString()).param("businessDate", businessDate).update();
+      .param("id", UUID.randomUUID()).param("tenant", TENANT_ID).param("store", transactionStoreId).param("wallet", current.id()).param("member", current.memberId())
+      .param("amount", -amount).param("before", current.balanceCents()).param("after", after).param("note", orderId.toString()).param("businessDate", businessDate).update();
   }
 
   private void consumeHistoricalWallet(UUID transactionStoreId, UUID memberId, long amount, UUID orderId, LocalDate businessDate) {
@@ -1176,6 +1224,8 @@ public class SalesOrderController {
                                 OffsetDateTime correctedAt) {}
   record TechnicianSnapshot(UUID id, String name) {}
   record PaymentMethod(String code, String name, String methodKind) {}
+  record PaymentDraft(PaymentMethod method, UUID walletId, Long amountCents) {}
+  record ResolvedPayment(PaymentMethod method, Wallet wallet, Long amountCents) {}
   record CommissionBase(UUID serviceSessionId, UUID serviceSessionExtensionId, UUID serviceItemId, UUID technicianId, String technicianName, String serviceNameSnapshot, Integer baseAmountCents, String clockType, UUID commissionRuleVersionId, LocalDate businessDate, Boolean countsAsClockSnapshot, Short durationMinutes, UUID serviceParticipantId, Integer allocationBpSnapshot, Integer servedSecondsSnapshot, Short clockAdjustment, Integer fixedScaleBp) {}
   record ParticipantCommissionBase(UUID serviceParticipantId, UUID serviceSessionId, UUID serviceItemId, UUID technicianId, String technicianName, String serviceNameSnapshot, Integer servicePriceCents, String clockType, UUID commissionRuleVersionId, LocalDate businessDate, Boolean countsAsClockSnapshot, Short plannedDurationMinutes, Short slotNo, Short sequenceNo, Integer allocationBp, Integer servedSeconds) {}
   record SettlementParticipant(UUID id, Short slotNo, Short sequenceNo, String participationType, Integer allocationBp, String status, UUID replacedParticipantId) {}

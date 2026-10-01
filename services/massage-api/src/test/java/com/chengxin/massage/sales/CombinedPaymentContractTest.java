@@ -14,8 +14,8 @@ class CombinedPaymentContractTest {
   @Test
   void settlementAcceptsMultipleMemberCardsAndExternalPaymentRows() throws Exception {
     String source = salesSource();
-    assertThat(source).contains("for (PaymentInput payment : input.payments())");
-    assertThat(source).contains("Wallet wallet = resolveWallet(storeId, input.memberId(), payment.walletId(), method)");
+    assertThat(source).contains("List<ResolvedPayment> resolvedPayments = resolvePayments(storeId, input.memberId(), input.payments())");
+    assertThat(source).contains("for (ResolvedPayment payment : resolvedPayments)");
     assertThat(source).contains("payment.walletId()");
     String frontend = Files.readString(Path.of("..", "..", "apps/massage-console/app.js"));
     assertThat(frontend).contains("settlementPaymentRows.push");
@@ -46,8 +46,11 @@ class CombinedPaymentContractTest {
   @Test
   void locksSelectedCardBeforeCheckingAndChangingBalance() throws Exception {
     String source = salesSource();
-    String selection = source.substring(source.indexOf("private Wallet resolveWallet("), source.indexOf("private Wallet walletById("));
-    assertThat(selection).contains("for update of w");
+    String selection = source.substring(source.indexOf("private List<ResolvedPayment> resolvePayments("), source.indexOf("private Map<UUID, Wallet> lockWallets("));
+    assertThat(selection).contains("walletIds.add(walletId)");
+    String locking = source.substring(source.indexOf("private Map<UUID, Wallet> lockWallets("), source.indexOf("private void consumeWallet("));
+    assertThat(locking).contains("walletIds.stream().sorted().toList()");
+    assertThat(locking).contains("order by w.id for update of w");
   }
 
   @Test

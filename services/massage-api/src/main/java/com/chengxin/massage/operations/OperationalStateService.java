@@ -80,7 +80,7 @@ public class OperationalStateService {
   }
 
   static String roomSql() {
-    return "select r.id room_id,r.code room_code,r.name room_name,r.bed_count," +
+    return "select r.id room_id,r.code room_code,r.name room_name,coalesce((select nullif(count(*),0) from room_bed active_bed where active_bed.store_id=:store and active_bed.room_id=r.id and active_bed.active=true),r.bed_count) bed_count," +
         "case when exists(select 1 from service_session active where active.store_id=:store and active.room_id=r.id and active.status='IN_SERVICE') then 'IN_SERVICE' " +
         "when exists(select 1 from service_session active where active.store_id=:store and active.room_id=r.id and active.status in ('PENDING_ACCEPTANCE','ACCEPTED','REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED')) then 'RESERVED' " +
         "when exists(select 1 from service_session completed where completed.store_id=:store and completed.room_id=r.id and " + completedUnsettledPredicate("completed") + ") then 'PENDING_PAYMENT' " +

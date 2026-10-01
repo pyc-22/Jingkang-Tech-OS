@@ -24,7 +24,7 @@ test('same-day correction is not exposed in admin console', () => {
 });
 
 test('health endpoint reports the manager rewards release', () => {
-  assert.match(home, /20260929-manager-rewards-v2/);
+  assert.match(home, /20261001-live-state-settlement-v1/);
   assert.doesNotMatch(home, /20260924-|20260929-manager-rewards-v1/);
 });
 
