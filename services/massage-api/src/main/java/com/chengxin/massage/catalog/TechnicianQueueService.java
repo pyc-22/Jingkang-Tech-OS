@@ -75,7 +75,7 @@ public class TechnicianQueueService {
   @Transactional
   public void rotateAfterServiceStart(UUID storeId, LocalDate businessDate, UUID serviceSessionId, String clockType,
                                       List<UUID> technicianIds, UUID actorUserId, String actorName) {
-    if (!"QUEUE".equals(clockType) && !"BOOKED_QUEUE".equals(clockType)) return;
+    if (!"QUEUE".equals(clockType) && !"BOOKED_QUEUE".equals(clockType) && !"CONVERSION".equals(clockType)) return;
     if (technicianIds == null || technicianIds.isEmpty()) return;
     QueueDay day = ensureDay(storeId, businessDate);
     lockDay(day);

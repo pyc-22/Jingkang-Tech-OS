@@ -40,7 +40,7 @@
       ['大项目（含加钟）', `${snapshot.bigProjectCount || 0} 项`, snapshot.bigProjectRewardCents, snapshot.bigProjectTierLabel],
       ['充卡', `${snapshot.rechargeCount || 0} 张`, snapshot.rechargeRewardCents, snapshot.rechargeTierLabel]
     ];
-    target.innerHTML = rows.map(row => `<article class="manager-reward-card"><span>${row[0]}</span><strong>${row[1]}</strong><small>${escape(row[3] || '未达档')} · 奖励 ${money(row[2])}</small></article>`).join('') + `<article class="manager-reward-card total"><span>今日奖励合计</span><strong>${money(snapshot.totalRewardCents)}</strong><small>${snapshot.onDutyDay ? `当班店长：${escape(snapshot.managerName || '已归属')}` : '当天无有效当班店长'}</small></article>`;
+    target.innerHTML = rows.map(row => `<article class="manager-reward-card"><span>${row[0]}</span><strong>${row[1]}</strong><small>${escape(row[3] || '未达档')} · 奖励 ${money(row[2])}</small></article>`).join('') + `<article class="manager-reward-card total"><span>今日奖励合计</span><strong>${money(snapshot.totalRewardCents)}</strong><small>${snapshot.onDutyDay ? `归属店长：${escape(snapshot.managerName || '已归属')}` : '联系管理员为本店配置店长'}</small></article>`;
     const status = $('#manager-rewards-status');
     if (status) status.textContent = `${snapshot.businessDate || ''} · ${snapshot.locked ? '月结已锁定' : '实时计算'}`;
   }
@@ -48,7 +48,7 @@
     const target = $('#manager-reward-month-rows');
     if (!target || !snapshot) return;
     const rows = Array.isArray(snapshot.rows) ? snapshot.rows : [];
-    target.innerHTML = `<div class="manager-reward-month-summary"><b>${escape(snapshot.rewardMonth || '')}</b><span>现金流 ${money(snapshot.cashFlowCents)}</span><span>约客 ${snapshot.yueCount || 0} · 大项目 ${snapshot.bigProjectCount || 0} · 充卡 ${snapshot.rechargeCount || 0}</span><strong>奖励 ${money(snapshot.totalRewardCents)}</strong></div><div class="manager-reward-day-list">${rows.map(row => `<article><div><b>${escape(row.businessDate)}</b><small>${escape(row.managerName || '未归属')} · ${row.onDutyDay ? escape(row.attendanceStatus || '在岗') : '不计入'}</small></div><span>现金 ${money(row.cashFlowCents)}<br>约客 ${row.yueCount || 0} · 大项目 ${row.bigProjectCount || 0} · 充卡 ${row.rechargeCount || 0}</span><strong>${money(row.totalRewardCents)}</strong></article>`).join('') || '<p class="comparison-empty">该月暂无奖励记录</p>'}</div>`;
+    target.innerHTML = `<div class="manager-reward-month-summary"><b>${escape(snapshot.rewardMonth || '')}</b><span>现金流 ${money(snapshot.cashFlowCents)}</span><span>约客 ${snapshot.yueCount || 0} · 大项目 ${snapshot.bigProjectCount || 0} · 充卡 ${snapshot.rechargeCount || 0}</span><strong>奖励 ${money(snapshot.totalRewardCents)}</strong></div><div class="manager-reward-day-list">${rows.map(row => `<article><div><b>${escape(row.businessDate)}</b><small>${escape(row.managerName || '未归属')} · ${row.onDutyDay ? escape(row.attendanceStatus === 'NOT_REQUIRED' ? '管理岗无需打卡' : row.attendanceStatus || '管理岗无需打卡') : '不计入'}</small></div><span>现金 ${money(row.cashFlowCents)}<br>约客 ${row.yueCount || 0} · 大项目 ${row.bigProjectCount || 0} · 充卡 ${row.rechargeCount || 0}</span><strong>${money(row.totalRewardCents)}</strong></article>`).join('') || '<p class="comparison-empty">该月暂无奖励记录</p>'}</div>`;
   }
   function renderOrders(rows) {
     const select = $('#manager-reward-order');

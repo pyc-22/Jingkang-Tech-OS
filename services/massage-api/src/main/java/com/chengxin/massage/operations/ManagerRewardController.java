@@ -200,6 +200,15 @@ public class ManagerRewardController {
         input.managerUserId(), input.note());
   }
 
+  @PutMapping("/api/v1/admin/manager-rewards/primary-manager")
+  ManagerRewardService.ManagerCandidate setPrimaryManager(
+      @Valid @RequestBody @NotNull PrimaryManagerInput input,
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+    require(authorization, "MANAGER_REWARD_LOCK");
+    UUID storeId = storeContext.currentStore(authorization, input.storeId().toString());
+    return rewards.setPrimaryManager(storeId, input.managerUserId());
+  }
+
   private void require(String authorization, String permission) { sessions.requirePermission(authorization, permission); }
 
   private ResponseEntity<byte[]> attachmentResponse(ManagerRewardService.AttachmentDownload attachment) {
@@ -226,4 +235,5 @@ public class ManagerRewardController {
   public record LockInput(@NotNull UUID storeId, @NotNull @Size(min = 7, max = 7) String month) {}
   public record AssignmentInput(@NotNull UUID storeId, @NotNull @Size(min = 10, max = 10) String date,
                                 @NotNull UUID managerUserId, @Size(max = 240) String note) {}
+  public record PrimaryManagerInput(@NotNull UUID storeId, @NotNull UUID managerUserId) {}
 }

@@ -134,7 +134,7 @@ public class SalesOrderController {
                                                      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                                                      @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
-    String sql = "select ss.id,upper('FW-' || substr(replace(ss.id::text,'-',''),1,12)) service_no,ss.service_item_id,ss.service_name_snapshot,ss.service_price_cents + coalesce((select sum(extension.service_price_cents) from service_session_extension extension where extension.service_session_id=ss.id),0) service_price_cents,ss.planned_duration_minutes,ss.ended_at,ss.business_date,coalesce((select string_agg(technician.name,'、' order by participant.slot_no,participant.sequence_no) from service_session_participant participant join technician technician on technician.id=participant.technician_id where participant.service_session_id=ss.id and participant.status='COMPLETED'),t.name) technician_name,ss.room_id,r.code room_code,ss.bed_id,bed.code bed_code,bed.name bed_name,ss.clock_type,coalesce((select string_agg(extension.service_name_snapshot || ' ' || extension.planned_duration_minutes || '分钟', '、' order by extension.added_at) from service_session_extension extension where extension.service_session_id=ss.id),'') extension_summary from service_session ss join technician t on t.id=ss.technician_id left join room r on r.id=ss.room_id left join room_bed bed on bed.id=ss.bed_id where ss.store_id=:store";
+    String sql = "select ss.id,upper('FW-' || substr(replace(ss.id::text,'-',''),1,12)) service_no,ss.service_item_id,ss.service_name_snapshot,ss.service_price_cents + coalesce((select sum(extension.service_price_cents) from service_session_extension extension where extension.service_session_id=ss.id),0) service_price_cents,ss.planned_duration_minutes,ss.ended_at,ss.business_date,coalesce((select string_agg(technician.name,'、' order by participant.slot_no,participant.sequence_no) from service_session_participant participant join technician technician on technician.id=participant.technician_id where participant.service_session_id=ss.id and participant.status='COMPLETED'),t.name) technician_name,ss.room_id,r.code room_code,ss.bed_id,bed.code bed_code,bed.name bed_name,case when ss.converted then 'CONVERSION' else ss.clock_type end clock_type,coalesce((select string_agg(extension.service_name_snapshot || ' ' || extension.planned_duration_minutes || '分钟', '、' order by extension.added_at) from service_session_extension extension where extension.service_session_id=ss.id),'') extension_summary from service_session ss join technician t on t.id=ss.technician_id left join room r on r.id=ss.room_id left join room_bed bed on bed.id=ss.bed_id where ss.store_id=:store";
     if (roomId != null) sql += " and ss.room_id=:roomId";
     sql += " and " + OperationalStateService.completedUnsettledPredicate("ss") + " order by ss.ended_at desc limit 100";
     JdbcClient.StatementSpec statement = jdbc.sql(sql).param("store", storeId);
@@ -157,7 +157,7 @@ public class SalesOrderController {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     OrderSummary order = jdbc.sql("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id and is_default),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version,o.is_historical_backfill historical_backfill,o.backfill_date backfill_date,o.backfill_by backfill_by,o.backfill_at backfill_at,backfill_actor.display_name backfill_by_name from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id left join app_user backfill_actor on backfill_actor.id=o.backfill_by where o.id=:id and o.store_id=:store")
       .param("id", id).param("store", storeId).query(OrderSummary.class).single();
-    List<OrderLine> lines = jdbc.sql("select line.id,line.service_item_id,line.item_name_snapshot,line.unit_price_cents,line.duration_minutes,line.quantity,line.line_amount_cents,link.service_session_id,session.technician_id,coalesce((select string_agg(technician.name,'、' order by participant.slot_no,participant.sequence_no) from service_session_participant participant join technician technician on technician.id=participant.technician_id where participant.service_session_id=session.id and participant.status='COMPLETED'),technician.name) technician_name,room.code room_code,room.name room_name,session.ended_at service_ended_at,session.clock_type,coalesce((select count(*) from service_session_participant participant where participant.service_session_id=session.id and participant.status='COMPLETED'),0) participant_count from sales_order_line line left join sales_order_service_session link on link.order_line_id=line.id left join service_session session on session.id=link.service_session_id left join technician technician on technician.id=session.technician_id left join room room on room.id=session.room_id where line.order_id=:id")
+    List<OrderLine> lines = jdbc.sql("select line.id,line.service_item_id,line.item_name_snapshot,line.unit_price_cents,line.duration_minutes,line.quantity,line.line_amount_cents,link.service_session_id,session.technician_id,coalesce((select string_agg(technician.name,'、' order by participant.slot_no,participant.sequence_no) from service_session_participant participant join technician technician on technician.id=participant.technician_id where participant.service_session_id=session.id and participant.status='COMPLETED'),technician.name) technician_name,room.code room_code,room.name room_name,session.ended_at service_ended_at,case when session.converted then 'CONVERSION' else session.clock_type end clock_type,coalesce((select count(*) from service_session_participant participant where participant.service_session_id=session.id and participant.status='COMPLETED'),0) participant_count from sales_order_line line left join sales_order_service_session link on link.order_line_id=line.id left join service_session session on session.id=link.service_session_id left join technician technician on technician.id=session.technician_id left join room room on room.id=session.room_id where line.order_id=:id")
       .param("id", id).query(OrderLine.class).list();
     List<Payment> payments = jdbc.sql("select payment.id,payment.payment_method,payment.payment_method_name_snapshot,payment.wallet_id,w.account_code,w.account_name,payer.id payer_member_id,payer.name payer_member_name,payer.code payer_member_code,payment.amount_cents,payment.created_at from payment_record payment left join member_wallet w on w.id=payment.wallet_id left join member payer on payer.id=w.member_id where payment.order_id=:id order by payment.created_at")
       .param("id", id).query(Payment.class).list();
@@ -593,7 +593,7 @@ public class SalesOrderController {
     BusinessCorrectionState state = jdbc.sql("""
       select o.id order_id,o.order_no,o.settlement_no,o.status,o.refund_status,o.business_date,o.business_correction_version,
              line.id order_line_id,link.service_session_id,session.technician_id old_technician_id,technician.name old_technician_name,
-             session.clock_type old_clock_type,session.status session_status,
+             case when session.converted then 'CONVERSION' else session.clock_type end old_clock_type,session.status session_status,
              (select count(*) from service_session_participant participant where participant.service_session_id=session.id) participant_count,
              (select count(*) from service_session_extension extension where extension.service_session_id=session.id and extension.technician_id<>session.technician_id) foreign_extension_count
       from sales_order o
@@ -612,6 +612,9 @@ public class SalesOrderController {
     if (refundHistory) throw conflict("订单已有退款申请记录，不能修改技师和钟类");
     if (!input.expectedVersion().equals(state.businessCorrectionVersion())) throw conflict("订单已被其他人修改，请刷新后重试");
     if (!"COMPLETED".equals(state.sessionStatus())) throw conflict("只有已完成服务可以修改技师和钟类");
+    boolean monthLocked = jdbc.sql("select exists(select 1 from manager_reward_month_lock where store_id=:store and reward_month=:month)")
+      .param("store", storeId).param("month", state.businessDate().withDayOfMonth(1)).query(Boolean.class).single();
+    if (monthLocked) throw conflict("该营业月已锁定，不能更正钟类");
     if (state.participantCount() != 1 || state.foreignExtensionCount() != 0) throw conflict("多人服务或中途换技师的订单请通过红冲后重新结算处理");
     String clockType = normalizeCorrectionClockType(input.clockType());
     String reason = input.reason().trim();
@@ -634,8 +637,9 @@ public class SalesOrderController {
       .param("technician", target.id()).param("session", state.serviceSessionId()).update();
     jdbc.sql("update service_session_extension set technician_id=:technician where service_session_id=:session")
       .param("technician", target.id()).param("session", state.serviceSessionId()).update();
-    jdbc.sql("update service_session set technician_id=:technician,clock_type=:clock,updated_at=now(),version=version+1 where id=:session and store_id=:store")
-      .param("technician", target.id()).param("clock", clockType).param("session", state.serviceSessionId()).param("store", storeId).update();
+    jdbc.sql("update service_session set technician_id=:technician,clock_type=:clock,converted=:converted,updated_at=now(),version=version+1 where id=:session and store_id=:store")
+      .param("technician", target.id()).param("clock", "CONVERSION".equals(clockType) ? "QUEUE" : clockType)
+      .param("converted", "CONVERSION".equals(clockType)).param("session", state.serviceSessionId()).param("store", storeId).update();
     createCommissionRecords(storeId, id, state.orderLineId(), state.orderNo(), state.settlementNo(), state.serviceSessionId(), correctedAt, state.businessDate(), "BUSINESS_CORRECTION", correctionId);
     jdbc.sql("update sales_order set business_correction_version=:version where id=:order and store_id=:store")
       .param("version", version).param("order", id).param("store", storeId).update();
@@ -646,7 +650,7 @@ public class SalesOrderController {
 
   private String normalizeCorrectionClockType(String value) {
     String normalized = value == null ? "" : value.trim().toUpperCase();
-    if (!List.of("QUEUE", "CALL").contains(normalized)) throw bad("钟类只支持排钟或点钟");
+    if (!List.of("QUEUE", "CALL", "CONVERSION").contains(normalized)) throw bad("钟类只支持排钟、点钟或转化");
     return normalized;
   }
 
@@ -671,7 +675,7 @@ public class SalesOrderController {
     List<CommissionBase> allocated = List.of();
     List<CommissionBase> extensions = List.of();
     try {
-      participants = jdbc.sql("select participant.id service_participant_id,ss.id service_session_id,ss.service_item_id,participant.technician_id,technician.name technician_name,ss.service_name_snapshot,ss.service_price_cents,ss.clock_type,ss.commission_rule_version_id,ss.business_date,ss.counts_as_clock_snapshot,ss.planned_duration_minutes,participant.slot_no,participant.sequence_no,participant.allocation_bp,greatest(0,extract(epoch from (participant.service_ended_at-participant.service_started_at))::integer) served_seconds from service_session_participant participant join service_session ss on ss.id=participant.service_session_id join technician technician on technician.id=participant.technician_id where participant.service_session_id=:session and participant.store_id=:store and participant.status='COMPLETED' order by participant.slot_no,participant.sequence_no")
+      participants = jdbc.sql("select participant.id service_participant_id,ss.id service_session_id,ss.service_item_id,participant.technician_id,technician.name technician_name,ss.service_name_snapshot,ss.service_price_cents,case when ss.converted then 'CONVERSION' else ss.clock_type end clock_type,ss.commission_rule_version_id,ss.business_date,ss.counts_as_clock_snapshot,ss.planned_duration_minutes,participant.slot_no,participant.sequence_no,participant.allocation_bp,greatest(0,extract(epoch from (participant.service_ended_at-participant.service_started_at))::integer) served_seconds from service_session_participant participant join service_session ss on ss.id=participant.service_session_id join technician technician on technician.id=participant.technician_id where participant.service_session_id=:session and participant.store_id=:store and participant.status='COMPLETED' order by participant.slot_no,participant.sequence_no")
         .param("session", serviceSessionId).param("store", storeId).query(ParticipantCommissionBase.class).list();
       COMMISSION_LOG.info("createCommissionRecords participants count={} values={}", participants.size(), participants);
       allocated = allocatedMainCommissions(participants);
@@ -810,7 +814,7 @@ public class SalesOrderController {
       CommissionRule selected;
       String branch;
       if ("EXTENSION".equals(sourceType)) { selected = new CommissionRule(rule.extensionRuleType(), rule.extensionFixedCents(), rule.extensionRateBp()); branch = "EXTENSION"; }
-      else if ("CALL".equals(base.clockType()) || "BOOKED_CALL".equals(base.clockType())) { selected = new CommissionRule(rule.callRuleType(), rule.callFixedCents(), rule.callRateBp()); branch = "CALL"; }
+      else if ("CALL".equals(base.clockType()) || "BOOKED_CALL".equals(base.clockType()) || "CONVERSION".equals(base.clockType())) { selected = new CommissionRule(rule.callRuleType(), rule.callFixedCents(), rule.callRateBp()); branch = "CALL"; }
       else { selected = new CommissionRule(rule.queueRuleType(), rule.queueFixedCents(), rule.queueRateBp()); branch = "QUEUE"; }
       COMMISSION_LOG.info("commissionRule exit versionId={} branch={} selected={}", rule.id(), branch, selected);
       return selected;

@@ -16,6 +16,21 @@ class SalesOrderBusinessCorrectionTest {
   }
 
   @Test
+  void conversionKeepsQueueClockCountButUsesCallCommissionAndSurvivesCorrectionAndRefund() throws Exception {
+    String migration = Files.readString(Path.of("src/main/resources/db/migration/V107__service_clock_conversion.sql"));
+    String orders = Files.readString(Path.of("src/main/java/com/chengxin/massage/sales/SalesOrderController.java"));
+    String refunds = Files.readString(Path.of("src/main/java/com/chengxin/massage/sales/RefundController.java"));
+    assertThat(migration).contains("converted BOOLEAN NOT NULL DEFAULT FALSE");
+    assertThat(migration).contains("'CONVERSION'");
+    assertThat(orders).contains("case when ss.converted then 'CONVERSION' else ss.clock_type end clock_type");
+    assertThat(orders).contains("\"CONVERSION\".equals(base.clockType())");
+    assertThat(orders).contains("converted=:converted");
+    assertThat(orders).contains("\"CONVERSION\".equals(clockType) ? \"QUEUE\" : clockType");
+    assertThat(orders).contains("correction.old_clock_type,correction.new_clock_type");
+    assertThat(refunds).contains(".param(\"clockType\", original.clockType())");
+  }
+
+  @Test
   void controllerExposesAuditedBusinessCorrectionWorkflow() throws Exception {
     String source = Files.readString(Path.of("src/main/java/com/chengxin/massage/sales/SalesOrderController.java"));
     assertThat(source).contains("/{id}/business-corrections");

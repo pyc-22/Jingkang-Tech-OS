@@ -74,9 +74,10 @@ class ServiceDispatchLifecycleTest {
   }
 
   @Test
-  void editableClockTypeIsLimitedToQueueAndCall() {
+  void editableClockTypeSupportsConversionButNotReservationTypes() {
     assertThat(ServiceSessionController.normalizeEditableClockType("QUEUE")).isEqualTo("QUEUE");
     assertThat(ServiceSessionController.normalizeEditableClockType("CALL")).isEqualTo("CALL");
+    assertThat(ServiceSessionController.normalizeEditableClockType("CONVERSION")).isEqualTo("CONVERSION");
     org.assertj.core.api.Assertions.assertThatThrownBy(() -> ServiceSessionController.normalizeEditableClockType("BOOKED_QUEUE"))
       .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
   }

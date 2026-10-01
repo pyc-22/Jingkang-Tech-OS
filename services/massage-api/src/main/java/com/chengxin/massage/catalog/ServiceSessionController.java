@@ -389,9 +389,13 @@ public class ServiceSessionController {
     if (!canChangeClockType(current.status())) {
       throw conflict("Only a pending, accepted, or in-service session can change clock type");
     }
+    boolean monthLocked = jdbc.sql("select exists(select 1 from manager_reward_month_lock where store_id=:store and reward_month=:month)")
+      .param("store", storeId).param("month", (current.businessDate() == null ? businessClock.currentBusinessDate(storeId) : current.businessDate()).withDayOfMonth(1)).query(Boolean.class).single();
+    if (monthLocked) throw conflict("该营业月已锁定，不能更换钟类");
     if (clockType.equals(current.clockType())) return current;
-    int updated = jdbc.sql("update service_session set clock_type=:clockType,updated_at=now(),version=version+1 where id=:id and store_id=:store and status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE') and version=:version")
-      .param("clockType", clockType).param("id", id).param("store", storeId).param("version", current.version()).update();
+    int updated = jdbc.sql("update service_session set clock_type=:clockType,converted=:converted,updated_at=now(),version=version+1 where id=:id and store_id=:store and status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE') and version=:version")
+      .param("clockType", "CONVERSION".equals(clockType) ? "QUEUE" : clockType).param("converted", "CONVERSION".equals(clockType))
+      .param("id", id).param("store", storeId).param("version", current.version()).update();
     if (updated == 0) throw conflict("Service state has changed; refresh and retry");
     ServiceSession changed = session(storeId, id);
     String reason = input.reason() == null ? "前台更换服务钟类" : input.reason().trim();
@@ -519,7 +523,7 @@ public class ServiceSessionController {
              ss.business_date,
              ss.status,
              ss.note,
-             ss.clock_type,
+             case when ss.converted then 'CONVERSION' else ss.clock_type end clock_type,
              ss.version,
              coalesce((select sum(extension.service_price_cents)
                          from service_session_extension extension
@@ -643,8 +647,8 @@ public class ServiceSessionController {
 
   static String normalizeEditableClockType(String clockType) {
     if (clockType == null || clockType.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Clock type is required");
-    if ("QUEUE".equals(clockType) || "CALL".equals(clockType)) return clockType;
-    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only queue or call clock type can be selected");
+    if ("QUEUE".equals(clockType) || "CALL".equals(clockType) || "CONVERSION".equals(clockType)) return clockType;
+    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only queue, call, or conversion clock type can be selected");
   }
 
   private void recordRoomStatus(UUID storeId, UUID roomId, String status, String reason) {

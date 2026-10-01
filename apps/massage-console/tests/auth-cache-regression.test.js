@@ -168,11 +168,11 @@ test('entry versions changed assets independently and keeps the new room node', 
   const appVersion = index.match(/app\.js\?v=([^"']+)/)?.[1];
   const cssVersion = index.match(/styles\.css\?v=([^"']+)/)?.[1];
   assert.ok(appVersion);
-  assert.equal(appVersion, '20261001-commission-payment-print-v1');
+  assert.equal(appVersion, '20261001-manager-ownership-conversion-v1');
   assert.equal(cssVersion, '20260926-auth-hardening-v1');
   assert.ok(index.includes('expense-ui.js?v=20261001-live-state-settlement-v1'));
   assert.ok(managerHtml.includes('expense-ui.js?v=20261001-live-state-settlement-v1'));
-  assert.ok(managerHtml.includes('manager-mobile.js?v=20261001-live-state-settlement-v1'));
+  assert.ok(managerHtml.includes('manager-mobile.js?v=20261001-manager-ownership-conversion-v1'));
   assert.match(index, /id="idle-room-count"/);
   assert.match(app, /if \(idleCount\) idleCount\.textContent/);
   assert.match(app, /if \(availableCount\) availableCount\.textContent/);
@@ -218,7 +218,7 @@ test('static server sends entry no-cache, versioned asset long-cache, validators
   assert.ok(entry.headers.get('etag'));
   assert.ok(entry.headers.get('last-modified'));
 
-  const asset = await fetch(`${staticBase}/app.js?v=20261001-commission-payment-print-v1`);
+  const asset = await fetch(`${staticBase}/app.js?v=20261001-manager-ownership-conversion-v1`);
   assert.equal(asset.status, 200);
   assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable');
   const etag = asset.headers.get('etag');
@@ -226,10 +226,10 @@ test('static server sends entry no-cache, versioned asset long-cache, validators
   assert.ok(etag);
   assert.ok(lastModified);
 
-  const byTag = await fetch(`${staticBase}/app.js?v=20261001-commission-payment-print-v1`, { headers: { 'If-None-Match': etag } });
+  const byTag = await fetch(`${staticBase}/app.js?v=20261001-manager-ownership-conversion-v1`, { headers: { 'If-None-Match': etag } });
   assert.equal(byTag.status, 304);
   assert.equal(await byTag.text(), '');
-  const byDate = await fetch(`${staticBase}/app.js?v=20261001-commission-payment-print-v1`, { headers: { 'If-Modified-Since': lastModified } });
+  const byDate = await fetch(`${staticBase}/app.js?v=20261001-manager-ownership-conversion-v1`, { headers: { 'If-Modified-Since': lastModified } });
   assert.equal(byDate.status, 304);
   assert.equal(await byDate.text(), '');
 

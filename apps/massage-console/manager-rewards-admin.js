@@ -24,7 +24,7 @@
   });
   const storedList = key => { try { const value = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(value) ? value : []; } catch { return []; } };
   const hasLockPermission = () => storedList('chengxin-admin-roles').includes('TENANT_ADMIN') || storedList(permissionKey).includes('MANAGER_REWARD_LOCK');
-  const statusLabel = { PRESENT:'出勤', LATE:'迟到', COMPLETED:'已完成', LEFT_EARLY:'早退' };
+  const statusLabel = { PRESENT:'出勤', LATE:'迟到', COMPLETED:'已完成', LEFT_EARLY:'早退', NOT_REQUIRED:'管理岗无需打卡' };
 
   function ensureMarkup() {
     const target = root();
@@ -48,7 +48,7 @@
       </section>
       <section id="manager-reward-admin-month-panel" class="manager-reward-admin-panel" hidden>
         <div class="manager-reward-admin-panel-heading"><div><h2>月度逐日绩效</h2><p id="manager-reward-admin-month-note"></p></div><button type="button" class="button primary" id="manager-reward-admin-lock">锁定月结</button></div>
-        <div class="manager-reward-admin-table-wrap"><table><thead><tr><th>日期</th><th>当班店长</th><th>在岗状态</th><th>现金流</th><th>约客</th><th>大项目</th><th>充卡</th><th>奖励</th></tr></thead><tbody id="manager-reward-admin-month-rows"></tbody></table></div>
+        <div class="manager-reward-admin-table-wrap"><table><thead><tr><th>日期</th><th>归属店长</th><th>考勤参考</th><th>现金流</th><th>约客</th><th>大项目</th><th>充卡</th><th>奖励</th></tr></thead><tbody id="manager-reward-admin-month-rows"></tbody></table></div>
       </section>
       <dialog id="manager-reward-admin-attachment-dialog"><div class="manager-reward-admin-attachment"><div class="manager-reward-admin-panel-heading"><h2>约客凭证</h2><button type="button" class="icon-button" data-reward-admin-close>×</button></div><img id="manager-reward-admin-attachment-image" alt="约客凭证"><p id="manager-reward-admin-attachment-note"></p></div></dialog>`;
     $('#manager-reward-admin-store')?.addEventListener('change', event => { state.storeId = event.target.value; localStorage.setItem(storeKey, state.storeId); load(); });
@@ -127,7 +127,7 @@
       metric('约客', `${snapshot.yueCount || 0} 客`, snapshot.yueRewardCents, snapshot.yueTierLabel),
       metric('大项目（含加钟）', `${snapshot.bigProjectCount || 0} 项`, snapshot.bigProjectRewardCents, snapshot.bigProjectTierLabel),
       metric('充卡', `${snapshot.rechargeCount || 0} 张`, snapshot.rechargeRewardCents, snapshot.rechargeTierLabel),
-      `<article class="total"><span>当日奖励合计</span><strong>${money(snapshot.totalRewardCents)}</strong><small>${snapshot.onDutyDay ? `当班店长：${escape(snapshot.managerName || '已归属')}` : '当天没有唯一有效当班店长'}</small></article>`
+      `<article class="total"><span>当日奖励合计</span><strong>${money(snapshot.totalRewardCents)}</strong><small>${snapshot.onDutyDay ? `归属店长：${escape(snapshot.managerName || '已归属')}` : '本店未配置有效店长或主店长'}</small></article>`
     ].join('');
     const status = document.querySelector('#manager-rewards-admin-status');
     if (status) status.textContent = `${snapshot.businessDate || ''} · ${snapshot.locked ? '月结已锁定' : '实时计算'}`;
@@ -136,13 +136,13 @@
     const target = $('#manager-reward-admin-assignment');
     if (!target) return;
     const canAssign = hasLockPermission() && !snapshot.locked;
-    target.innerHTML = `<div class="manager-reward-admin-panel-heading"><div><h2>当日店长归属</h2><p>${snapshot.onDutyDay ? `当前归属：${escape(snapshot.managerName || '—')} · ${escape(statusLabel[snapshot.attendanceStatus] || snapshot.attendanceStatus || '')}` : '多人同时在岗或没有唯一店长时，请指定归属'}</p></div></div>${canAssign ? `<form><label>有效店长<select name="managerUserId" required>${state.managers.map(manager => `<option value="${escape(manager.userId)}" ${manager.userId === snapshot.managerUserId ? 'selected' : ''}>${escape(manager.name)} · ${escape(statusLabel[manager.attendanceStatus] || manager.attendanceStatus || '')}</option>`).join('') || '<option value="">当天没有符合排班和打卡条件的店长</option>'}</select></label><input name="note" maxlength="240" placeholder="归属备注（可选）"><button type="submit" class="button secondary" ${state.managers.length ? '' : 'disabled'}>保存归属</button></form>` : '<p class="manager-reward-admin-readonly">仅锁定权限账号可调整归属；已锁定月份的数据不可更改。</p>'}`;
+    target.innerHTML = `<div class="manager-reward-admin-panel-heading"><div><h2>当日店长归属</h2><p>${snapshot.onDutyDay ? `当前归属：${escape(snapshot.managerName || '—')} · ${escape(statusLabel[snapshot.attendanceStatus] || snapshot.attendanceStatus || '')}` : state.managers.length ? '多位店长时请设置主店长，特殊日期可单独覆盖' : '请先在门店/员工配置中为该门店指定店长并关联账号'}</p></div></div>${canAssign ? `<form><label>有效店长<select name="managerUserId" required>${state.managers.map(manager => `<option value="${escape(manager.userId)}" ${manager.userId === snapshot.managerUserId ? 'selected' : ''}>${escape(manager.name)}${manager.isPrimary ? ' · 主店长' : ''} · ${escape(statusLabel[manager.attendanceStatus] || manager.attendanceStatus || '')}</option>`).join('') || '<option value="">请先配置店长</option>'}</select></label><input name="note" maxlength="240" placeholder="归属备注（可选）"><button type="submit" class="button secondary" data-assignment-action="daily" ${state.managers.length ? '' : 'disabled'}>保存当日覆盖</button><button type="submit" class="button secondary" data-assignment-action="primary" ${state.managers.length ? '' : 'disabled'}>设为本店主店长</button></form>` : '<p class="manager-reward-admin-readonly">仅锁定权限账号可调整归属；已锁定月份的数据不可更改。</p>'}`;
   }
   function renderMonth(snapshot) {
     const target = $('#manager-reward-admin-month-rows');
     const note = $('#manager-reward-admin-month-note');
     if (note) note.textContent = `${snapshot.rewardMonth || ''} · 现金流 ${money(snapshot.cashFlowCents)} · 约客 ${snapshot.yueCount || 0} · 大项目 ${snapshot.bigProjectCount || 0} · 充卡 ${snapshot.rechargeCount || 0} · 奖励 ${money(snapshot.totalRewardCents)}${snapshot.locked ? ' · 已锁定' : ' · 实时计算'}`;
-    if (target) target.innerHTML = (snapshot.rows || []).map(row => `<tr><td>${escape(row.businessDate)}</td><td>${escape(row.managerName || '未归属')}</td><td>${row.onDutyDay ? escape(statusLabel[row.attendanceStatus] || row.attendanceStatus || '在岗') : '不计入'}</td><td class="amount-cell">${money(row.cashFlowCents)}</td><td>${row.yueCount || 0}</td><td>${row.bigProjectCount || 0}</td><td>${row.rechargeCount || 0}</td><td class="amount-cell">${money(row.totalRewardCents)}</td></tr>`).join('') || '<tr><td colspan="8" class="table-empty">该月暂无奖励记录</td></tr>';
+    if (target) target.innerHTML = (snapshot.rows || []).map(row => `<tr><td>${escape(row.businessDate)}</td><td>${escape(row.managerName || '未归属')}</td><td>${row.onDutyDay ? escape(statusLabel[row.attendanceStatus] || row.attendanceStatus || '管理岗无需打卡') : '不计入'}</td><td class="amount-cell">${money(row.cashFlowCents)}</td><td>${row.yueCount || 0}</td><td>${row.bigProjectCount || 0}</td><td>${row.rechargeCount || 0}</td><td class="amount-cell">${money(row.totalRewardCents)}</td></tr>`).join('') || '<tr><td colspan="8" class="table-empty">该月暂无奖励记录</td></tr>';
     const button = $('#manager-reward-admin-lock');
     if (button) { button.hidden = !hasLockPermission(); button.disabled = Boolean(snapshot.locked); button.textContent = snapshot.locked ? '月结已锁定' : '锁定月结'; }
   }
@@ -180,10 +180,11 @@
     const form = new FormData(event.currentTarget);
     const managerUserId = String(form.get('managerUserId') || '');
     if (!managerUserId) return;
-    const button = event.currentTarget.querySelector('button[type="submit"]');
+    const button = event.submitter;
     if (button) button.disabled = true;
     try {
-      await request('/assignments', { method:'POST', headers: rewardHeaders(true), body: JSON.stringify({ storeId: state.storeId, date: $('#manager-reward-admin-date')?.value || today(), managerUserId, note: String(form.get('note') || '').trim() || null }) });
+      const primary = button?.dataset.assignmentAction === 'primary';
+      await request(primary ? '/primary-manager' : '/assignments', { method: primary ? 'PUT' : 'POST', headers: rewardHeaders(true), body: JSON.stringify(primary ? { storeId: state.storeId, managerUserId } : { storeId: state.storeId, date: $('#manager-reward-admin-date')?.value || today(), managerUserId, note: String(form.get('note') || '').trim() || null }) });
       await load();
     } catch (error) { showError(error); }
     finally { if (button) button.disabled = false; }

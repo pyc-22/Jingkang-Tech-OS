@@ -50,7 +50,7 @@ class OperationsReportControllerTest {
     assertThat(technicianSql).contains("queue_day.business_date=:businessDate");
     assertThat(technicianSql).contains("queue_position.queue_position");
     assertThat(technicianSql).contains("room.code room_code");
-    assertThat(technicianSql).contains("session.service_name_snapshot,session.clock_type");
+    assertThat(technicianSql).contains("session.service_name_snapshot,case when session.converted then 'CONVERSION' else session.clock_type end clock_type");
     assertThat(attentionSql).contains("status='REASSIGNMENT_REQUIRED'");
     assertThat(attentionSql).contains("status='DISPATCH_CANCELLED'");
   }

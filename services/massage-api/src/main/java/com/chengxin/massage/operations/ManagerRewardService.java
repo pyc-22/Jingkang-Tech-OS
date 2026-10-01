@@ -18,7 +18,6 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class ManagerRewardService {
   static final UUID TENANT_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
-  private static final String ON_DUTY = "('PRESENT','LATE','COMPLETED','LEFT_EARLY')";
   private final JdbcClient jdbc;
   private final DailyReportService dailyReports;
   private final ExpenseAttachmentStorage attachments;
@@ -62,7 +61,7 @@ public class ManagerRewardService {
   @Transactional(readOnly = true)
   public List<ManagerCandidate> managerCandidates(UUID storeId, LocalDate date) {
     return candidates(storeId, date).stream()
-        .map(item -> new ManagerCandidate(item.userId(), item.name(), item.attendanceStatus()))
+        .map(item -> new ManagerCandidate(item.userId(), item.name(), item.attendanceStatus(), item.primaryManager()))
         .toList();
   }
 
@@ -126,7 +125,7 @@ public class ManagerRewardService {
     requireCurrentBusinessDate(storeId, current.businessDate());
     requireMonthUnlocked(storeId, current.businessDate());
     ManagerIdentity manager = requireAssignedManager(storeId, current.businessDate());
-    if (!manager.userId().equals(current.managerUserId())) throw conflict("当前约客记录不属于当班店长");
+    if (!manager.userId().equals(current.managerUserId())) throw conflict("当前约客记录不属于本店店长");
     OrderCandidate order = order(storeId, orderId == null ? current.orderId() : orderId);
     requireCurrentBusinessDate(storeId, order.businessDate());
     if (!order.businessDate().equals(current.businessDate())) throw badRequest("只能更正同一营业日的约客记录");
@@ -200,7 +199,7 @@ public class ManagerRewardService {
     lockRewardStore(storeId);
     requireMonthUnlocked(storeId, date);
     ManagerIdentity manager = candidate(storeId, date, managerUserId)
-        .orElseThrow(() -> badRequest("该员工当天没有有效的店长排班和打卡记录"));
+        .orElseThrow(() -> badRequest("该员工不是本店已关联账号的有效店长"));
     jdbc.sql("""
       insert into manager_reward_day_assignment(id,tenant_id,store_id,business_date,manager_user_id,manager_name_snapshot,
         attendance_status,assigned_by_user_id,note)
@@ -214,6 +213,16 @@ public class ManagerRewardService {
         .param("actor", actorId).param("note", note).update();
     return jdbc.sql("select business_date,manager_user_id,manager_name_snapshot,attendance_status,note from manager_reward_day_assignment where tenant_id=:tenant and store_id=:store and business_date=:date")
         .param("tenant", TENANT_ID).param("store", storeId).param("date", date).query(Assignment.class).single();
+  }
+
+  @Transactional
+  public ManagerCandidate setPrimaryManager(UUID storeId, UUID managerUserId) {
+    lockRewardStore(storeId);
+    ManagerIdentity manager = candidate(storeId, businessClock.currentBusinessDate(storeId), managerUserId)
+        .orElseThrow(() -> badRequest("该员工不是本店已关联账号的有效店长"));
+    jdbc.sql("update store set primary_manager_user_id=:manager,updated_at=now(),version=version+1 where id=:store and tenant_id=:tenant")
+        .param("manager", managerUserId).param("store", storeId).param("tenant", TENANT_ID).update();
+    return new ManagerCandidate(manager.userId(), manager.name(), manager.attendanceStatus(), true);
   }
 
   private void storeAttachment(UUID storeId, UUID recordId, UUID actorId, MultipartFile file, LocalDate date) {
@@ -255,7 +264,7 @@ public class ManagerRewardService {
   private RewardSnapshot calculate(UUID storeId, LocalDate date) {
     DailyReportService.DailyMetrics report = dailyReports.daily(storeId, date);
     ManagerIdentity manager = resolveManager(storeId, date).orElse(null);
-    long yue = countYue(storeId, date, manager == null ? null : manager.userId());
+    long yue = countYue(storeId, date);
     long big = countBigProjects(storeId, date);
     long recharge = countRecharges(storeId, date);
     RewardTierService.Evaluation cash = RewardTierService.cashFlow(report.cashFlowCents());
@@ -271,12 +280,9 @@ public class ManagerRewardService {
         onDuty ? rechargeReward.rewardCents() : 0, rechargeReward.tierLabel(), total, false);
   }
 
-  private long countYue(UUID storeId, LocalDate date, UUID managerUserId) {
-    String managerClause = managerUserId == null ? "" : " and manager_user_id=:manager";
-    JdbcClient.StatementSpec statement = jdbc.sql("select count(*) from manager_yue_record where tenant_id=:tenant and store_id=:store and business_date=:date and active" + managerClause)
-        .param("tenant", TENANT_ID).param("store", storeId).param("date", date);
-    if (managerUserId != null) statement = statement.param("manager", managerUserId);
-    return statement.query(Long.class).single();
+  private long countYue(UUID storeId, LocalDate date) {
+    return jdbc.sql("select count(*) from manager_yue_record where tenant_id=:tenant and store_id=:store and business_date=:date and active")
+        .param("tenant", TENANT_ID).param("store", storeId).param("date", date).query(Long.class).single();
   }
 
   private long countBigProjects(UUID storeId, LocalDate date) {
@@ -361,24 +367,41 @@ public class ManagerRewardService {
   }
 
   private Optional<ManagerIdentity> resolveManager(UUID storeId, LocalDate date) {
-    Optional<ManagerIdentity> assigned = jdbc.sql("select manager_user_id user_id,manager_name_snapshot name,attendance_status from manager_reward_day_assignment where tenant_id=:tenant and store_id=:store and business_date=:date")
-        .param("tenant", TENANT_ID).param("store", storeId).param("date", date).query(ManagerIdentity.class).optional();
-    if (assigned.isPresent()) return assigned;
-    List<ManagerIdentity> candidates = candidates(storeId, date);
-    return candidates.size() == 1 ? Optional.of(candidates.getFirst()) : Optional.empty();
+    UUID assignedUserId = jdbc.sql("select manager_user_id from manager_reward_day_assignment where tenant_id=:tenant and store_id=:store and business_date=:date")
+        .param("tenant", TENANT_ID).param("store", storeId).param("date", date).query(UUID.class).optional().orElse(null);
+    return preferredManager(candidates(storeId, date), assignedUserId);
   }
 
   private ManagerIdentity requireAssignedManager(UUID storeId, LocalDate date) {
-    return resolveManager(storeId, date).orElseThrow(() -> conflict("当天没有唯一的在岗店长，请先由管理端指定归属"));
+    return resolveManager(storeId, date).orElseThrow(() -> conflict(candidates(storeId, date).isEmpty()
+        ? "本店未配置有效店长，请联系管理员在门店/员工配置中补配店长并关联账号"
+        : "本店有多位店长，请先指定主店长或当天归属"));
+  }
+
+  static Optional<ManagerIdentity> preferredManager(List<ManagerIdentity> candidates, UUID assignedUserId) {
+    Optional<ManagerIdentity> assigned = candidates.stream().filter(item -> item.userId().equals(assignedUserId)).findFirst();
+    if (assigned.isPresent()) return assigned;
+    Optional<ManagerIdentity> primary = candidates.stream().filter(ManagerIdentity::primaryManager).findFirst();
+    return primary.isPresent() ? primary : candidates.size() == 1 ? Optional.of(candidates.getFirst()) : Optional.empty();
   }
 
   private List<ManagerIdentity> candidates(UUID storeId, LocalDate date) {
     return jdbc.sql("""
-      select distinct link.user_id,e.full_name name,a.status attendance_status
+      select link.user_id,e.full_name name,
+        case when a.status in ('PRESENT','LATE','COMPLETED','LEFT_EARLY') then a.status else 'NOT_REQUIRED' end attendance_status,
+        coalesce(s.primary_manager_user_id=link.user_id,false) primary_manager
       from employee_user_link link join employee e on e.id=link.employee_id and e.tenant_id=:tenant
       join employee_store_assignment assignment on assignment.tenant_id=:tenant and assignment.employee_id=e.id and assignment.store_id=:store
         and assignment.position_type='STORE_MANAGER' and assignment.active and assignment.employment_status='ACTIVE'
-      join employee_attendance a on a.tenant_id=:tenant and a.employee_id=e.id and a.store_id=:store and a.attendance_date=:date and a.status in """ + ON_DUTY)
+      join store s on s.id=assignment.store_id and s.tenant_id=:tenant
+      join app_user u on u.id=link.user_id and u.active
+      join user_store_scope scope on scope.user_id=u.id and scope.store_id=:store
+      left join lateral (select attendance.status from employee_attendance attendance
+        where attendance.tenant_id=:tenant and attendance.employee_id=e.id and attendance.store_id=:store
+          and attendance.attendance_date=:date order by attendance.updated_at desc limit 1) a on true
+      where e.active and e.employment_status='ACTIVE'
+      order by e.full_name,link.user_id
+      """)
       .param("tenant", TENANT_ID).param("store", storeId).param("date", date).query(ManagerIdentity.class).list();
   }
 
@@ -422,14 +445,14 @@ public class ManagerRewardService {
   public record MonthSnapshot(UUID storeId, String storeName, YearMonth rewardMonth, boolean locked, java.time.OffsetDateTime lockedAt,
       List<RewardSnapshot> rows, long cashFlowCents, long yueCount, long bigProjectCount, long rechargeCount, long totalRewardCents) {}
   public record YueOrder(UUID orderId, String orderNo, UUID memberId, String memberName, String memberPhone, long paidCents, String refundStatus, boolean submitted) {}
-  public record ManagerCandidate(UUID userId, String name, String attendanceStatus) {}
+  public record ManagerCandidate(UUID userId, String name, String attendanceStatus, boolean isPrimary) {}
   public record YueRecord(UUID id, UUID storeId, LocalDate businessDate, UUID orderId, String orderNo, UUID memberId,
       UUID managerUserId, String managerNameSnapshot, String customerNameSnapshot, String customerPhoneSnapshot,
       java.time.OffsetDateTime submittedAt, java.time.OffsetDateTime replacedAt, String replacementNote, boolean active,
       UUID attachmentId, String originalFilename, String contentType, Long fileSizeBytes) {}
   public record Assignment(LocalDate businessDate, UUID managerUserId, String managerNameSnapshot, String attendanceStatus, String note) {}
   public record AttachmentDownload(byte[] bytes, String contentType, String filename) {}
-  private record ManagerIdentity(UUID userId, String name, String attendanceStatus) {}
+  record ManagerIdentity(UUID userId, String name, String attendanceStatus, boolean primaryManager) {}
   private record OrderCandidate(UUID orderId, LocalDate businessDate, UUID memberId, String customerName, String customerPhone) {}
   private record LockHeader(UUID id, java.time.OffsetDateTime lockedAt) {}
   private record AttachmentRow(String originalStorageKey, String watermarkedStorageKey, String originalFilename, String contentType) {}

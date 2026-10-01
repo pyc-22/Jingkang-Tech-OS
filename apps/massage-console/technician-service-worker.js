@@ -1,11 +1,12 @@
-const CACHE_NAME = 'jingkang-technician-20260927-remove-login-bg-v1';
+const CACHE_NAME = 'jingkang-technician-20261001-manager-ownership-conversion-v1';
+const APP_VERSION = '20261001-manager-ownership-conversion-v1';
 const ASSET_VERSION = '20260916-quality-batch2-v9';
 const POLLING_VERSION = '20260927-perf-polling-v1';
 const PORTAL_VERSION = '20260927-remove-login-bg-v1';
 const APP_SHELL = [
-  `./mobile.html?v=${PORTAL_VERSION}`,
+  `./mobile.html?v=${APP_VERSION}`,
   `./technician.webmanifest?v=${ASSET_VERSION}`,
-  `./mobile.js?v=${PORTAL_VERSION}`,
+  `./mobile.js?v=${APP_VERSION}`,
   `./mobile.css?v=${ASSET_VERSION}`,
   `./mobile-clock.css?v=${ASSET_VERSION}`,
   `./mobile-extension.css?v=${ASSET_VERSION}`,

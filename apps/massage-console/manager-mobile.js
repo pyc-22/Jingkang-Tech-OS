@@ -416,7 +416,7 @@ function renderManagerServiceStructure(report,clockSummary){
 }
 const managerEscape=value=>String(value??'').replace(/[&<>"']/g,character=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
 const managerSignedMoney=cents=>`${Number(cents||0)<0?'-':''}${managerMoney(Math.abs(Number(cents||0)))}`;
-const managerClockTypeLabel={QUEUE:'排钟',CALL:'点钟',SELECTED:'选钟',BOOKED_QUEUE:'预定排钟',BOOKED_CALL:'预定点钟',EXTENSION:'加钟'};
+const managerClockTypeLabel={QUEUE:'排钟',CALL:'点钟',CONVERSION:'转化',SELECTED:'选钟',BOOKED_QUEUE:'预定排钟',BOOKED_CALL:'预定点钟',EXTENSION:'加钟'};
 function managerCommissionPeriod(){
   const input=document.querySelector('#manager-commission-month');
   if(!input.value)input.value=new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit'}).format(new Date()).slice(0,7);

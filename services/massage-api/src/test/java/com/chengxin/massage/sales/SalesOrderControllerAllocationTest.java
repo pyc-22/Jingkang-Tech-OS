@@ -7,6 +7,13 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import com.chengxin.massage.catalog.ServiceItemVersionService;
+import com.chengxin.massage.catalog.ServiceItemVersionService.CommissionRuleVersion;
+
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class SalesOrderControllerAllocationTest {
   private final SalesOrderController controller = new SalesOrderController(null, null, null, null, null, null, null);
@@ -85,10 +92,56 @@ class SalesOrderControllerAllocationTest {
     ))).hasMessageContaining("服务技师记录异常");
   }
 
+  @Test
+  void conversionKeepsEveryParticipantQueueClockAndSelectsCallCommission() {
+    ServiceItemVersionService versions = mock(ServiceItemVersionService.class);
+    SalesOrderController withRules = new SalesOrderController(null, null, null, null, versions, null, null);
+    UUID storeId = UUID.randomUUID();
+    UUID ruleId = UUID.randomUUID();
+    CommissionRuleVersion rule = new CommissionRuleVersion(ruleId, UUID.randomUUID(),
+      "FIXED", 3000L, 0, "FIXED", 5000L, 0, "FIXED", 1000L, 0, true, LocalDate.of(2026, 10, 1));
+    when(versions.commissionRule(storeId, ruleId)).thenReturn(rule);
+
+    List<SalesOrderController.CommissionBase> converted = withRules.allocatedMainCommissions(List.of(
+      participant((short) 1, (short) 1, 5000, 3600, 30000, "CONVERSION", ruleId),
+      participant((short) 2, (short) 1, 5000, 3600, 30000, "CONVERSION", ruleId)
+    ));
+    assertThat(converted).extracting(SalesOrderController.CommissionBase::clockType)
+      .containsExactly("CONVERSION", "CONVERSION");
+    assertThat(converted).extracting(SalesOrderController.CommissionBase::clockAdjustment)
+      .containsExactly((short) 1, (short) 1);
+    assertThat(converted).extracting(SalesOrderController.CommissionBase::baseAmountCents)
+      .containsExactly(15000, 15000);
+
+    SalesOrderController.CommissionBase base = converted.getFirst();
+    assertThat(selectedRule(withRules, storeId, withClockType(base, "QUEUE"), "MAIN").fixedCents()).isEqualTo(3000L);
+    assertThat(selectedRule(withRules, storeId, withClockType(base, "CALL"), "MAIN").fixedCents()).isEqualTo(5000L);
+    assertThat(selectedRule(withRules, storeId, base, "MAIN").fixedCents()).isEqualTo(5000L);
+    assertThat(selectedRule(withRules, storeId, base, "EXTENSION").fixedCents()).isEqualTo(1000L);
+  }
+
+  private SalesOrderController.CommissionRule selectedRule(SalesOrderController withRules, UUID storeId,
+      SalesOrderController.CommissionBase base, String sourceType) {
+    return ReflectionTestUtils.invokeMethod(withRules, "commissionRule", storeId, base, sourceType);
+  }
+
+  private SalesOrderController.CommissionBase withClockType(SalesOrderController.CommissionBase base, String clockType) {
+    return new SalesOrderController.CommissionBase(base.serviceSessionId(), base.serviceSessionExtensionId(),
+      base.serviceItemId(), base.technicianId(), base.technicianName(), base.serviceNameSnapshot(),
+      base.baseAmountCents(), clockType, base.commissionRuleVersionId(), base.businessDate(),
+      base.countsAsClockSnapshot(), base.durationMinutes(), base.serviceParticipantId(),
+      base.allocationBpSnapshot(), base.servedSecondsSnapshot(), base.clockAdjustment(), base.fixedScaleBp());
+  }
+
   private SalesOrderController.ParticipantCommissionBase participant(short slot, short sequence, int allocationBp, int seconds, int servicePriceCents) {
+    return participant(slot, sequence, allocationBp, seconds, servicePriceCents, "QUEUE", null);
+  }
+
+  private SalesOrderController.ParticipantCommissionBase participant(short slot, short sequence, int allocationBp, int seconds,
+      int servicePriceCents, String clockType, UUID ruleId) {
     return new SalesOrderController.ParticipantCommissionBase(
       UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "技师", "项目",
-      servicePriceCents, "QUEUE", null, LocalDate.of(2026, 8, 9), true, (short) 60,
+      servicePriceCents, clockType, ruleId, LocalDate.of(2026, 8, 9), true, (short) 60,
       slot, sequence, allocationBp, seconds
     );
   }

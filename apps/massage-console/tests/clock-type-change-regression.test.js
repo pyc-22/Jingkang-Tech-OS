@@ -29,9 +29,16 @@ test('clock type action is enabled only for an operational service', () => {
   assert.match(controller, /status in \('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE'\)/);
 });
 
-test('clock type change only updates the clock type and records an audit history event', () => {
-  assert.match(controller, /update service_session set clock_type=:clockType,updated_at=now\(\),version=version\+1/);
+test('clock type change updates only clock semantics and records an audit history event', () => {
+  assert.match(controller, /update service_session set clock_type=:clockType,converted=:converted,updated_at=now\(\),version=version\+1/);
   assert.doesNotMatch(controller, /update service_session set clock_type=:clockType[^\n]*service_item_id/);
   assert.match(controller, /SERVICE_CLOCK_TYPE_CHANGED/);
   assert.match(history, /'CLOCK_TYPE_CHANGED'/);
+});
+
+test('conversion appears in clock change dialog and maps to queue count', () => {
+  assert.match(app, /<option value="CONVERSION">转化<\/option>/);
+  assert.match(app, /CONVERSION:'转化'/);
+  assert.match(app, /\['QUEUE','BOOKED_QUEUE','CONVERSION'\]\.includes\(session\.clockType\)/);
+  assert.match(app, /form\.clockType\.value = session\.clockType === 'CONVERSION'/);
 });
