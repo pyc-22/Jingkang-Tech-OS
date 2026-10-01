@@ -266,6 +266,7 @@ let editingPaymentMethodId = null;
 let includeInactivePaymentMethods = false;
 let storePrintSetting = null;
 let localPrintBridgeOnline = false;
+const localPrintBridgeKey = 'massage-print-bridge-url';
 let changingRoom = null;
 let participantTransferSessionId = null;
 let dispatchReassignmentSessionId = null;
@@ -1948,7 +1949,7 @@ function updateSettlementAllocation() {
   if(submitButton) submitButton.disabled=(!settlementIsWaived() && totalCents < 1)||remainingCents!==0||(totalCents > 0 && settlementPayments().length===0);
 }
 
-function renderSettlementPaymentMethods({ reset = false } = {}) {
+function renderSettlementPaymentMethods({ reset = false, skipSync = false } = {}) {
   const container = document.querySelector('#payment-options');
   const methods = activePaymentMethods.filter(item => item.active !== false);
   const firstEnabledCode = methods.find(item => item.methodKind !== 'MEMBER_BALANCE' || state.selectedMemberId)?.code;
@@ -1956,7 +1957,7 @@ function renderSettlementPaymentMethods({ reset = false } = {}) {
     settlementPaymentDraft = new Map();
     settlementPaymentRows = firstEnabledCode ? [{ method: firstEnabledCode, walletId: null, memberId: state.selectedMemberId || null, wallets: [], amountCents: settlementAmountCents() }] : [];
   } else {
-    syncSettlementPaymentRows();
+    if (!skipSync) syncSettlementPaymentRows();
     settlementPaymentRows.forEach(row => { if (!row.memberId && state.selectedMemberId) row.memberId = state.selectedMemberId; });
   }
   container.innerHTML = settlementPaymentRows.map((row, index) => {
@@ -1992,6 +1993,7 @@ function renderPrintSetting() {
     if (input.type === 'checkbox') input.checked = Boolean(value);
     else input.value = value ?? '';
   });
+  form.elements.namedItem('printBridgeUrl').value = localStorage.getItem(localPrintBridgeKey) || '';
   renderPrintContentOptions();
   renderPrintPreview();
 }
@@ -2099,8 +2101,10 @@ async function printReferenceReceipt(orderDetail, openedWindow = null) {
 }
 
 async function refreshLocalPrintBridge() {
+  const bridgeUrl = localStorage.getItem(localPrintBridgeKey)?.trim().replace(/\/+$/, '');
+  if (!bridgeUrl) { localPrintBridgeOnline = false; return false; }
   try {
-    const response = await fetch('http://127.0.0.1:9178/health');
+    const response = await fetch(`${bridgeUrl}/health`, { cache:'no-store' });
     localPrintBridgeOnline = response.ok;
   } catch { localPrintBridgeOnline = false; }
   return localPrintBridgeOnline;
@@ -2228,13 +2232,19 @@ async function printBrowserReceiptByOptions(orderDetail, openedWindow = null) {
 }
 
 async function printOrder(orderDetail, openedWindow = null) {
-  const { text, setting } = await localReceiptTextByOptions(orderDetail);
-  if (localPrintBridgeOnline || await refreshLocalPrintBridge()) {
-    const response = await fetch('http://127.0.0.1:9178/print', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ text, paperWidthMm:setting.paperWidthMm, fontSizePx:setting.fontSizePx, copies:setting.copies }) });
-    if (response.ok) { if (openedWindow) openedWindow.close(); toast('小票已发送到本机打印机'); return; }
+  const bridgeUrl = localStorage.getItem(localPrintBridgeKey)?.trim().replace(/\/+$/, '');
+  if (bridgeUrl && (localPrintBridgeOnline || await refreshLocalPrintBridge())) {
+    try {
+      const { text, setting } = await localReceiptTextByOptions(orderDetail);
+      const response = await fetch(`${bridgeUrl}/print`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ text, paperWidthMm:setting.paperWidthMm, fontSizePx:setting.fontSizePx, copies:setting.copies }) });
+      if (response.ok) { if (openedWindow) openedWindow.close(); toast('小票已发送到本机打印机'); return; }
+    } catch {}
     localPrintBridgeOnline = false;
   }
-  return printBrowserReceiptByOptions(orderDetail, openedWindow);
+  toast(bridgeUrl ? '本地打印组件不可用，将使用浏览器打印' : '未配置本地打印组件，将使用浏览器打印');
+  const result = await printBrowserReceiptByOptions(orderDetail, openedWindow);
+  toast('已打开浏览器打印窗口，请确认打印');
+  return result;
 }
 
 async function loadManagedRooms() {
@@ -3430,6 +3440,8 @@ async function loadServiceSessions() {
 
 let orderCommissionRecords=[];
 let orderCommissionAdjustments=[];
+let orderCommissionSummaries=[];
+let orderCommissionSummaryFailed=false;
 function commissionRuleLabel(record){if(record.ruleType==='PERCENT')return `${Number(record.ruleRateBp||0)/100}%`;if(record.ruleType==='FIXED')return `固定 ${money(Number(record.ruleFixedCents||0)/100)}`;return '未设置';}
 function renderOrderCommissionRecords(){
   const keyword=document.querySelector('#commission-record-search').value.trim().toLowerCase();
@@ -3454,15 +3466,18 @@ async function loadOrderCommissionRecords(){
   if(!fromInput.value||!toInput.value){const now=new Date();const first=new Date(now.getFullYear(),now.getMonth(),1);fromInput.value=new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit'}).format(first);toInput.value=new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit'}).format(now);}
   if(fromInput.value>toInput.value)return toast('提成开始日期不能晚于结束日期');
   const params=new URLSearchParams({from:fromInput.value,to:toInput.value});
-  const [response,adjustmentResponse]=await Promise.all([
+  const [response,adjustmentResponse,summaryResponse]=await Promise.all([
     fetch(`http://localhost:8080/api/v1/commissions/records?${params.toString()}`,{headers:storeContextHeaders()}),
-    fetch(`http://localhost:8080/api/v1/commissions/adjustments?${params.toString()}`,{headers:storeContextHeaders()})
+    fetch(`http://localhost:8080/api/v1/commissions/adjustments?${params.toString()}`,{headers:storeContextHeaders()}),
+    fetch(`http://localhost:8080/api/v1/commissions/summary?${params.toString()}`,{headers:storeContextHeaders()})
   ]);
-  if(!response.ok){document.querySelector('#commission-records').innerHTML='<tr><td colspan="9" class="table-empty">有效提成加载失败</td></tr>';return;}
-  orderCommissionRecords=await response.json();
+  orderCommissionRecords=response.ok?await response.json():[];
   orderCommissionAdjustments=adjustmentResponse.ok?await adjustmentResponse.json():[];
-  if(!adjustmentResponse.ok)document.querySelector('#commission-adjustments').innerHTML='<tr><td colspan="9" class="table-empty">提成调整记录加载失败</td></tr>';
+  orderCommissionSummaries=summaryResponse.ok?await summaryResponse.json():[];
+  orderCommissionSummaryFailed=!summaryResponse.ok;
   renderOrderCommissionRecords();renderOrderCommissionAdjustments();renderTechnicianCommissionSummary();
+  if(!response.ok)document.querySelector('#commission-records').innerHTML='<tr><td colspan="9" class="table-empty">有效提成加载失败</td></tr>';
+  if(!adjustmentResponse.ok)document.querySelector('#commission-adjustments').innerHTML='<tr><td colspan="9" class="table-empty">提成调整记录加载失败</td></tr>';
 }
 
 async function overrideServiceDuration(sessionId) {
@@ -3997,21 +4012,12 @@ function ensureTechnicianCommissionSummaryPanel() {
 }
 function renderTechnicianCommissionSummary() {
   ensureTechnicianCommissionSummaryPanel();
-  const groups = new Map();
-  orderCommissionRecords.forEach(row => {
-    const key = row.technicianId || row.technicianNameSnapshot || 'UNKNOWN';
-    const current = groups.get(key) || { name: row.technicianNameSnapshot || '未记录技师', count: 0, base: 0, commission: 0 };
-    current.count += 1;
-    current.base += Number(row.baseAmountCents || 0);
-    current.commission += Number(row.commissionCents || 0);
-    groups.set(key, current);
-  });
   const from = document.querySelector('#commission-record-from')?.value || '—';
   const to = document.querySelector('#commission-record-to')?.value || '—';
   const range = document.querySelector('#technician-commission-summary-range');
   if (range) range.textContent = `${from} 至 ${to}`;
   const target = document.querySelector('#technician-commission-summary-records');
-  if (target) target.innerHTML = [...groups.values()].sort((left, right) => right.commission - left.commission).map(row => `<tr><td><b>${memberBusinessEscape(row.name)}</b></td><td>${roomTransferEscape(row.count)}</td><td>${money(row.base / 100)}</td><td class="amount-cell commission-amount">${signedMoneyCents(row.commission)}</td></tr>`).join('') || '<tr><td colspan="4" class="table-empty">所选时间没有技师提成记录</td></tr>';
+  if (target) target.innerHTML = orderCommissionSummaryFailed ? '<tr><td colspan="4" class="table-empty">技师提成总汇加载失败</td></tr>' : orderCommissionSummaries.map(row => `<tr><td><b>${memberBusinessEscape(row.technicianNameSnapshot || '未记录技师')}</b></td><td>${roomTransferEscape(row.recordCount)}</td><td>${money(Number(row.baseAmountCents || 0) / 100)}</td><td class="amount-cell commission-amount">${signedMoneyCents(row.commissionCents)}</td></tr>`).join('') || '<tr><td colspan="4" class="table-empty">所选时间没有技师提成记录</td></tr>';
 }
 
 document.querySelectorAll('.nav-item[data-view]').forEach(button => button.addEventListener('click', () => {
@@ -4279,16 +4285,16 @@ function setupMergeSettlementDialog(){
   document.querySelector('#merge-waive-reason').addEventListener('input',updateMergeSettlementAllocation);
    document.querySelector('#merge-payment-options').addEventListener('input',event=>{if(event.target.matches('[data-merge-payment-amount]'))updateMergeSettlementAllocation();});
    document.querySelector('#merge-payment-options').addEventListener('change',async event=>{const row=event.target.closest('[data-merge-payment-row]');if(!row)return;const index=Number(row.dataset.mergePaymentRow);syncMergePaymentRows();if(event.target.matches('[data-merge-payment-method]')){const payment=mergePaymentRows[index];const method=activePaymentMethods.find(item=>item.code===payment?.method);if(method?.methodKind!=='MEMBER_BALANCE'){payment.walletId=null;payment.wallets=[];payment.memberId=null;payment.walletLoading=false;}else if(payment.memberId&&!payment.wallets?.length){try{payment.wallets=await loadSettlementWallets(payment.memberId);}catch{toast('会员卡加载失败，请重新选择付款人');}}renderMergePaymentMethods();}});
-   document.querySelector('#merge-payment-options').addEventListener('click',event=>{const add=event.target.closest('[data-add-merge-payment]');if(add){syncMergePaymentRows();mergePaymentRows.push({method:activePaymentMethods.find(item=>item.methodKind!=='MEMBER_BALANCE'||mergeSettlementMemberId)?.code||activePaymentMethods[0]?.code||'',walletId:null,memberId:mergeSettlementMemberId||null,wallets:[],amountCents:0});return renderMergePaymentMethods();}const remove=event.target.closest('[data-remove-merge-payment]');if(remove){syncMergePaymentRows();mergePaymentRows.splice(Number(remove.dataset.removeMergePayment),1);return renderMergePaymentMethods();}const payer=event.target.closest('[data-merge-payment-member-search]');if(payer){settlementPaymentTarget={kind:'merge',index:Number(payer.dataset.mergePaymentMemberSearch)};return openSettlementMemberSearch('merge-payment');}const button=event.target.closest('[data-fill-merge-payment]');if(!button||button.disabled)return;syncMergePaymentRows();const index=Number(button.dataset.fillMergePayment);const current=document.querySelector(`[data-merge-payment-row="${index}"] [data-merge-payment-amount]`);const other=mergePaymentRows.reduce((sum,row,rowIndex)=>rowIndex===index?sum:sum+Number(row.amountCents||0),0);if(current)current.value=(Math.max(0,mergeAmountCents()-other)/100).toFixed(2);updateMergeSettlementAllocation();});
+   document.querySelector('#merge-payment-options').addEventListener('click',event=>{const add=event.target.closest('[data-add-merge-payment]');if(add){syncMergePaymentRows();mergePaymentRows.push({method:activePaymentMethods.find(item=>item.methodKind!=='MEMBER_BALANCE'||mergeSettlementMemberId)?.code||activePaymentMethods[0]?.code||'',walletId:null,memberId:mergeSettlementMemberId||null,wallets:[],amountCents:0});return renderMergePaymentMethods({skipSync:true});}const remove=event.target.closest('[data-remove-merge-payment]');if(remove){syncMergePaymentRows();mergePaymentRows.splice(Number(remove.dataset.removeMergePayment),1);return renderMergePaymentMethods({skipSync:true});}const payer=event.target.closest('[data-merge-payment-member-search]');if(payer){settlementPaymentTarget={kind:'merge',index:Number(payer.dataset.mergePaymentMemberSearch)};return openSettlementMemberSearch('merge-payment');}const button=event.target.closest('[data-fill-merge-payment]');if(!button||button.disabled)return;syncMergePaymentRows();const index=Number(button.dataset.fillMergePayment);const current=document.querySelector(`[data-merge-payment-row="${index}"] [data-merge-payment-amount]`);const other=mergePaymentRows.reduce((sum,row,rowIndex)=>rowIndex===index?sum:sum+Number(row.amountCents||0),0);if(current)current.value=(Math.max(0,mergeAmountCents()-other)/100).toFixed(2);updateMergeSettlementAllocation();});
   document.querySelector('#merge-settlement-form').addEventListener('submit',submitMergeSettlement);
 }
 
 function renderMergeMember(){const member=state.members.find(item=>item.id===mergeSettlementMemberId);document.querySelector('#merge-member-name').textContent=member?.name||'散客';document.querySelector('#merge-member-meta').textContent=member?`${member.phone}${member.code?` · ${member.code}`:''} · 余额 ${money(member.balance||0)}`:'非会员结算';renderMergePaymentMethods();}
 
-function renderMergePaymentMethods({reset=false}={}){
+function renderMergePaymentMethods({reset=false,skipSync=false}={}){
   const container=document.querySelector('#merge-payment-options');if(!container)return;
   const methods=activePaymentMethods.filter(item=>item.active!==false);const first=methods.find(item=>item.methodKind!=='MEMBER_BALANCE'||mergeSettlementMemberId)?.code;
-  if(reset){mergeSettlementPaymentDraft=new Map();mergePaymentRows=first?[{method:first,walletId:null,memberId:mergeSettlementMemberId||null,wallets:[],amountCents:mergeAmountCents()}]:[];}else{syncMergePaymentRows();mergePaymentRows.forEach(row=>{if(!row.memberId&&mergeSettlementMemberId)row.memberId=mergeSettlementMemberId;});}
+  if(reset){mergeSettlementPaymentDraft=new Map();mergePaymentRows=first?[{method:first,walletId:null,memberId:mergeSettlementMemberId||null,wallets:[],amountCents:mergeAmountCents()}]:[];}else{if(!skipSync)syncMergePaymentRows();mergePaymentRows.forEach(row=>{if(!row.memberId&&mergeSettlementMemberId)row.memberId=mergeSettlementMemberId;});}
   container.innerHTML=mergePaymentRows.map((row,index)=>{const method=methods.find(item=>item.code===row.method)||methods[0];const isMember=method?.methodKind==='MEMBER_BALANCE';const member=state.members.find(item=>item.id===(row.memberId||mergeSettlementMemberId));const note=isMember?(member?`${member.name} · 余额 ${money(member.balance||0)}`:'请选择付款会员和会员卡'):(method?.cashCounted?'计入现金':'');const walletSelect=isMember?`<select data-merge-payment-wallet aria-label="第 ${index+1} 条支付会员卡"><option value="">选择会员卡</option>${walletOptions(row.wallets,row.walletId)}</select><button type="button" data-merge-payment-member-search="${index}">${member?`付款人：${memberBusinessEscape(member.name)}`:'选择付款人'}</button>`:'';return `<div class="payment-option payment-option-row" data-merge-payment-row="${index}"><span><select data-merge-payment-method aria-label="第 ${index+1} 条支付方式">${paymentMethodOptions(row.method)}</select><small>${memberBusinessEscape(note)}</small>${walletSelect}</span><span class="payment-amount-control"><i>¥</i><input type="number" min="0" step="0.01" data-merge-payment-amount value="${memberBusinessEscape((row.amountCents||0)/100)}"><button type="button" data-fill-merge-payment="${index}">填入剩余</button><button type="button" data-remove-merge-payment="${index}" aria-label="删除第 ${index+1} 条支付">×</button></span></div>`;}).join('')+(methods.length?'<button type="button" class="button secondary" data-add-merge-payment>添加支付明细</button>':'<p class="empty-state">当前门店没有可用的收款方式</p>');
    updateMergeSettlementAllocation();
    mergePaymentRows.forEach(row => { if (row.walletLoading || !row.memberId || row.wallets?.length) return; row.walletLoading = true; loadSettlementWallets(row.memberId).then(wallets => { row.wallets = wallets; row.walletId = row.walletId || wallets.find(item => item.isDefault)?.id || wallets[0]?.id || null; renderMergePaymentMethods(); }).catch(() => toast('会员卡加载失败，请重新选择付款人')); });
@@ -4317,8 +4323,8 @@ function renderMergeSettlement({resetAmount=false}={}){
 
 async function submitMergeSettlement(event){
   event.preventDefault();const groups=mergeSelectedGroups();if(groups.length<1)return toast('请至少选择一个房间 / 床位');if(new Set(groups.map(group=>group.businessDate)).size>1)return toast('不同营业日的订单需要分开结算');const sessions=mergeSelectedSessions(),amount=mergeAmountCents(),waived=mergeIsWaived(),waiveReason=document.querySelector('#merge-waive-reason').value.trim(),payments=mergePayments();if(waived&&amount!==0)return toast('免单结算的实收金额必须为 0.00 元');if(amount===0&&(!waived||!waiveReason))return toast('0.00 元结算必须勾选免单并填写原因');if(amount>0&&amount<1)return toast('普通结算最低实收金额为 0.01 元');if(payments.reduce((sum,item)=>sum+item.amountCents,0)!==amount)return toast('收款金额合计必须等于实收金额');
-  const submit=document.querySelector('#submit-merge-settlement');submit.disabled=true;const printWindow=storePrintSetting?.autoPrint&&!localPrintBridgeOnline?window.open('','massage-merge-receipt','popup,width=480,height=720'):null;
-  try{const response=await fetch('http://localhost:8080/api/v1/sales-orders/settle',{method:'POST',headers:storeContextHeaders(true),body:JSON.stringify({memberId:mergeSettlementMemberId,settlementAmountCents:amount,waiveReason:waived?waiveReason:null,lines:sessions.map(item=>({serviceItemId:item.serviceItemId,serviceSessionId:item.id,durationMinutes:Number(item.plannedDurationMinutes)})),payments})});if(!response.ok){if(printWindow)printWindow.close();return toast(await responseMessage(response,'合并结算失败，请刷新订单后重试'));}const order=await response.json();document.querySelector('#merge-settlement-dialog').close();mergeSettlementSelection.clear();await Promise.all([loadPendingServiceSessions({silent:true}),loadFoundationData({silent:true}),loadSalesOrders(),loadDailyReport()]);if(printWindow){const detailResponse=await fetch(`http://localhost:8080/api/v1/sales-orders/${order.id}`,{headers:storeContextHeaders()});if(detailResponse.ok)printOrder(await detailResponse.json(),printWindow).catch(()=>{printWindow.close();toast('订单已完成，小票打印失败');});else printWindow.close();}toast(`合并结算成功，订单 ${order.orderNo}`);}catch{if(printWindow)printWindow.close();toast('合并结算服务连接失败');}finally{submit.disabled=false;updateMergeSettlementAllocation();}
+  const submit=document.querySelector('#submit-merge-settlement');submit.disabled=true;const printWindow=storePrintSetting?.autoPrint?window.open('','massage-merge-receipt','popup,width=480,height=720'):null;
+  try{const response=await fetch('http://localhost:8080/api/v1/sales-orders/settle',{method:'POST',headers:storeContextHeaders(true),body:JSON.stringify({memberId:mergeSettlementMemberId,settlementAmountCents:amount,waiveReason:waived?waiveReason:null,lines:sessions.map(item=>({serviceItemId:item.serviceItemId,serviceSessionId:item.id,durationMinutes:Number(item.plannedDurationMinutes)})),payments})});if(!response.ok){if(printWindow)printWindow.close();return toast(await responseMessage(response,'合并结算失败，请刷新订单后重试'));}const order=await response.json();document.querySelector('#merge-settlement-dialog').close();mergeSettlementSelection.clear();await Promise.all([loadPendingServiceSessions({silent:true}),loadFoundationData({silent:true}),loadSalesOrders(),loadDailyReport()]);if(storePrintSetting?.autoPrint){const detailResponse=await fetch(`http://localhost:8080/api/v1/sales-orders/${order.id}`,{headers:storeContextHeaders()});if(detailResponse.ok)printOrder(await detailResponse.json(),printWindow).catch(()=>{if(printWindow)printWindow.close();toast('订单已完成，小票打印失败，请检查浏览器弹窗');});else{if(printWindow)printWindow.close();toast('订单已完成，小票加载失败');}}toast(`合并结算成功，订单 ${order.orderNo}`);}catch{if(printWindow)printWindow.close();toast('合并结算服务连接失败');}finally{submit.disabled=false;updateMergeSettlementAllocation();}
 }
 function setupFrontdeskRoomTransferDialog(){if(document.querySelector('#frontdesk-room-transfer-dialog'))return;document.body.insertAdjacentHTML('beforeend','<dialog id="frontdesk-room-transfer-dialog" class="frontdesk-room-transfer-dialog"><form id="frontdesk-room-transfer-form" class="dialog-card frontdesk-room-transfer-card"><div class="dialog-heading"><div><p class="eyebrow">前台更换房间</p><h2>转移服务与计时</h2></div><button class="icon-button" type="button" id="close-frontdesk-room-transfer" aria-label="关闭">×</button></div><div class="frontdesk-room-transfer-flow"><label><span>当前服务</span><select name="serviceSessionId" id="frontdesk-transfer-session" required></select></label><span class="frontdesk-transfer-arrow">→</span><label><span>目标可用床位</span><select name="toRoomId" id="frontdesk-transfer-room" required></select></label></div><div class="frontdesk-transfer-preview" id="frontdesk-transfer-preview"></div><label class="frontdesk-transfer-reason">换房原因<textarea name="reason" rows="3" maxlength="240" required placeholder="例如：顾客临时加项目，需要更换项目房"></textarea></label><p class="frontdesk-transfer-note">确认后原房间按剩余服务状态更新，新房间继续当前服务倒计时，技师端同步显示新房间。</p><div class="dialog-actions"><button class="button secondary" type="button" id="cancel-frontdesk-room-transfer">取消</button><button class="button primary" type="submit" id="submit-frontdesk-room-transfer">确认更换房间</button></div></form></dialog>');document.querySelector('#close-frontdesk-room-transfer').addEventListener('click',()=>document.querySelector('#frontdesk-room-transfer-dialog').close());document.querySelector('#cancel-frontdesk-room-transfer').addEventListener('click',()=>document.querySelector('#frontdesk-room-transfer-dialog').close());document.querySelector('#frontdesk-transfer-session').addEventListener('change',()=>{renderFrontdeskRoomTransferRooms();renderFrontdeskRoomTransferPreview();});document.querySelector('#frontdesk-transfer-room').addEventListener('change',renderFrontdeskRoomTransferPreview);document.querySelector('#frontdesk-room-transfer-form').addEventListener('submit',submitFrontdeskRoomTransfer);}
 function renderFrontdeskRoomTransferRooms(){const session=state.activeSessions.find(item=>item.id===document.querySelector('#frontdesk-transfer-session')?.value);const rooms=state.rooms.filter(room=>Number(room.availableBedCount||0)>0&&['idle','reserved','serving'].includes(room.status)&&String(room.apiId)!==String(session?.roomId));const target=document.querySelector('#frontdesk-transfer-room');if(!target)return;target.innerHTML=rooms.map(room=>`<option value="${roomTransferEscape(room.apiId)}">${memberBusinessEscape(room.id)} 房 · ${memberBusinessEscape(room.availableBedCount)}/${memberBusinessEscape(room.bedCount)} 床可用</option>`).join('')||'<option value="">没有其他房间可用</option>';}
@@ -4537,7 +4543,7 @@ document.querySelector('#refund-management-records').addEventListener('click',as
 document.querySelector('#order-records').addEventListener('click',async event=>{const voidButton=event.target.closest('[data-order-void]');if(voidButton){openOrderVoid(voidButton.dataset.orderVoid);return;}const button=event.target.closest('[data-order-detail]');if(!button)return;await openOrderDetail(button.dataset.orderDetail);});
 document.querySelector('#close-order-detail').addEventListener('click',()=>document.querySelector('#order-detail-dialog').close());
 document.querySelector('#order-detail-content').addEventListener('click',async event=>{const financial=event.target.closest('[data-order-financial-correct]');if(financial){await openFinancialCorrection(financial.dataset.orderFinancialCorrect);return;}const correction=event.target.closest('[data-order-correct]');if(correction){await openOrderCorrection(correction.dataset.orderCorrect);return;}const voidButton=event.target.closest('[data-order-void]');if(voidButton){openOrderVoid(voidButton.dataset.orderVoid);return;}const open=event.target.closest('[data-refund-kind]');if(open)return openRefundDialog(open.dataset.refundKind);const confirm=event.target.closest('[data-confirm-refund]');if(confirm){const response=await fetch(`http://localhost:8080/api/v1/refunds/${confirm.dataset.confirmRefund}/payments/${confirm.dataset.refundPayment}/complete`,{method:'POST',headers:storeContextHeaders(true)});if(!response.ok)return toast('退款确认失败，请稍后重试');await openOrderDetail(activeOrderDetail.detail.order.id);await loadSalesOrders();toast('退款已确认完成');return;}const cancel=event.target.closest('[data-cancel-refund]');if(cancel){if(!window.confirm('确认取消这笔待确认退款或红冲？'))return;const response=await fetch(`http://localhost:8080/api/v1/refunds/${cancel.dataset.cancelRefund}/cancel`,{method:'POST',headers:storeContextHeaders(true)});if(!response.ok)return toast('该申请已有完成付款，无法取消');await openOrderDetail(activeOrderDetail.detail.order.id);await loadSalesOrders();toast('申请已取消');}});
-document.querySelector('#order-detail-content').addEventListener('click', event => { if (event.target.closest('#print-order-receipt') && activeOrderDetail) printOrder(activeOrderDetail.detail).catch(() => toast('打印失败，请检查本机打印服务')); });
+document.querySelector('#order-detail-content').addEventListener('click', event => { if (event.target.closest('#print-order-receipt') && activeOrderDetail) { const popup=window.open('','massage-receipt','popup,width=480,height=720'); printOrder(activeOrderDetail.detail,popup).catch(() => { if(popup)popup.close(); toast('打印失败，请检查浏览器弹窗和本机打印组件'); }); } });
 document.querySelector('#order-detail-content').addEventListener('click', event => { const history=event.target.closest('[data-order-service-history]'); if(history)openServiceChangeHistory(history.dataset.orderServiceHistory); });
 document.querySelector('#refund-draft-lines').addEventListener('input',updateRefundPreview);
 document.querySelector('#close-refund-dialog').addEventListener('click',()=>document.querySelector('#refund-dialog').close());
@@ -4925,12 +4931,21 @@ document.querySelector('#print-setting-form').addEventListener('change', renderP
 document.querySelector('#print-setting-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
+  const bridgeAddress = String(form.get('printBridgeUrl') || '').trim();
+  let bridgeUrl = '';
+  if (bridgeAddress) {
+    try {
+      const parsed = new URL(bridgeAddress);
+      if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) throw new Error('invalid');
+      bridgeUrl = parsed.origin;
+    } catch { return toast('本机打印组件地址需为完整的 http 或 https 地址，不含路径'); }
+  }
   const checked = name => form.get(name) === 'on';
   const contentOptions = selectedPrintContentOptions();
   const body = { storeName:form.get('storeName'), receiptTitle:form.get('receiptTitle'), storeAddress:form.get('storeAddress'), storePhone:form.get('storePhone'), headerNote:form.get('headerNote'), footerNote:form.get('footerNote'), paperWidthMm:Number(form.get('paperWidthMm')), fontSizePx:Number(form.get('fontSizePx')), marginMm:Number(form.get('marginMm')), copies:Number(form.get('copies')), autoPrint:checked('autoPrint'), showStoreAddress:contentOptions.showStoreAddress, showStorePhone:contentOptions.showStorePhone, showOrderNo:contentOptions.showOrderNumbers, showMember:contentOptions.showMember, showTechnician:contentOptions.showTechnician, showRoom:contentOptions.showRoom, showPayment:contentOptions.showPayment, showBalance:contentOptions.showBalance, contentOptions };
   const response = await fetch('http://localhost:8080/api/v1/print-settings', { method:'PUT', headers:storeContextHeaders(true), body:JSON.stringify(body) });
   if (!response.ok) return toast('打印设置保存失败');
-  storePrintSetting = await response.json(); renderPrintSetting(); toast('打印设置已保存');
+  storePrintSetting = await response.json(); localStorage.setItem(localPrintBridgeKey, bridgeUrl); localPrintBridgeOnline = false; renderPrintSetting(); toast('打印设置已保存');
 });
 document.querySelector('#print-test-receipt').addEventListener('click', () => {
   const popup = window.open('', 'massage-receipt', 'popup,width=480,height=720');
@@ -5153,8 +5168,8 @@ document.querySelector('#payment-options').addEventListener('change',async event
   if(event.target.matches('[data-payment-method]')){const payment=settlementPaymentRows[index];const method=activePaymentMethods.find(item=>item.code===payment?.method);if(method?.methodKind!=='MEMBER_BALANCE'){payment.walletId=null;payment.wallets=[];payment.memberId=null;payment.walletLoading=false;}else if(!payment.wallets?.length&&payment.memberId){try{payment.wallets=await loadSettlementWallets(payment.memberId);}catch{toast('会员卡加载失败，请重新选择付款人');}}renderSettlementPaymentMethods();}
 });
 document.querySelector('#payment-options').addEventListener('click',event=>{
-  const add=event.target.closest('[data-add-payment-row]');if(add){syncSettlementPaymentRows();settlementPaymentRows.push({method:activePaymentMethods.find(item=>item.methodKind!=='MEMBER_BALANCE'||state.selectedMemberId)?.code||activePaymentMethods[0]?.code||'',walletId:null,memberId:state.selectedMemberId||null,wallets:[],amountCents:0});return renderSettlementPaymentMethods();}
-  const remove=event.target.closest('[data-remove-payment]');if(remove){syncSettlementPaymentRows();settlementPaymentRows.splice(Number(remove.dataset.removePayment),1);return renderSettlementPaymentMethods();}
+  const add=event.target.closest('[data-add-payment-row]');if(add){syncSettlementPaymentRows();settlementPaymentRows.push({method:activePaymentMethods.find(item=>item.methodKind!=='MEMBER_BALANCE'||state.selectedMemberId)?.code||activePaymentMethods[0]?.code||'',walletId:null,memberId:state.selectedMemberId||null,wallets:[],amountCents:0});return renderSettlementPaymentMethods({skipSync:true});}
+  const remove=event.target.closest('[data-remove-payment]');if(remove){syncSettlementPaymentRows();settlementPaymentRows.splice(Number(remove.dataset.removePayment),1);return renderSettlementPaymentMethods({skipSync:true});}
   const payer=event.target.closest('[data-payment-member-search]');if(payer){settlementPaymentTarget={kind:'single',index:Number(payer.dataset.paymentMemberSearch)};return openSettlementMemberSearch('payment');}
   const button=event.target.closest('[data-fill-payment]');if(!button||button.disabled)return;syncSettlementPaymentRows();const index=Number(button.dataset.fillPayment);const current=document.querySelector(`[data-payment-row="${index}"] [data-payment-amount]`);const otherCents=settlementPaymentRows.reduce((sum,row,rowIndex)=>rowIndex===index?sum:sum+Number(row.amountCents||0),0);if(current)current.value=(Math.max(0,settlementAmountCents()-otherCents)/100).toFixed(2);updateSettlementAllocation();
 });
@@ -5177,16 +5192,16 @@ document.querySelector('#settlement-dialog form').addEventListener('submit', asy
   const originalSubmitText = submitButton.textContent;
   submitButton.disabled = true;
   submitButton.textContent = '正在收款...';
-  const printWindow = storePrintSetting?.autoPrint && !localPrintBridgeOnline ? window.open('', 'massage-receipt', 'popup,width=480,height=720') : null;
+  const printWindow = storePrintSetting?.autoPrint ? window.open('', 'massage-receipt', 'popup,width=480,height=720') : null;
   try {
     const response = await fetch('http://localhost:8080/api/v1/sales-orders/settle',{method:'POST',headers:storeContextHeaders(true),body:JSON.stringify({memberId:state.selectedMemberId || null,settlementAmountCents:totalCents,waiveReason:waived ? waiveReason : null,correctedFromOrderId:orderCorrectionContext?.originalOrderId||null,correctionReason:orderCorrectionContext?.reason||null,lines:state.orderItems.map(item=>({serviceItemId:item.id,serviceSessionId:item.serviceSessionId||null,durationMinutes:Number(item.durationMinutes || Number.parseInt(item.duration,10)),clockType:item.manualService?.clockType||null,roomId:item.manualService?.roomId||null,technicians:item.manualService?.technicians||null})),payments})});
     if(!response.ok){ if (printWindow) printWindow.close(); toast(await responseMessage(response, memberPayment?'结算失败：会员余额或收款明细有误':'结算失败，请检查当前订单')); return; }
     const settledOrder = await response.json();
     state.orderItems=[]; state.selectedMemberId=null; orderCorrectionContext=null; singleRoomSettlementRoomId=null; singleRoomSettlementRoom=null; singleRoomSettlementSessions=[]; singleRoomSettlementSelection=new Set(); document.querySelector('#settlement-dialog').close(); renderMemberCard(); renderOrder(); await Promise.all([loadPendingServiceSessions({ silent:true }),loadFoundationData({ silent:true })]);
-    if (printWindow) {
+    if (storePrintSetting?.autoPrint) {
       const detailResponse = await fetch(`http://localhost:8080/api/v1/sales-orders/${settledOrder.id}`, { headers:storeContextHeaders() });
-      if(detailResponse.ok) printOrder(await detailResponse.json(), printWindow).catch(() => { if (printWindow) printWindow.close(); toast('订单已收款，小票打印失败'); });
-      else { printWindow.close(); toast('订单已收款，小票加载失败'); }
+      if(detailResponse.ok) printOrder(await detailResponse.json(), printWindow).catch(() => { if (printWindow) printWindow.close(); toast('订单已收款，小票打印失败，请检查浏览器弹窗'); });
+      else { if (printWindow) printWindow.close(); toast('订单已收款，小票加载失败'); }
     }
     toast('收款成功，订单已完成');
   } catch {
