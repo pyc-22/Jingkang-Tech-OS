@@ -535,26 +535,20 @@ public class SalesOrderController {
     if (newPaid != paymentTotal) throw bad("支付方式合计必须等于修改后的实收金额");
     List<Payment> beforePayments = jdbc.sql("select payment.id,payment.payment_method,payment.payment_method_name_snapshot,payment.wallet_id,w.account_code,w.account_name,payer.id payer_member_id,payer.name payer_member_name,payer.code payer_member_code,payment.amount_cents,payment.created_at from payment_record payment left join member_wallet w on w.id=payment.wallet_id left join member payer on payer.id=w.member_id where payment.order_id=:order order by payment.created_at,payment.id")
       .param("order", id).query(Payment.class).list();
-    List<ResolvedCorrectionPayment> afterPayments = new ArrayList<>();
-    for (PaymentInput payment : input.payments()) {
-      PaymentMethod method = paymentMethod(storeId, payment.method());
-      Wallet wallet = resolveWallet(storeId, order.memberId(), payment.walletId(), method);
-      afterPayments.add(new ResolvedCorrectionPayment(method.code(), method.name(), method.methodKind(), wallet == null ? null : wallet.id(), payment.amountCents()));
-    }
-    long oldMemberPayment = beforePayments.stream().filter(payment -> "MEMBER_BALANCE".equals(payment.paymentMethod())).mapToLong(Payment::amountCents).sum();
-    long newMemberPayment = afterPayments.stream().filter(payment -> "MEMBER_BALANCE".equals(payment.methodKind())).mapToLong(ResolvedCorrectionPayment::amountCents).sum();
-    long memberDelta = newMemberPayment - oldMemberPayment;
-    LocalDate correctionBusinessDate = businessClock.businessDate(storeId, OffsetDateTime.now());
+    Set<UUID> oldWalletIds = new HashSet<>();
     for (Payment payment : beforePayments) {
-      if ("MEMBER_BALANCE".equals(payment.paymentMethod()) && payment.walletId() != null) {
-        restoreWalletForCorrection(storeId, payment.walletId(), payment.amountCents(), id, correctionBusinessDate);
-      }
+      if (!"MEMBER_BALANCE".equals(payment.paymentMethod())) continue;
+      if (payment.walletId() == null) throw conflict("原会员支付缺少会员卡，请先核对订单资金记录");
+      oldWalletIds.add(payment.walletId());
     }
-    for (ResolvedCorrectionPayment payment : afterPayments) {
-      if ("MEMBER_BALANCE".equals(payment.methodKind())) {
-        Wallet wallet = walletById(payment.walletId());
-        consumeWallet(storeId, wallet, payment.amountCents(), id, correctionBusinessDate);
-      }
+    List<ResolvedCorrectionPayment> afterPayments = resolvePayments(storeId, order.memberId(), input.payments(), oldWalletIds).stream()
+      .map(payment -> new ResolvedCorrectionPayment(payment.method().code(), payment.method().name(), payment.method().methodKind(), payment.wallet() == null ? null : payment.wallet().id(), payment.amountCents())).toList();
+    Map<UUID, Long> walletDeltas = correctionWalletDeltas(beforePayments, afterPayments);
+    long memberDelta = walletDeltas.values().stream().mapToLong(Long::longValue).sum();
+    LocalDate correctionBusinessDate = businessClock.businessDate(storeId, OffsetDateTime.now());
+    for (Map.Entry<UUID, Long> delta : walletDeltas.entrySet()) {
+      if (delta.getValue() < 0) restoreWalletForCorrection(storeId, delta.getKey(), -delta.getValue(), id, correctionBusinessDate);
+      else consumeWallet(storeId, walletById(delta.getKey()), delta.getValue(), id, correctionBusinessDate);
     }
 
     int version = order.financialCorrectionVersion() + 1;
@@ -576,6 +570,18 @@ public class SalesOrderController {
     FinancialCorrectionResult result = new FinancialCorrectionResult(id, order.orderNo(), version, order.paidCents(), newPaid, memberDelta, reason);
     audits.record(authorization, storeId, "SALES", "ORDER_FINANCIAL_CORRECTED", "sales_order", id, "已结算订单收款信息更正", order, result);
     return result;
+  }
+
+  Map<UUID, Long> correctionWalletDeltas(List<Payment> before, List<ResolvedCorrectionPayment> after) {
+    Map<UUID, Long> deltas = new LinkedHashMap<>();
+    for (Payment payment : before) {
+      if ("MEMBER_BALANCE".equals(payment.paymentMethod())) deltas.merge(payment.walletId(), -payment.amountCents(), Long::sum);
+    }
+    for (ResolvedCorrectionPayment payment : after) {
+      if ("MEMBER_BALANCE".equals(payment.methodKind())) deltas.merge(payment.walletId(), payment.amountCents(), Long::sum);
+    }
+    deltas.entrySet().removeIf(delta -> delta.getValue() == 0);
+    return deltas;
   }
 
   private void snapshotCorrectionPayment(UUID correctionId, String side, String method, String name, long amount) {
@@ -1108,16 +1114,20 @@ public class SalesOrderController {
 
   private Wallet walletById(UUID walletId) {
     if (walletId == null) throw bad("会员卡不能为空");
-    return jdbc.sql("select w.id,w.member_id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.id=:wallet and w.tenant_id=:tenant and w.active and m.active for update")
+    return jdbc.sql("select w.id,w.member_id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.id=:wallet and w.tenant_id=:tenant and w.active and m.active for update of w")
       .param("wallet", walletId).param("tenant", TENANT_ID).query(Wallet.class).optional()
       .orElseThrow(() -> bad("所选会员卡不存在、已停用或不可用"));
   }
 
   /** Resolve all payments, then lock selected wallets in UUID order. */
   private List<ResolvedPayment> resolvePayments(UUID storeId, UUID orderMemberId, List<PaymentInput> inputs) {
-    if (inputs == null || inputs.isEmpty()) return List.of();
+    return resolvePayments(storeId, orderMemberId, inputs, Set.of());
+  }
+
+  private List<ResolvedPayment> resolvePayments(UUID storeId, UUID orderMemberId, List<PaymentInput> inputs, Set<UUID> oldWalletIds) {
+    if ((inputs == null || inputs.isEmpty()) && oldWalletIds.isEmpty()) return List.of();
     List<PaymentDraft> drafts = new ArrayList<>(inputs.size());
-    Set<UUID> walletIds = new HashSet<>();
+    Set<UUID> walletIds = new HashSet<>(oldWalletIds);
     for (PaymentInput payment : inputs) {
       PaymentMethod method = paymentMethod(storeId, payment.method());
       UUID walletId = payment.walletId();
@@ -1163,7 +1173,7 @@ public class SalesOrderController {
 
   private void consumeWallet(UUID transactionStoreId, Wallet wallet, long amount, UUID orderId, LocalDate businessDate) {
     if (wallet == null) throw bad("使用会员余额付款时必须先选择会员卡");
-    Wallet current = jdbc.sql("select w.id,w.member_id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.id=:wallet and w.tenant_id=:tenant and w.active and m.active for update")
+    Wallet current = jdbc.sql("select w.id,w.member_id,w.balance_cents from member_wallet w join member m on m.id=w.member_id where w.id=:wallet and w.tenant_id=:tenant and w.active and m.active for update of w")
       .param("wallet", wallet.id()).param("tenant", TENANT_ID).query(Wallet.class).single();
     if (current.balanceCents() < amount) throw new ResponseStatusException(HttpStatus.CONFLICT, "会员余额不足，请调整付款方式或充值");
     long after = current.balanceCents() - amount;

@@ -4,6 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class CombinedPaymentContractTest {
@@ -18,7 +22,8 @@ class CombinedPaymentContractTest {
     assertThat(source).contains("for (ResolvedPayment payment : resolvedPayments)");
     assertThat(source).contains("payment.walletId()");
     String frontend = Files.readString(Path.of("..", "..", "apps/massage-console/app.js"));
-    assertThat(frontend).contains("settlementPaymentRows.push");
+    assertThat(frontend).contains("createCombinedPaymentEditor");
+    assertThat(frontend).contains("data-combined-add-card");
     assertThat(frontend).contains("const payments=settlementPayments()");
     assertThat(frontend).contains("memberPayments=payments.filter");
   }
@@ -40,7 +45,7 @@ class CombinedPaymentContractTest {
     assertThat(source).contains("if (!\"MEMBER_BALANCE\".equals(method.methodKind()))");
     assertThat(source).contains("if (requestedWalletId != null) throw bad(\"外部支付方式不能指定会员卡\")");
     String frontend = Files.readString(Path.of("..", "..", "apps/massage-console/app.js"));
-    assertThat(frontend).contains("payment.walletId=null;payment.wallets=[];payment.memberId=null");
+    assertThat(frontend).contains("walletId: memberMethod(row) ? row.walletId : null");
   }
 
   @Test
@@ -65,9 +70,39 @@ class CombinedPaymentContractTest {
   @Test
   void financialCorrectionRestoresOldCardsAndConsumesTheSelectedNewCards() throws Exception {
     String source = salesSource();
-    assertThat(source).contains("restoreWalletForCorrection(storeId, payment.walletId(), payment.amountCents()");
-    assertThat(source).contains("Wallet wallet = walletById(payment.walletId())");
+    assertThat(source).contains("Map<UUID, Long> walletDeltas = correctionWalletDeltas(beforePayments, afterPayments)");
+    assertThat(source).contains("restoreWalletForCorrection(storeId, delta.getKey(), -delta.getValue()");
+    assertThat(source).contains("consumeWallet(storeId, walletById(delta.getKey()), delta.getValue()");
+    assertThat(source).contains("resolvePayments(storeId, order.memberId(), input.payments(), oldWalletIds)");
     assertThat(source).contains("delete from payment_record where order_id=:order");
     assertThat(source).contains("insert into payment_record");
+  }
+
+  @Test
+  void correctionDeltasNetRepeatedCardsAndLeaveUnchangedCardsUntouched() {
+    SalesOrderController controller = new SalesOrderController(null, null, null, null, null, null, null);
+    UUID first = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    UUID second = UUID.fromString("00000000-0000-0000-0000-000000000002");
+    List<SalesOrderController.Payment> before = List.of(
+        new SalesOrderController.Payment(UUID.randomUUID(), "MEMBER_BALANCE", "会员余额", first, null, null, null, null, null, 6000L, OffsetDateTime.now()),
+        new SalesOrderController.Payment(UUID.randomUUID(), "MEMBER_BALANCE", "会员余额", second, null, null, null, null, null, 4000L, OffsetDateTime.now()));
+    List<SalesOrderController.ResolvedCorrectionPayment> after = List.of(
+        new SalesOrderController.ResolvedCorrectionPayment("MEMBER_BALANCE", "会员余额", "MEMBER_BALANCE", first, 6000L),
+        new SalesOrderController.ResolvedCorrectionPayment("MEMBER_BALANCE", "会员余额", "MEMBER_BALANCE", second, 4000L));
+    assertThat(controller.correctionWalletDeltas(before, after)).isEmpty();
+  }
+
+  @Test
+  void correctionDeltasDebitAndRefundOnlyTheNetWalletDifferences() {
+    SalesOrderController controller = new SalesOrderController(null, null, null, null, null, null, null);
+    UUID first = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    UUID second = UUID.fromString("00000000-0000-0000-0000-000000000002");
+    List<SalesOrderController.Payment> before = List.of(
+        new SalesOrderController.Payment(UUID.randomUUID(), "MEMBER_BALANCE", "会员余额", first, null, null, null, null, null, 6000L, OffsetDateTime.now()));
+    List<SalesOrderController.ResolvedCorrectionPayment> after = List.of(
+        new SalesOrderController.ResolvedCorrectionPayment("MEMBER_BALANCE", "会员余额", "MEMBER_BALANCE", first, 1000L),
+        new SalesOrderController.ResolvedCorrectionPayment("MEMBER_BALANCE", "会员余额", "MEMBER_BALANCE", second, 5000L));
+    assertThat(controller.correctionWalletDeltas(before, after))
+        .containsExactlyInAnyOrderEntriesOf(Map.of(first, -5000L, second, 5000L));
   }
 }

@@ -20,9 +20,11 @@ test('settled payment correction is versioned, audited, and refund protected', (
 });
 
 test('member balance difference is synchronized during payment correction', () => {
-  assert.match(controller, /newMemberPayment - oldMemberPayment/);
+  assert.match(controller, /correctionWalletDeltas/);
+  assert.match(controller, /deltas\.merge\(payment\.walletId\(\), -payment\.amountCents\(\), Long::sum\)/);
+  assert.match(controller, /deltas\.merge\(payment\.walletId\(\), payment\.amountCents\(\), Long::sum\)/);
   assert.match(controller, /for \(ResolvedCorrectionPayment payment : afterPayments\)/);
-  assert.match(controller, /consumeWallet\(storeId, wallet, payment\.amountCents\(\), id, correctionBusinessDate\)/);
+  assert.match(controller, /consumeWallet\(storeId, walletById\(delta\.getKey\(\)\), delta\.getValue\(\), id, correctionBusinessDate\)/);
   assert.match(controller, /restoreWalletForCorrection/);
   assert.match(controller, /'ORDER_CORRECTION'/);
 });

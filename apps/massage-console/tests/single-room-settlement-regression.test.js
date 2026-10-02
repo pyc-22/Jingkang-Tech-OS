@@ -56,9 +56,8 @@ test('split settlement groups pending services by room and bed and permits one s
   assert.match(app, /groups\.length<1\)return toast\('请至少选择一个房间 \/ 床位'/);
 });
 
-test('switching a payment row away from member balance clears the stale wallet', () => {
-  assert.match(app, /if\(method\?\.methodKind!==\x27MEMBER_BALANCE\x27\)\{payment\.walletId=null;payment\.wallets=\[\];payment\.memberId=null/);
-  assert.match(app, /walletId: method\?\.methodKind === \x27MEMBER_BALANCE\x27 \? \(payment\.walletId \|\| null\) : null/);
-  assert.match(app, /if\(method\?\.methodKind!==\x27MEMBER_BALANCE\x27\)\{payment\.walletId=null;payment\.wallets=\[\];payment\.memberId=null/);
-  assert.match(app, /walletId:method\?\.methodKind===\x27MEMBER_BALANCE\x27\?\(item\.walletId\|\|null\):null/);
+test('external payment rows never carry member-wallet IDs', () => {
+  assert.match(app, /walletId: memberMethod\(row\) \? row\.walletId : null/);
+  assert.match(app, /method\.methodKind !== 'MEMBER_BALANCE'/);
+  assert.match(app, /data-combined-method/);
 });

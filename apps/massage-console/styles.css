@@ -1571,3 +1571,27 @@ dialog > .dialog-card {
   #frontdesk-view .room-grid,
   #frontdesk-view .technician-list { grid-template-columns:1fr; }
 }
+
+.combined-payment-options .payment-option { display:block; padding:10px 12px; }
+.combined-payment-options b { float:none; }
+.combined-payment-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px; min-width:0; }
+.combined-method-name,.combined-card-choice { display:grid; gap:4px; min-width:0; }
+.combined-payment-options small { color:var(--muted); font-size:11px; overflow-wrap:anywhere; }
+.combined-payment-options .combined-member-group { background:#f3faf8; border-color:#cdeae3; }
+.combined-member-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+.combined-member-heading strong { color:#0f766e; font-size:13px; }
+.combined-member-group .combined-payment-row { grid-template-columns:minmax(0,1fr) auto 26px; margin-bottom:8px; }
+.combined-card-choice > div { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:6px; }
+.combined-card-choice select { width:100%; min-width:0; height:34px; padding:0 7px; border:1px solid #cfe0da; border-radius:5px; background:#fff; font:inherit; font-size:12px; }
+.combined-card-choice button { padding:5px 0; border:0; background:transparent; color:#0f766e; font-size:11px; white-space:nowrap; }
+.combined-remove-card { width:26px; height:30px; padding:0; color:#a36a62; }
+.combined-payment-options .payment-amount-control { grid-template-columns:12px 82px 72px; }
+.combined-add-card { width:100%; min-height:34px; padding:7px; border:1px dashed #5cb8a6; border-radius:5px; background:transparent; color:#0f766e; font-size:12px; }
+.combined-add-card:hover { background:#e6f7f2; }
+@media (max-width:600px) {
+  .combined-member-group .combined-payment-row { grid-template-columns:minmax(0,1fr) 26px; }
+  .combined-member-group .combined-card-choice { grid-column:1 / -1; }
+  .combined-payment-options .payment-amount-control { grid-template-columns:12px minmax(64px,82px) 72px; }
+  .combined-payment-options .combined-external-method { padding:9px; }
+  .combined-payment-row { gap:6px; }
+}

@@ -14,22 +14,6 @@ function functionSource(name) {
   return source.slice(node.start, node.end);
 }
 
-function clickHandler(selector) {
-  let node;
-  const visit = item => {
-    if (!item || typeof item !== 'object' || node) return;
-    if (item.type === 'ExpressionStatement'
-    && item.expression?.callee?.property?.name === 'addEventListener'
-    && item.expression.arguments[0]?.value === 'click'
-    && item.expression.callee.object?.callee?.property?.name === 'querySelector'
-    && item.expression.callee.object.arguments[0]?.value === selector) node = item;
-    else Object.values(item).forEach(visit);
-  };
-  visit(ast);
-  assert.ok(node, selector);
-  return source.slice(node.start, node.end);
-}
-
 function fixture(html) {
   return new JSDOM(html, { runScripts: 'outside-only', url: 'http://localhost/' });
 }
@@ -64,37 +48,13 @@ test('commission summary uses the full API result, not the latest 500 detail row
   dom.window.close();
 });
 
-for (const kind of ['single', 'merge']) {
-  test(`${kind} settlement add and remove preserve array edits and refresh allocated amount`, () => {
-    const merge = kind === 'merge';
-    const selector = merge ? '#merge-payment-options' : '#payment-options';
-    const dom = fixture(`<div id="${selector.slice(1)}"></div><div id="allocated"></div>`);
-    const w = dom.window;
-    Object.assign(w, {
-      activePaymentMethods: [{ code: 'CASH', name: '现金', methodKind: 'CASH', active: true }],
-      state: { selectedMemberId: null, members: [] }, mergeSettlementMemberId: null,
-      memberBusinessEscape: String, roomTransferEscape: String,
-      paymentMethodOptions: () => '<option value="CASH">现金</option>',
-      walletOptions: () => '', money: value => `¥${value.toFixed(2)}`,
-      settlementAmountCents: () => 10000, mergeAmountCents: () => 10000,
-      loadSettlementWallets: async () => [], toast: message => { throw new Error(message); },
-      openSettlementMemberSearch: () => {},
-      updateSettlementAllocation: () => { w.document.querySelector('#allocated').textContent = [...w.document.querySelectorAll('[data-payment-amount]')].reduce((sum, input) => sum + Number(input.value), 0).toFixed(2); },
-      updateMergeSettlementAllocation: () => { w.document.querySelector('#allocated').textContent = [...w.document.querySelectorAll('[data-merge-payment-amount]')].reduce((sum, input) => sum + Number(input.value), 0).toFixed(2); }
-    });
-    const names = merge ? ['syncMergePaymentRows', 'renderMergePaymentMethods'] : ['syncSettlementPaymentRows', 'renderSettlementPaymentMethods'];
-    w.eval(`let ${merge ? 'mergePaymentRows' : 'settlementPaymentRows'}=[]; let ${merge ? 'mergeSettlementPaymentDraft' : 'settlementPaymentDraft'}=new Map();`
-      + names.map(functionSource).join('\n') + clickHandler(selector));
-    w[merge ? 'renderMergePaymentMethods' : 'renderSettlementPaymentMethods']({ reset: true });
-    assert.equal(w.document.querySelector('#allocated').textContent, '100.00');
-    w.document.querySelector(merge ? '[data-add-merge-payment]' : '[data-add-payment-row]').click();
-    assert.equal(w.document.querySelectorAll(merge ? '[data-merge-payment-row]' : '[data-payment-row]').length, 2);
-    w.document.querySelector(merge ? '[data-remove-merge-payment="0"]' : '[data-remove-payment="0"]').click();
-    assert.equal(w.document.querySelectorAll(merge ? '[data-merge-payment-row]' : '[data-payment-row]').length, 1);
-    assert.equal(w.document.querySelector('#allocated').textContent, '0.00');
-    dom.window.close();
-  });
-}
+test('merge settlement uses the shared fixed payment list and card-only split controls', () => {
+  assert.match(source, /mergePaymentEditor=createCombinedPaymentEditor/);
+  assert.match(source, /payerTarget:'merge-payment'/);
+  assert.match(source, /data-combined-add-card/);
+  assert.doesNotMatch(source, /data-add-merge-payment/);
+  assert.doesNotMatch(source, /syncMergePaymentRows/);
+});
 
 test('print bridge skips unconfigured probes and reports browser fallback', async () => {
   const dom = fixture('<div></div>');

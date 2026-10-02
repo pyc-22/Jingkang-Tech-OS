@@ -1883,13 +1883,8 @@ async function loadActivePaymentMethods() {
   activePaymentMethods = await response.json();
 }
 
-let settlementPaymentDraft = new Map();
-let settlementPaymentRows = [];
+let settlementPaymentEditor;
 let settlementPaymentTarget = null;
-
-function paymentMethodOptions(selected) {
-  return activePaymentMethods.filter(item => item.active !== false).map(item => `<option value="${roomTransferEscape(item.code)}" ${item.code === selected ? 'selected' : ''}>${memberBusinessEscape(item.name)}</option>`).join('');
-}
 
 function walletOptions(wallets, selected) {
   return (wallets || []).map(wallet => `<option value="${roomTransferEscape(wallet.id)}" ${String(wallet.id) === String(selected) ? 'selected' : ''}>${memberBusinessEscape(wallet.accountName || '会员卡')} · ${memberBusinessEscape(wallet.accountCode || '')} · ${money(Number(wallet.balanceCents || 0) / 100)}</option>`).join('');
@@ -1902,14 +1897,146 @@ async function loadSettlementWallets(memberId) {
   return response.json();
 }
 
-function syncSettlementPaymentRows() {
-  settlementPaymentRows = [...document.querySelectorAll('[data-payment-row]')].map((row, index) => {
-    const method = row.querySelector('[data-payment-method]')?.value || settlementPaymentRows[index]?.method || '';
-    const walletSelect = row.querySelector('[data-payment-wallet]');
-    const walletId = walletSelect ? (walletSelect.value || null) : (settlementPaymentRows[index]?.walletId || null);
-    const amountCents = Math.round(Math.max(0, Number(row.querySelector('[data-payment-amount]')?.value) || 0) * 100);
-    return { ...(settlementPaymentRows[index] || {}), method, walletId, amountCents };
+function createCombinedPaymentEditor(container, { amountCents, memberId, onChange, payerTarget }) {
+  let rows = [], orderMemberId = memberId(), autoFilledRow = null;
+  const methods = () => activePaymentMethods.filter(method => method.active !== false);
+  const memberMethod = row => methods().find(method => method.code === row.method)?.methodKind === 'MEMBER_BALANCE';
+  const newRow = (method, payerId = memberId()) => ({ method, memberId: payerId, followsOrderMember: true, walletId: null, wallets: [], amountCents: 0 });
+  const editor = {
+    get rows() { return rows; },
+    sync() {
+      container.querySelectorAll('[data-combined-row]').forEach(element => {
+        const row = rows[Number(element.dataset.combinedRow)];
+        if (row) row.amountCents = Math.round(Math.max(0, Number(element.querySelector('[data-combined-amount]')?.value) || 0) * 100);
+      });
+    },
+    payments() {
+      editor.sync();
+      return rows.filter(row => row.amountCents > 0).map(row => ({ method: row.method, walletId: memberMethod(row) ? row.walletId : null, amountCents: row.amountCents }));
+    },
+    valid() {
+      return !rows.some(row => row.amountCents > 0 && memberMethod(row) && (!row.walletId || !row.walletLoaded || row.loading));
+    },
+    reset(total, payments) {
+      orderMemberId = memberId();
+      rows = methods().flatMap(method => {
+        const existing = (payments || []).filter(payment => (payment.method || payment.paymentMethod) === method.code);
+        if (method.methodKind !== 'MEMBER_BALANCE') return [{ method: method.code, amountCents: existing.reduce((sum, payment) => sum + Number(payment.amountCents || 0), 0) }];
+        return existing.length ? existing.map(payment => ({ ...newRow(method.code, payment.payerMemberId || memberId()), followsOrderMember: false, memberName: payment.payerMemberName, walletId: payment.walletId || null, amountCents: Number(payment.amountCents || 0) })) : [newRow(method.code)];
+      });
+      autoFilledRow = payments ? null : rows.find(row => !memberMethod(row) || row.memberId);
+      if (autoFilledRow) autoFilledRow.amountCents = total;
+      container.innerHTML = '';
+      editor.render();
+    },
+    refreshMember() {
+      editor.sync();
+      if (orderMemberId === memberId()) return;
+      orderMemberId = memberId();
+      rows.filter(row => memberMethod(row) && row.followsOrderMember).forEach(row => {
+        row.memberId = orderMemberId; row.memberName = null; row.walletId = null; row.wallets = []; row.walletLoaded = false; row.loading = false; row.error = '';
+        row.walletRequest = (row.walletRequest || 0) + 1;
+        if (!orderMemberId) row.amountCents = 0;
+      });
+      container.innerHTML = '';
+    },
+    async loadWallets(row) {
+      const payerId = row.memberId;
+      const request = row.walletRequest = (row.walletRequest || 0) + 1;
+      row.loading = true;
+      try {
+        const wallets = await loadSettlementWallets(payerId);
+        if (!rows.includes(row) || row.walletRequest !== request) return;
+        row.wallets = wallets.filter(wallet => wallet.active !== false);
+        const used = new Set(rows.filter(other => other !== row).map(other => other.walletId));
+        row.walletId = row.wallets.some(wallet => wallet.id === row.walletId) ? row.walletId
+          : (row.wallets.find(wallet => wallet.isDefault && !used.has(wallet.id)) || row.wallets.find(wallet => !used.has(wallet.id)) || row.wallets[0])?.id || null;
+        row.error = row.wallets.length ? '' : '该会员没有可用会员卡，请选择其他付款人';
+      } catch {
+        if (!rows.includes(row) || row.walletRequest !== request) return;
+        row.walletId = null; row.error = '会员卡加载失败，请重新选择付款人';
+      } finally {
+        if (rows.includes(row) && row.walletRequest === request) { row.loading = false; row.walletLoaded = true; editor.render(); }
+      }
+    },
+    async selectPayer(row, payerId) {
+      if (!rows.includes(row)) return;
+      editor.sync();
+      row.memberId = payerId; row.memberName = null; row.followsOrderMember = false; row.walletId = null; row.wallets = []; row.walletLoaded = false; row.loading = Boolean(payerId); row.error = '';
+      row.walletRequest = (row.walletRequest || 0) + 1;
+      if (!payerId) row.amountCents = 0;
+      container.innerHTML = '';
+      editor.render();
+      if (payerId) await editor.loadWallets(row);
+    },
+    render() {
+      editor.sync();
+      container.classList.add('combined-payment-options');
+      container.innerHTML = methods().map(method => {
+        const matching = rows.map((row, index) => ({ row, index })).filter(item => item.row.method === method.code);
+        const cardRows = method.methodKind === 'MEMBER_BALANCE';
+        const content = matching.map(({ row, index }) => {
+          const member = state.members.find(item => item.id === row.memberId);
+          const disabled = cardRows && (!row.walletId || row.loading);
+          const payer = cardRows ? `<div class="combined-card-choice"><small>${memberBusinessEscape(row.error || (row.loading ? '正在加载会员卡' : row.memberId ? (member?.name || row.memberName || '付款会员') : '需先选择会员'))}</small><div><select data-combined-wallet aria-label="第 ${index + 1} 张付款会员卡" ${row.loading ? 'disabled' : ''}><option value="">选择会员卡</option>${walletOptions(row.wallets, row.walletId)}<option value="__other_payer__">＋ 其他付款人（跨会员）</option></select><button type="button" data-combined-payer>${row.memberId ? '换付款人' : '选择付款人'}</button></div></div>` : `<span class="combined-method-name"><b>${memberBusinessEscape(method.name)}</b><small>${method.cashCounted ? '计入现金' : '平台'}</small></span>`;
+          return `<div class="combined-payment-row" data-combined-row="${index}">${payer}<span class="payment-amount-control"><i>¥</i><input type="number" min="0" step="0.01" inputmode="decimal" data-combined-amount value="${(row.amountCents / 100).toFixed(2)}" aria-label="${memberBusinessEscape(method.name)}收款金额" ${disabled ? 'disabled' : ''}><button type="button" data-combined-fill ${disabled ? 'disabled' : ''}>填入剩余</button></span>${cardRows && matching.length > 1 ? '<button class="icon-button combined-remove-card" type="button" data-combined-remove-card aria-label="删除会员卡行" title="删除会员卡行">×</button>' : ''}</div>`;
+        }).join('');
+        return `<div class="payment-option ${cardRows ? 'combined-member-group' : 'combined-external-method'}" data-combined-method="${roomTransferEscape(method.code)}">${cardRows ? `<div class="combined-member-heading"><b>${memberBusinessEscape(method.name)}</b><strong>${money(matching.reduce((sum, item) => sum + item.row.amountCents, 0) / 100)}</strong></div>` : ''}${content}${cardRows ? `<button type="button" class="combined-add-card" data-combined-add-card="${roomTransferEscape(method.code)}">＋ 再用一张卡 / 其他付款人</button>` : ''}</div>`;
+      }).join('') || '<p class="empty-state">当前门店没有可用的收款方式</p>';
+      onChange();
+      rows.filter(row => memberMethod(row) && row.memberId && !row.walletLoaded && !row.loading).forEach(row => editor.loadWallets(row));
+    }
+  };
+  const choosePayer = row => {
+    settlementPaymentTarget = { editor, row, primaryMemberId: memberId() };
+    openSettlementMemberSearch(payerTarget);
+  };
+  container.addEventListener('input', event => {
+    if (!event.target.matches('[data-combined-amount]')) return;
+    autoFilledRow = null;
+    editor.sync();
+    container.querySelectorAll('.combined-member-heading strong').forEach(total => {
+      const code = total.closest('[data-combined-method]').dataset.combinedMethod;
+      total.textContent = money(rows.filter(row => row.method === code).reduce((sum, row) => sum + row.amountCents, 0) / 100);
+    });
+    onChange();
   });
+  container.addEventListener('change', event => {
+    if (!event.target.matches('[data-combined-wallet]')) return;
+    const row = rows[Number(event.target.closest('[data-combined-row]').dataset.combinedRow)];
+    if (event.target.value === '__other_payer__') { event.target.value = row.walletId || ''; choosePayer(row); }
+    else { row.walletId = event.target.value || null; editor.render(); }
+  });
+  container.addEventListener('click', event => {
+    const add = event.target.closest('[data-combined-add-card]');
+    if (add) {
+      editor.sync();
+      const previous = rows.find(row => row.method === add.dataset.combinedAddCard && row.memberId);
+      const row = newRow(add.dataset.combinedAddCard, previous?.memberId || memberId());
+      if (previous) { row.wallets = previous.wallets; row.walletLoaded = previous.walletLoaded; row.followsOrderMember = previous.followsOrderMember; }
+      const used = new Set(rows.map(item => item.walletId));
+      row.walletId = row.wallets.find(wallet => !used.has(wallet.id))?.id || null;
+      rows.splice(rows.findLastIndex(item => item.method === row.method) + 1, 0, row);
+      container.innerHTML = ''; editor.render();
+      return;
+    }
+    const element = event.target.closest('[data-combined-row]');
+    if (!element) return;
+    const row = rows[Number(element.dataset.combinedRow)];
+    if (event.target.closest('[data-combined-payer]')) return choosePayer(row);
+    if (event.target.closest('[data-combined-remove-card]')) {
+      editor.sync(); rows.splice(rows.indexOf(row), 1); container.innerHTML = ''; editor.render(); return;
+    }
+    const fill = event.target.closest('[data-combined-fill]');
+    if (!fill || fill.disabled) return;
+    editor.sync();
+    // An untouched default allocation can move in one click; edited splits keep their amounts.
+    if (autoFilledRow && autoFilledRow !== row && autoFilledRow.amountCents === amountCents()) autoFilledRow.amountCents = 0;
+    autoFilledRow = null;
+    row.amountCents = Math.max(0, amountCents() - rows.reduce((sum, other) => sum + (other === row ? 0 : other.amountCents), 0));
+    container.innerHTML = ''; editor.render();
+  });
+  return editor;
 }
 
 function settlementTotalCents() {
@@ -1926,15 +2053,10 @@ function settlementIsWaived() {
 }
 
 function settlementPayments() {
-  syncSettlementPaymentRows();
-  return settlementPaymentRows.filter(payment => payment.amountCents > 0).map(payment => {
-    const method = activePaymentMethods.find(item => item.code === payment.method);
-    return { method: payment.method, walletId: method?.methodKind === 'MEMBER_BALANCE' ? (payment.walletId || null) : null, amountCents: payment.amountCents };
-  });
+  return settlementPaymentEditor?.payments() || [];
 }
 
 function updateSettlementAllocation() {
-  syncSettlementPaymentRows();
   const totalCents = settlementAmountCents();
   const allocatedCents = settlementPayments().reduce((sum,payment)=>sum+payment.amountCents,0);
   const remainingCents = totalCents-allocatedCents;
@@ -1946,34 +2068,14 @@ function updateSettlementAllocation() {
   document.querySelector('#settlement-remaining').textContent=remainingCents===0?money(0):`${remainingCents<0?'-':''}${money(Math.abs(remainingCents)/100)}`;
   document.querySelector('#settlement-remaining').classList.toggle('settlement-overpaid',remainingCents<0);
   const submitButton=document.querySelector('#settlement-dialog .pay-button');
-  if(submitButton) submitButton.disabled=(!settlementIsWaived() && totalCents < 1)||remainingCents!==0||(totalCents > 0 && settlementPayments().length===0);
+  if(submitButton) submitButton.disabled=(!settlementIsWaived() && totalCents < 1)||remainingCents!==0||(totalCents > 0 && settlementPayments().length===0)||!settlementPaymentEditor?.valid();
 }
 
-function renderSettlementPaymentMethods({ reset = false, skipSync = false } = {}) {
+function renderSettlementPaymentMethods({ reset = false } = {}) {
   const container = document.querySelector('#payment-options');
-  const methods = activePaymentMethods.filter(item => item.active !== false);
-  const firstEnabledCode = methods.find(item => item.methodKind !== 'MEMBER_BALANCE' || state.selectedMemberId)?.code;
-  if (reset) {
-    settlementPaymentDraft = new Map();
-    settlementPaymentRows = firstEnabledCode ? [{ method: firstEnabledCode, walletId: null, memberId: state.selectedMemberId || null, wallets: [], amountCents: settlementAmountCents() }] : [];
-  } else {
-    if (!skipSync) syncSettlementPaymentRows();
-    settlementPaymentRows.forEach(row => { if (!row.memberId && state.selectedMemberId) row.memberId = state.selectedMemberId; });
-  }
-  container.innerHTML = settlementPaymentRows.map((row, index) => {
-    const method = methods.find(item => item.code === row.method) || methods[0];
-    const isMember = method?.methodKind === 'MEMBER_BALANCE';
-    const member = state.members.find(item => item.id === (row.memberId || state.selectedMemberId));
-    const note = isMember ? (member ? `${member.name} · 余额 ${money(member.balance || 0)}` : '请选择付款会员和会员卡') : (method?.cashCounted ? '计入现金' : '');
-    const walletSelect = isMember ? `<select data-payment-wallet aria-label="第 ${index + 1} 条支付会员卡"><option value="">选择会员卡</option>${walletOptions(row.wallets, row.walletId)}</select><button type="button" data-payment-member-search="${index}">${member ? `付款人：${memberBusinessEscape(member.name)}` : '选择付款人'}</button>` : '';
-    return `<div class="payment-option payment-option-row" data-payment-row="${index}"><span><select data-payment-method aria-label="第 ${index + 1} 条支付方式">${paymentMethodOptions(row.method)}</select><small>${memberBusinessEscape(note)}</small>${walletSelect}</span><span class="payment-amount-control"><i>¥</i><input type="number" min="0" step="0.01" inputmode="decimal" data-payment-amount value="${memberBusinessEscape((row.amountCents || 0) / 100)}" aria-label="第 ${index + 1} 条收款金额"><button type="button" data-fill-payment="${index}">填入剩余</button><button type="button" data-remove-payment="${index}" aria-label="删除第 ${index + 1} 条支付">×</button></span></div>`;
-  }).join('') + (methods.length ? '<button type="button" class="button secondary" data-add-payment-row>添加支付明细</button>' : '<p class="empty-state payment-empty-state">当前门店没有可用于散客结算的收款方式，请先启用现金、支付宝等收款方式</p>');
-  updateSettlementAllocation();
-  settlementPaymentRows.forEach(row => {
-    if (row.walletLoading || !row.memberId || row.wallets?.length) return;
-    row.walletLoading = true;
-    loadSettlementWallets(row.memberId).then(wallets => { row.wallets = wallets; row.walletId = row.walletId || wallets.find(item => item.isDefault)?.id || wallets[0]?.id || null; renderSettlementPaymentMethods(); }).catch(() => toast('会员卡加载失败，请重新选择付款人'));
-  });
+  settlementPaymentEditor ||= createCombinedPaymentEditor(container, { amountCents: settlementAmountCents, memberId: () => state.selectedMemberId, onChange: updateSettlementAllocation, payerTarget: 'payment' });
+  if (reset || !settlementPaymentEditor.rows.length) settlementPaymentEditor.reset(settlementAmountCents());
+  else { settlementPaymentEditor.refreshMember(); settlementPaymentEditor.render(); }
 }
 
 async function loadStorePrintSetting({ render = true } = {}) {
@@ -2756,21 +2858,27 @@ async function submitOrderCorrection(event){
 }
 
 let financialCorrectionOrder=null;
+let financialCorrectionPaymentEditor;
+function financialCorrectionAmountCents(){
+  return Math.round(Math.max(0,Number(document.querySelector('#financial-correction-form')?.elements.namedItem('settlementAmount').value)||0)*100);
+}
 function ensureFinancialCorrectionDialog(){
   if(document.querySelector('#financial-correction-dialog'))return;
-  document.body.insertAdjacentHTML('beforeend','<dialog id="financial-correction-dialog"><form id="financial-correction-form" class="dialog-card compact"><div class="dialog-heading"><div><p class="eyebrow">已结算订单</p><h2 id="financial-correction-title">更正收款信息</h2></div><button class="icon-button" type="button" id="close-financial-correction" aria-label="关闭">×</button></div><p id="financial-correction-summary" class="pending-service-void-summary"></p><label>修改后实收金额（元）<input name="settlementAmount" type="number" min="0" step="0.01" required></label><div><b>修改后收款方式</b><div id="financial-correction-payments" class="payment-options"></div><small id="financial-correction-allocation" class="muted-cell"></small></div><label class="pending-service-void-reason">更正原因<textarea name="reason" rows="3" maxlength="240" required placeholder="例如：实际为美团支付，结算时误选微信"></textarea></label><p class="pending-service-void-warning">这里只更正账务归类，不会发起真实退款。会员余额金额变化时，系统会自动补扣或退回差额。</p><div class="dialog-actions"><button class="button secondary" type="button" id="cancel-financial-correction">取消</button><button class="button primary" type="submit">确认更正</button></div></form></dialog>');
+  document.body.insertAdjacentHTML('beforeend','<dialog id="financial-correction-dialog"><form id="financial-correction-form" class="dialog-card settlement-dialog-card"><div class="dialog-heading"><div><p class="eyebrow">已结算订单</p><h2 id="financial-correction-title">更正收款信息</h2></div><button class="icon-button" type="button" id="close-financial-correction" aria-label="关闭">×</button></div><p id="financial-correction-summary" class="pending-service-void-summary"></p><label>修改后实收金额（元）<input name="settlementAmount" type="number" min="0" step="0.01" required></label><div><b>修改后收款方式</b><div id="financial-correction-payments" class="payment-options"></div><small id="financial-correction-allocation" class="muted-cell"></small></div><label class="pending-service-void-reason">更正原因<textarea name="reason" rows="3" maxlength="240" required placeholder="例如：实际为美团支付，结算时误选微信"></textarea></label><p class="pending-service-void-warning">这里只更正账务归类，不会发起真实退款。会员余额金额变化时，系统会按每张卡自动补扣或退回差额。</p><div class="dialog-actions"><button class="button secondary" type="button" id="cancel-financial-correction">取消</button><button class="button primary" type="submit">确认更正</button></div></form></dialog>');
   const close=()=>{financialCorrectionOrder=null;document.querySelector('#financial-correction-dialog').close();};
   document.querySelector('#close-financial-correction').addEventListener('click',close);
   document.querySelector('#cancel-financial-correction').addEventListener('click',close);
   document.querySelector('#financial-correction-form').addEventListener('submit',submitFinancialCorrection);
   document.querySelector('#financial-correction-form').addEventListener('input',updateFinancialCorrectionAllocation);
+  financialCorrectionPaymentEditor=createCombinedPaymentEditor(document.querySelector('#financial-correction-payments'),{amountCents:financialCorrectionAmountCents,memberId:()=>financialCorrectionOrder?.order.memberId,onChange:updateFinancialCorrectionAllocation,payerTarget:'correction-payment'});
 }
 function updateFinancialCorrectionAllocation(){
   const form=document.querySelector('#financial-correction-form');if(!form)return;
-  const target=Math.round(Math.max(0,Number(form.settlementAmount.value)||0)*100);
-  const allocated=[...document.querySelectorAll('[data-financial-payment]')].reduce((sum,input)=>sum+Math.round(Math.max(0,Number(input.value)||0)*100),0);
+  const target=financialCorrectionAmountCents();
+  const allocated=(financialCorrectionPaymentEditor?.payments()||[]).reduce((sum,payment)=>sum+payment.amountCents,0);
   const difference=target-allocated;
-  document.querySelector('#financial-correction-allocation').textContent=difference===0?`已分配 ${money(allocated/100)}`:`已分配 ${money(allocated/100)}，还差 ${money(Math.abs(difference)/100)}${difference<0?'（超出）':''}`;
+  document.querySelector('#financial-correction-allocation').textContent=`已分配 ${money(allocated/100)} / 剩余 ${difference<0?'-':''}${money(Math.abs(difference)/100)}`;
+  form.querySelector('[type="submit"]').disabled=difference!==0||!financialCorrectionPaymentEditor?.valid();
 }
 async function openFinancialCorrection(orderId){
   if(!hasAdminPermission('ORDER_REFUND'))return toast('当前账号没有订单更正权限');
@@ -2779,17 +2887,18 @@ async function openFinancialCorrection(orderId){
   if(detail.order.status!=='SETTLED'||detail.order.refundStatus!=='NONE'||activeOrderDetail.refunds.length)return toast('该订单已有退款、红冲或异常状态，不能直接更正收款');
   try{await loadActivePaymentMethods();}catch{return toast('收款方式加载失败');}
   ensureFinancialCorrectionDialog();financialCorrectionOrder=detail;
-  const form=document.querySelector('#financial-correction-form');form.reset();form.settlementAmount.value=(Number(detail.order.paidCents||0)/100).toFixed(2);
+  const form=document.querySelector('#financial-correction-form');form.reset();form.elements.namedItem('settlementAmount').value=(Number(detail.order.paidCents||0)/100).toFixed(2);
   document.querySelector('#financial-correction-title').textContent=`${detail.order.orderNo} · 更正收款`;
   document.querySelector('#financial-correction-summary').innerHTML=`<span><b>原实收 ${money(Number(detail.order.paidCents||0)/100)}</b><small>${memberBusinessEscape(detail.order.memberName||'散客')}${detail.order.memberId?roomTransferEscape(` · 当前会员余额 ${money(Number(detail.order.memberBalanceCents||0)/100)}`):''}</small></span>`;
-  document.querySelector('#financial-correction-payments').innerHTML=activePaymentMethods.map(method=>{const amount=detail.payments.filter(payment=>payment.paymentMethod===method.code).reduce((sum,payment)=>sum+Number(payment.amountCents||0),0);return `<label class="payment-option"><span>${memberBusinessEscape(method.name)}</span><input data-financial-payment="${memberBusinessEscape(method.code)}" type="number" min="0" step="0.01" value="${(amount/100).toFixed(2)}"></label>`;}).join('');
+  financialCorrectionPaymentEditor.reset(financialCorrectionAmountCents(),detail.payments);
   updateFinancialCorrectionAllocation();document.querySelector('#financial-correction-dialog').showModal();
 }
 async function submitFinancialCorrection(event){
   event.preventDefault();if(!financialCorrectionOrder)return;
-  const form=event.currentTarget;const settlementAmountCents=Math.round(Math.max(0,Number(form.settlementAmount.value)||0)*100);
-  const payments=[...document.querySelectorAll('[data-financial-payment]')].map(input=>({method:input.dataset.financialPayment,amountCents:Math.round(Math.max(0,Number(input.value)||0)*100)})).filter(payment=>payment.amountCents>0);
+  const form=event.currentTarget;const settlementAmountCents=financialCorrectionAmountCents();
+  const payments=financialCorrectionPaymentEditor.payments();
   if(payments.reduce((sum,payment)=>sum+payment.amountCents,0)!==settlementAmountCents)return toast('收款方式合计必须等于修改后的实收金额');
+  if(!financialCorrectionPaymentEditor.valid()){updateFinancialCorrectionAllocation();return;}
   const reason=String(new FormData(form).get('reason')||'').trim();if(!reason)return toast('请填写更正原因');
   if(!window.confirm('确认更正这笔已结算订单的实收金额和收款方式？'))return;
   const submit=form.querySelector('[type="submit"]');submit.disabled=true;
@@ -4252,26 +4361,14 @@ async function submitSingleRoomSettlementSelection(event) {
 let mergeSettlementGroups=[];
 let mergeSettlementSelection=new Set();
 let mergeSettlementMemberId=null;
-let mergeSettlementPaymentDraft=new Map();
-let mergePaymentRows=[];
+let mergePaymentEditor;
 
 function mergeSelectedGroups(){return [...mergeSettlementSelection].map(index=>mergeSettlementGroups[index]).filter(Boolean);}
 function mergeSelectedSessions(){return mergeSelectedGroups().flatMap(group=>group.sessions);}
 function mergeOriginalCents(){return mergeSelectedSessions().reduce((sum,item)=>sum+Number(item.servicePriceCents||0),0);}
 function mergeAmountCents(){return Math.round(Math.max(0,Number(document.querySelector('#merge-settlement-amount')?.value)||0)*100);}
 function mergeIsWaived(){return Boolean(document.querySelector('#merge-settlement-waive')?.checked);}
-function syncMergePaymentRows() {
-  mergePaymentRows = [...document.querySelectorAll('[data-merge-payment-row]')].map((row, index) => {
-    const walletSelect = row.querySelector('[data-merge-payment-wallet]');
-    return {
-      ...(mergePaymentRows[index] || {}),
-      method: row.querySelector('[data-merge-payment-method]')?.value || mergePaymentRows[index]?.method || '',
-      walletId: walletSelect ? (walletSelect.value || null) : (mergePaymentRows[index]?.walletId || null),
-      amountCents: Math.round(Math.max(0, Number(row.querySelector('[data-merge-payment-amount]')?.value) || 0) * 100)
-    };
-  });
-}
-function mergePayments(){syncMergePaymentRows();return mergePaymentRows.filter(item=>item.amountCents>0).map(item=>{const method=activePaymentMethods.find(candidate=>candidate.code===item.method);return {method:item.method,walletId:method?.methodKind==='MEMBER_BALANCE'?(item.walletId||null):null,amountCents:item.amountCents};});}
+function mergePayments(){return mergePaymentEditor?.payments()||[];}
 
 function setupMergeSettlementDialog(){
   if(document.querySelector('#merge-settlement-dialog'))return;
@@ -4281,35 +4378,29 @@ function setupMergeSettlementDialog(){
   document.querySelector('#merge-room-search').addEventListener('input',()=>renderMergeSettlement());
   document.querySelector('#merge-select-member').addEventListener('click',()=>openSettlementMemberSearch('merge'));
   document.querySelector('#merge-settlement-amount').addEventListener('input',()=>{if(mergeIsWaived()){document.querySelector('#merge-settlement-waive').checked=false;document.querySelector('#merge-waive-reason-wrap').hidden=true;}updateMergeSettlementAllocation();});
-  document.querySelector('#merge-settlement-waive').addEventListener('change',event=>{const checked=event.currentTarget.checked;document.querySelector('#merge-settlement-amount').value=checked?'0.00':(mergeOriginalCents()/100).toFixed(2);document.querySelector('#merge-waive-reason-wrap').hidden=!checked;mergeSettlementPaymentDraft=new Map();renderMergePaymentMethods();});
+  document.querySelector('#merge-settlement-waive').addEventListener('change',event=>{const checked=event.currentTarget.checked;document.querySelector('#merge-settlement-amount').value=checked?'0.00':(mergeOriginalCents()/100).toFixed(2);document.querySelector('#merge-waive-reason-wrap').hidden=!checked;renderMergePaymentMethods({reset:true});});
   document.querySelector('#merge-waive-reason').addEventListener('input',updateMergeSettlementAllocation);
-   document.querySelector('#merge-payment-options').addEventListener('input',event=>{if(event.target.matches('[data-merge-payment-amount]'))updateMergeSettlementAllocation();});
-   document.querySelector('#merge-payment-options').addEventListener('change',async event=>{const row=event.target.closest('[data-merge-payment-row]');if(!row)return;const index=Number(row.dataset.mergePaymentRow);syncMergePaymentRows();if(event.target.matches('[data-merge-payment-method]')){const payment=mergePaymentRows[index];const method=activePaymentMethods.find(item=>item.code===payment?.method);if(method?.methodKind!=='MEMBER_BALANCE'){payment.walletId=null;payment.wallets=[];payment.memberId=null;payment.walletLoading=false;}else if(payment.memberId&&!payment.wallets?.length){try{payment.wallets=await loadSettlementWallets(payment.memberId);}catch{toast('会员卡加载失败，请重新选择付款人');}}renderMergePaymentMethods();}});
-   document.querySelector('#merge-payment-options').addEventListener('click',event=>{const add=event.target.closest('[data-add-merge-payment]');if(add){syncMergePaymentRows();mergePaymentRows.push({method:activePaymentMethods.find(item=>item.methodKind!=='MEMBER_BALANCE'||mergeSettlementMemberId)?.code||activePaymentMethods[0]?.code||'',walletId:null,memberId:mergeSettlementMemberId||null,wallets:[],amountCents:0});return renderMergePaymentMethods({skipSync:true});}const remove=event.target.closest('[data-remove-merge-payment]');if(remove){syncMergePaymentRows();mergePaymentRows.splice(Number(remove.dataset.removeMergePayment),1);return renderMergePaymentMethods({skipSync:true});}const payer=event.target.closest('[data-merge-payment-member-search]');if(payer){settlementPaymentTarget={kind:'merge',index:Number(payer.dataset.mergePaymentMemberSearch)};return openSettlementMemberSearch('merge-payment');}const button=event.target.closest('[data-fill-merge-payment]');if(!button||button.disabled)return;syncMergePaymentRows();const index=Number(button.dataset.fillMergePayment);const current=document.querySelector(`[data-merge-payment-row="${index}"] [data-merge-payment-amount]`);const other=mergePaymentRows.reduce((sum,row,rowIndex)=>rowIndex===index?sum:sum+Number(row.amountCents||0),0);if(current)current.value=(Math.max(0,mergeAmountCents()-other)/100).toFixed(2);updateMergeSettlementAllocation();});
+  mergePaymentEditor=createCombinedPaymentEditor(document.querySelector('#merge-payment-options'),{amountCents:mergeAmountCents,memberId:()=>mergeSettlementMemberId,onChange:updateMergeSettlementAllocation,payerTarget:'merge-payment'});
   document.querySelector('#merge-settlement-form').addEventListener('submit',submitMergeSettlement);
 }
 
 function renderMergeMember(){const member=state.members.find(item=>item.id===mergeSettlementMemberId);document.querySelector('#merge-member-name').textContent=member?.name||'散客';document.querySelector('#merge-member-meta').textContent=member?`${member.phone}${member.code?` · ${member.code}`:''} · 余额 ${money(member.balance||0)}`:'非会员结算';renderMergePaymentMethods();}
 
-function renderMergePaymentMethods({reset=false,skipSync=false}={}){
-  const container=document.querySelector('#merge-payment-options');if(!container)return;
-  const methods=activePaymentMethods.filter(item=>item.active!==false);const first=methods.find(item=>item.methodKind!=='MEMBER_BALANCE'||mergeSettlementMemberId)?.code;
-  if(reset){mergeSettlementPaymentDraft=new Map();mergePaymentRows=first?[{method:first,walletId:null,memberId:mergeSettlementMemberId||null,wallets:[],amountCents:mergeAmountCents()}]:[];}else{if(!skipSync)syncMergePaymentRows();mergePaymentRows.forEach(row=>{if(!row.memberId&&mergeSettlementMemberId)row.memberId=mergeSettlementMemberId;});}
-  container.innerHTML=mergePaymentRows.map((row,index)=>{const method=methods.find(item=>item.code===row.method)||methods[0];const isMember=method?.methodKind==='MEMBER_BALANCE';const member=state.members.find(item=>item.id===(row.memberId||mergeSettlementMemberId));const note=isMember?(member?`${member.name} · 余额 ${money(member.balance||0)}`:'请选择付款会员和会员卡'):(method?.cashCounted?'计入现金':'');const walletSelect=isMember?`<select data-merge-payment-wallet aria-label="第 ${index+1} 条支付会员卡"><option value="">选择会员卡</option>${walletOptions(row.wallets,row.walletId)}</select><button type="button" data-merge-payment-member-search="${index}">${member?`付款人：${memberBusinessEscape(member.name)}`:'选择付款人'}</button>`:'';return `<div class="payment-option payment-option-row" data-merge-payment-row="${index}"><span><select data-merge-payment-method aria-label="第 ${index+1} 条支付方式">${paymentMethodOptions(row.method)}</select><small>${memberBusinessEscape(note)}</small>${walletSelect}</span><span class="payment-amount-control"><i>¥</i><input type="number" min="0" step="0.01" data-merge-payment-amount value="${memberBusinessEscape((row.amountCents||0)/100)}"><button type="button" data-fill-merge-payment="${index}">填入剩余</button><button type="button" data-remove-merge-payment="${index}" aria-label="删除第 ${index+1} 条支付">×</button></span></div>`;}).join('')+(methods.length?'<button type="button" class="button secondary" data-add-merge-payment>添加支付明细</button>':'<p class="empty-state">当前门店没有可用的收款方式</p>');
-   updateMergeSettlementAllocation();
-   mergePaymentRows.forEach(row => { if (row.walletLoading || !row.memberId || row.wallets?.length) return; row.walletLoading = true; loadSettlementWallets(row.memberId).then(wallets => { row.wallets = wallets; row.walletId = row.walletId || wallets.find(item => item.isDefault)?.id || wallets[0]?.id || null; renderMergePaymentMethods(); }).catch(() => toast('会员卡加载失败，请重新选择付款人')); });
+function renderMergePaymentMethods({reset=false}={}){
+  if(!mergePaymentEditor)return;
+  if(reset)mergePaymentEditor.reset(mergeAmountCents());
+  else {mergePaymentEditor.refreshMember();mergePaymentEditor.render();}
 }
 
 function updateMergeSettlementAllocation(){
-  syncMergePaymentRows();
   const original=mergeOriginalCents(),amount=mergeAmountCents(),allocated=mergePayments().reduce((sum,item)=>sum+item.amountCents,0),remaining=amount-allocated;
   document.querySelector('#merge-original-total').textContent=money(original/100);document.querySelector('#merge-adjustment').textContent=money((original-amount)/100);document.querySelector('#merge-allocated').textContent=money(allocated/100);document.querySelector('#merge-remaining').textContent=remaining===0?money(0):`${remaining<0?'-':''}${money(Math.abs(remaining)/100)}`;document.querySelector('#merge-remaining').classList.toggle('settlement-overpaid',remaining<0);
   const memberPayments=mergePayments().filter(payment=>activePaymentMethods.find(method=>method.code===payment.method)?.methodKind==='MEMBER_BALANCE');const validMember=!memberPayments.some(payment=>!payment.walletId);
-  const waiveReason=document.querySelector('#merge-waive-reason')?.value.trim()||'';document.querySelector('#submit-merge-settlement').disabled=mergeSelectedGroups().length<1||(!mergeIsWaived()&&amount<1)||(mergeIsWaived()&&(!waiveReason||amount!==0))||remaining!==0||(amount>0&&!mergePayments().length)||!validMember;
+  const waiveReason=document.querySelector('#merge-waive-reason')?.value.trim()||'';document.querySelector('#submit-merge-settlement').disabled=mergeSelectedGroups().length<1||(!mergeIsWaived()&&amount<1)||(mergeIsWaived()&&(!waiveReason||amount!==0))||remaining!==0||(amount>0&&!mergePayments().length)||!validMember||!mergePaymentEditor?.valid();
 }
 
 async function openMergeSettlement(){
-  setupMergeSettlementDialog();closeSettlementActions();mergeSettlementSelection.clear();mergeSettlementMemberId=null;mergeSettlementPaymentDraft=new Map();document.querySelector('#merge-room-search').value='';document.querySelector('#merge-settlement-waive').checked=false;document.querySelector('#merge-waive-reason').value='';document.querySelector('#merge-waive-reason-wrap').hidden=true;
+  setupMergeSettlementDialog();closeSettlementActions();mergeSettlementSelection.clear();mergeSettlementMemberId=null;document.querySelector('#merge-room-search').value='';document.querySelector('#merge-settlement-waive').checked=false;document.querySelector('#merge-waive-reason').value='';document.querySelector('#merge-waive-reason-wrap').hidden=true;
   const [pendingLoaded,paymentResponse]=await Promise.all([loadPendingServiceSessions({silent:true}),fetch('http://localhost:8080/api/v1/payment-methods',{headers:storeContextHeaders()})]);if(!pendingLoaded||!paymentResponse.ok)return toast('合并结算资料加载失败');activePaymentMethods=(await paymentResponse.json()).filter(item=>item.active!==false);
   const groups=new Map();state.pendingServiceSessions.forEach(session=>{const bedKey=session.bedId||session.bedCode||'unassigned';const key=`${session.businessDate||''}|${session.roomCode}|${bedKey}`;if(!groups.has(key))groups.set(key,{businessDate:session.businessDate||'',roomCode:session.roomCode,bedId:session.bedId||null,bedCode:session.bedCode||'',bedName:session.bedName||'',sessions:[]});groups.get(key).sessions.push(session);});mergeSettlementGroups=[...groups.values()].sort((a,b)=>`${a.roomCode}|${a.bedCode}`.localeCompare(`${b.roomCode}|${b.bedCode}`,'zh-CN',{numeric:true}));renderMergeMember();renderMergeSettlement({resetAmount:true});document.querySelector('#merge-settlement-dialog').showModal();
 }
@@ -4350,16 +4441,23 @@ function openSettlementMemberSearch(target = 'single') {
   renderMemberResults();
   window.setTimeout(() => input.focus(), 0);
 }
-document.querySelector('#change-member').addEventListener('click', openSettlementMemberSearch);
-document.querySelector('#settlement-select-member').addEventListener('click', openSettlementMemberSearch);
+async function selectPaymentPayer(memberId) {
+  const target = settlementPaymentTarget;
+  if (memberId && !confirmExternalPayer(memberId, target.primaryMemberId)) return false;
+  settlementPaymentTarget = null;
+  await target.editor.selectPayer(target.row, memberId);
+  return true;
+}
+document.querySelector('#change-member').addEventListener('click', () => openSettlementMemberSearch());
+document.querySelector('#settlement-select-member').addEventListener('click', () => openSettlementMemberSearch());
 document.querySelector('#close-member-dialog').addEventListener('click', () => document.querySelector('#member-dialog').close());
- document.querySelector('#select-guest-member').addEventListener('click', () => {
-  if (settlementMemberTarget === 'merge') { mergeSettlementMemberId = null; renderMergeMember(); }
-  else if (settlementMemberTarget === 'payment' && settlementPaymentTarget) { syncSettlementPaymentRows(); settlementPaymentRows[settlementPaymentTarget.index].memberId = null; settlementPaymentRows[settlementPaymentTarget.index].walletId = null; settlementPaymentRows[settlementPaymentTarget.index].wallets = []; settlementPaymentTarget = null; renderSettlementPaymentMethods(); }
-  else if (settlementMemberTarget === 'merge-payment' && settlementPaymentTarget) { syncMergePaymentRows(); mergePaymentRows[settlementPaymentTarget.index].memberId = null; mergePaymentRows[settlementPaymentTarget.index].walletId = null; mergePaymentRows[settlementPaymentTarget.index].wallets = []; settlementPaymentTarget = null; renderMergePaymentMethods(); }
+ document.querySelector('#select-guest-member').addEventListener('click', async () => {
+  const selectingPayer = (settlementMemberTarget === 'payment' || settlementMemberTarget === 'correction-payment' || settlementMemberTarget === 'merge-payment') && settlementPaymentTarget?.editor;
+  if (selectingPayer && settlementPaymentTarget?.editor) await selectPaymentPayer(null);
+  else if (settlementMemberTarget === 'merge') { mergeSettlementMemberId = null; renderMergeMember(); }
   else { state.selectedMemberId = null; renderMemberCard(); renderSettlementPaymentMethods(); }
   document.querySelector('#member-dialog').close();
-  toast('本单已设为散客结算');
+  toast(selectingPayer ? '已清空此行付款会员，请选择付款人' : '本单已设为散客结算');
 });
 document.querySelector('#member-dialog .dialog-heading').insertAdjacentHTML('beforeend','<button class="button secondary" type="button" id="add-member">新增会员</button>');
 document.body.insertAdjacentHTML('beforeend','<dialog id="member-create-dialog"><form id="member-create-form" class="dialog-card compact"><div class="dialog-heading"><h2>新增会员</h2><button class="icon-button" type="button" id="close-member-create" aria-label="关闭">×</button></div><div class="form-grid"><label>姓名<input name="name" required /></label><label>手机号<input name="phone" required /></label></div><div class="dialog-actions"><button class="button secondary" type="button" id="cancel-member-create">取消</button><button class="button primary" type="submit">开户</button></div></form></dialog><dialog id="member-recharge-dialog"><form id="member-recharge-form" class="dialog-card compact"><div class="dialog-heading"><h2 id="member-recharge-title">储值充值</h2><button class="icon-button" type="button" id="close-member-recharge" aria-label="关闭">×</button></div><div class="form-grid"><label>充值金额<input name="amount" type="number" min="0.01" step="0.01" required /></label><label>赠送金额<input name="bonus" type="number" min="0" step="0.01" value="0" required /></label><label>收款方式<select name="paymentMethod" required></select></label><label>服务技师<select name="technicianId"></select></label></div><div class="dialog-actions"><button class="button secondary" type="button" id="cancel-member-recharge">取消</button><button class="button primary" type="submit">确认充值</button></div></form></dialog>');
@@ -4367,7 +4465,7 @@ document.querySelector('#add-member').addEventListener('click',()=>document.quer
 document.querySelector('#member-center-add').addEventListener('click',()=>document.querySelector('#member-create-dialog').showModal());
 document.querySelector('#close-member-create').addEventListener('click',()=>document.querySelector('#member-create-dialog').close());
 document.querySelector('#cancel-member-create').addEventListener('click',()=>document.querySelector('#member-create-dialog').close());
-document.querySelector('#member-create-form').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);const r=await fetch('http://localhost:8080/api/v1/members',{method:'POST',headers:storeContextHeaders(true),body:JSON.stringify({name:f.get('name'),phone:f.get('phone')})});if(!r.ok)return toast(r.status===409?'该手机号已经是启用会员':'会员开户失败');const m=await r.json();state.members=[{id:m.id,code:m.code,name:m.name,phone:m.phone,level:'储值会员',balance:Number(m.balanceCents||0)/100},...state.members.filter(item=>item.id!==m.id)];if(settlementMemberTarget==='merge'){mergeSettlementMemberId=m.id;renderMergeMember();}else{state.selectedMemberId=m.id;renderMemberCard();}document.querySelector('#member-create-dialog').close();if(document.querySelector('#member-dialog').open)document.querySelector('#member-dialog').close();await loadMemberCenter();toast(m.reactivated?`归档会员已恢复，原会员卡号 ${m.code}`:'会员已开户');});
+document.querySelector('#member-create-form').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);const r=await fetch('http://localhost:8080/api/v1/members',{method:'POST',headers:storeContextHeaders(true),body:JSON.stringify({name:f.get('name'),phone:f.get('phone')})});if(!r.ok)return toast(r.status===409?'该手机号已经是启用会员':'会员开户失败');const m=await r.json();state.members=[{id:m.id,code:m.code,name:m.name,phone:m.phone,level:'储值会员',balance:Number(m.balanceCents||0)/100},...state.members.filter(item=>item.id!==m.id)];if(settlementPaymentTarget?.editor&&(settlementMemberTarget==='payment'||settlementMemberTarget==='correction-payment'||settlementMemberTarget==='merge-payment')){await selectPaymentPayer(m.id);}else if(settlementMemberTarget==='merge'){mergeSettlementMemberId=m.id;renderMergeMember();}else{state.selectedMemberId=m.id;renderMemberCard();renderSettlementPaymentMethods();}document.querySelector('#member-create-dialog').close();if(document.querySelector('#member-dialog').open)document.querySelector('#member-dialog').close();await loadMemberCenter();toast(m.reactivated?`归档会员已恢复，原会员卡号 ${m.code}`:'会员已开户');});
 document.querySelector('#change-member').insertAdjacentHTML('beforebegin','<button class="text-button" id="recharge-member">充值</button>');
 document.querySelector('#recharge-member').addEventListener('click',()=>{const member=state.members.find(item=>item.id===state.selectedMemberId);if(state.selectedMemberId)openMemberRecharge(state.selectedMemberId,member?.name||'会员');});
 document.querySelector('#close-member-recharge').addEventListener('click',()=>document.querySelector('#member-recharge-dialog').close());
@@ -4556,7 +4654,7 @@ document.querySelector('#service-session-records').addEventListener('click', eve
   const history = event.target.closest('[data-change-history-session]');
   if (history) openServiceChangeHistory(history.dataset.changeHistorySession);
 });
-document.querySelector('#member-results').addEventListener('click', async event => { const button = event.target.closest('[data-member]'); if (!button) return; if(settlementMemberTarget==='payment'&&settlementPaymentTarget){const index=settlementPaymentTarget.index;syncSettlementPaymentRows();const memberId=button.dataset.member;if(!confirmExternalPayer(memberId,state.selectedMemberId))return;settlementPaymentRows[index].memberId=memberId;settlementPaymentRows[index].walletId=null;try{settlementPaymentRows[index].wallets=await loadSettlementWallets(memberId);settlementPaymentRows[index].walletId=settlementPaymentRows[index].wallets.find(item=>item.isDefault)?.id||settlementPaymentRows[index].wallets[0]?.id||null;}catch{toast('会员卡加载失败，请稍后重试');}settlementPaymentTarget=null;renderSettlementPaymentMethods();}else if(settlementMemberTarget==='merge-payment'&&settlementPaymentTarget){const index=settlementPaymentTarget.index;syncMergePaymentRows();const memberId=button.dataset.member;if(!confirmExternalPayer(memberId,mergeSettlementMemberId))return;mergePaymentRows[index].memberId=memberId;mergePaymentRows[index].walletId=null;try{mergePaymentRows[index].wallets=await loadSettlementWallets(memberId);mergePaymentRows[index].walletId=mergePaymentRows[index].wallets.find(item=>item.isDefault)?.id||mergePaymentRows[index].wallets[0]?.id||null;}catch{toast('会员卡加载失败，请稍后重试');}settlementPaymentTarget=null;renderMergePaymentMethods();}else if(settlementMemberTarget==='merge'){mergeSettlementMemberId=button.dataset.member;renderMergeMember();}else{state.selectedMemberId=button.dataset.member;renderMemberCard();renderSettlementPaymentMethods();}document.querySelector('#member-dialog').close();toast(settlementMemberTarget==='payment'||settlementMemberTarget==='merge-payment'?'付款会员卡已更新':'订单会员已更新'); });
+document.querySelector('#member-results').addEventListener('click', async event => { const button = event.target.closest('[data-member]'); if (!button) return; if((settlementMemberTarget==='payment'||settlementMemberTarget==='correction-payment'||settlementMemberTarget==='merge-payment')&&settlementPaymentTarget?.editor){if(!await selectPaymentPayer(button.dataset.member))return;}else if(settlementMemberTarget==='merge'){mergeSettlementMemberId=button.dataset.member;renderMergeMember();}else{state.selectedMemberId=button.dataset.member;renderMemberCard();renderSettlementPaymentMethods();}document.querySelector('#member-dialog').close();toast(settlementMemberTarget==='payment'||settlementMemberTarget==='correction-payment'||settlementMemberTarget==='merge-payment'?'付款会员卡已更新':'订单会员已更新'); });
 document.querySelector('#refresh-state').addEventListener('click', () => syncOperationalState({ manual: true }));
 document.querySelector('#sort-techs').addEventListener('click', () => loadFoundationData({ silent:true }).then(() => toast('已按当日轮钟队列刷新')).catch(() => toast('轮钟队列刷新失败')));
 document.querySelector('#close-clock-out-confirm').addEventListener('click', () => { clockOutConfirmation = null; document.querySelector('#clock-out-confirm-dialog').close(); });
@@ -5160,19 +5258,7 @@ document.querySelector('#frontdesk-view').addEventListener('click', event => { c
 document.querySelector('#settle-order').addEventListener('click', async () => { try { await loadActivePaymentMethods(); renderSettlementMember(); renderOrder(); const amount=document.querySelector('#settlement-amount'); if(amount) amount.value=(settlementTotalCents()/100).toFixed(2); const waive=document.querySelector('#settlement-waive'); if(waive) waive.checked=false; const reason=document.querySelector('#settlement-waive-reason'); if(reason) reason.value=''; document.querySelector('#settlement-waive-reason-wrap')?.setAttribute('hidden',''); renderSettlementPaymentMethods({reset:true}); setOrderDrawer(false); document.querySelector('#settlement-dialog').showModal(); } catch { toast('收款方式加载失败'); } });
 document.querySelector('#close-settlement-dialog').addEventListener('click', () => document.querySelector('#settlement-dialog').close());
 document.querySelector('#settlement-amount').addEventListener('input', () => { if (settlementIsWaived()) { document.querySelector('#settlement-waive').checked=false; document.querySelector('#settlement-waive-reason-wrap').setAttribute('hidden',''); } updateSettlementAllocation(); });
-document.querySelector('#settlement-waive').addEventListener('change', event => { const checked=event.currentTarget.checked; const amount=document.querySelector('#settlement-amount'); const wrap=document.querySelector('#settlement-waive-reason-wrap'); if(checked){ amount.value='0.00'; settlementPaymentDraft=new Map(); } else { amount.value=(settlementTotalCents()/100).toFixed(2); } wrap.toggleAttribute('hidden', !checked); renderSettlementPaymentMethods(); updateSettlementAllocation(); });
-document.querySelector('#payment-options').addEventListener('input',event=>{if(event.target.matches('[data-payment-amount]'))updateSettlementAllocation();});
-document.querySelector('#payment-options').addEventListener('change',async event=>{
-  const row=event.target.closest('[data-payment-row]');if(!row)return;
-  const index=Number(row.dataset.paymentRow);syncSettlementPaymentRows();
-  if(event.target.matches('[data-payment-method]')){const payment=settlementPaymentRows[index];const method=activePaymentMethods.find(item=>item.code===payment?.method);if(method?.methodKind!=='MEMBER_BALANCE'){payment.walletId=null;payment.wallets=[];payment.memberId=null;payment.walletLoading=false;}else if(!payment.wallets?.length&&payment.memberId){try{payment.wallets=await loadSettlementWallets(payment.memberId);}catch{toast('会员卡加载失败，请重新选择付款人');}}renderSettlementPaymentMethods();}
-});
-document.querySelector('#payment-options').addEventListener('click',event=>{
-  const add=event.target.closest('[data-add-payment-row]');if(add){syncSettlementPaymentRows();settlementPaymentRows.push({method:activePaymentMethods.find(item=>item.methodKind!=='MEMBER_BALANCE'||state.selectedMemberId)?.code||activePaymentMethods[0]?.code||'',walletId:null,memberId:state.selectedMemberId||null,wallets:[],amountCents:0});return renderSettlementPaymentMethods({skipSync:true});}
-  const remove=event.target.closest('[data-remove-payment]');if(remove){syncSettlementPaymentRows();settlementPaymentRows.splice(Number(remove.dataset.removePayment),1);return renderSettlementPaymentMethods({skipSync:true});}
-  const payer=event.target.closest('[data-payment-member-search]');if(payer){settlementPaymentTarget={kind:'single',index:Number(payer.dataset.paymentMemberSearch)};return openSettlementMemberSearch('payment');}
-  const button=event.target.closest('[data-fill-payment]');if(!button||button.disabled)return;syncSettlementPaymentRows();const index=Number(button.dataset.fillPayment);const current=document.querySelector(`[data-payment-row="${index}"] [data-payment-amount]`);const otherCents=settlementPaymentRows.reduce((sum,row,rowIndex)=>rowIndex===index?sum:sum+Number(row.amountCents||0),0);if(current)current.value=(Math.max(0,settlementAmountCents()-otherCents)/100).toFixed(2);updateSettlementAllocation();
-});
+document.querySelector('#settlement-waive').addEventListener('change', event => { const checked=event.currentTarget.checked; const amount=document.querySelector('#settlement-amount'); const wrap=document.querySelector('#settlement-waive-reason-wrap'); amount.value=checked?'0.00':(settlementTotalCents()/100).toFixed(2); wrap.toggleAttribute('hidden', !checked); renderSettlementPaymentMethods({reset:true}); });
 document.querySelector('#settlement-dialog form').addEventListener('submit', async event => {
   event.preventDefault();
   const totalCents=settlementAmountCents();
