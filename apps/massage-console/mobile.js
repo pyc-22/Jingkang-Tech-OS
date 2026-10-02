@@ -563,7 +563,7 @@ selectMobilePage('current-service');
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./technician-service-worker.js?v=20261001-manager-ownership-conversion-v1').catch(() => {
+    navigator.serviceWorker.register('./technician-service-worker.js?v=20261001-manager-ownership-conversion-v2').catch(() => {
       // The technician page remains fully available when offline caching is unavailable.
     });
   });

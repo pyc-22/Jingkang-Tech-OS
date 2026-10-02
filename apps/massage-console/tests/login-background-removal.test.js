@@ -20,7 +20,7 @@ test('all three login pages use the image-free portal stylesheet', () => {
 });
 
 test('technician service worker and page use matching updated asset versions', () => {
-  const appVersion = '20261001-manager-ownership-conversion-v1';
+  const appVersion = '20261001-manager-ownership-conversion-v2';
   assert.ok(read('mobile.html').includes(`mobile.js?v=${appVersion}`));
   assert.ok(read('mobile.js').includes(`technician-service-worker.js?v=${appVersion}`));
   const worker = read('technician-service-worker.js');

@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.ResponseBody;
 
 @Controller
 public class HomeController {
-  private static final String RELEASE = "20261001-manager-ownership-conversion-v1";
+  private static final String RELEASE = "20261001-manager-ownership-conversion-v2";
   private final JdbcClient jdbc;
 
   HomeController(JdbcClient jdbc) {

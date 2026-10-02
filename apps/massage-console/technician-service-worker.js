@@ -1,5 +1,5 @@
-const CACHE_NAME = 'jingkang-technician-20261001-manager-ownership-conversion-v1';
-const APP_VERSION = '20261001-manager-ownership-conversion-v1';
+const CACHE_NAME = 'jingkang-technician-20261001-manager-ownership-conversion-v2';
+const APP_VERSION = '20261001-manager-ownership-conversion-v2';
 const ASSET_VERSION = '20260916-quality-batch2-v9';
 const POLLING_VERSION = '20260927-perf-polling-v1';
 const PORTAL_VERSION = '20260927-remove-login-bg-v1';

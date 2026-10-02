@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-$release = '20261001-manager-ownership-conversion-v1'
+$release = '20261001-manager-ownership-conversion-v2'
 $releaseDir = Join-Path $root ".artifacts/releases/$release"
 $zipPath = "$releaseDir.zip"
 $jarSource = Join-Path $root 'services/massage-api/target/massage-api-0.1.0.jar'
