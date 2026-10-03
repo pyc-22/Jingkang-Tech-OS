@@ -27,6 +27,7 @@
 .manager-reward-admin-table-wrap .amount-cell { color:#17685f; font-variant-numeric:tabular-nums; }
 .manager-reward-admin-table-wrap .is-inactive { color:#899590; background:#fafcfb; }
 .manager-reward-admin-table-wrap .text-button { margin-right:7px; padding:0; border:0; color:var(--teal); background:transparent; cursor:pointer; font-size:11px; }
+.backfill-badge { display:inline-flex; align-items:center; padding:1px 4px; border:1px solid #d69b34; border-radius:3px; color:#8a5b12; background:#fff5dc; font-size:9px; font-style:normal; font-weight:700; vertical-align:middle; }
 #manager-reward-admin-attachment-dialog { width:min(92vw,720px); padding:0; border:0; border-radius:7px; }
 .manager-reward-admin-attachment { padding:16px; background:#fff; }
 .manager-reward-admin-attachment img { display:block; width:100%; max-height:75vh; object-fit:contain; background:#f2f5f4; }

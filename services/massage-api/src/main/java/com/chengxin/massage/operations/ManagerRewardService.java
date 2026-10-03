@@ -69,7 +69,7 @@ public class ManagerRewardService {
   public List<YueRecord> yueRecords(UUID storeId, LocalDate date, boolean includeInactive) {
     String activeClause = includeInactive ? "" : " and r.active";
     return jdbc.sql("""
-      select r.id,r.store_id,r.business_date,r.order_id,o.order_no,r.member_id,
+      select r.id,r.store_id,r.business_date,r.submission_kind,r.order_id,o.order_no,r.member_id,
              r.manager_user_id,r.manager_name_snapshot,r.customer_name_snapshot,r.customer_phone_snapshot,
              r.submitted_at,r.replaced_at,r.replacement_note,r.active,
              a.id attachment_id,a.original_filename,a.content_type,a.file_size_bytes
@@ -83,7 +83,7 @@ public class ManagerRewardService {
   public List<YueRecord> yueRecords(UUID storeId, LocalDate from, LocalDate to, boolean includeInactive) {
     String activeClause = includeInactive ? "" : " and r.active";
     return jdbc.sql("""
-      select r.id,r.store_id,r.business_date,r.order_id,o.order_no,r.member_id,
+      select r.id,r.store_id,r.business_date,r.submission_kind,r.order_id,o.order_no,r.member_id,
              r.manager_user_id,r.manager_name_snapshot,r.customer_name_snapshot,r.customer_phone_snapshot,
              r.submitted_at,r.replaced_at,r.replacement_note,r.active,
              a.id attachment_id,a.original_filename,a.content_type,a.file_size_bytes
@@ -97,17 +97,18 @@ public class ManagerRewardService {
   public YueRecord createYue(UUID storeId, UUID actorId, UUID orderId, MultipartFile file) {
     lockRewardStore(storeId);
     OrderCandidate order = order(storeId, orderId);
-    requireCurrentBusinessDate(storeId, order.businessDate());
-    requireMonthUnlocked(storeId, order.businessDate());
+    LocalDate currentBusinessDate = requireWithinOpenPeriod(storeId, order.businessDate());
     ManagerIdentity manager = requireAssignedManager(storeId, order.businessDate());
+    String kind = submissionKind(order.businessDate(), currentBusinessDate);
     UUID id = UUID.randomUUID();
     try {
       jdbc.sql("""
         insert into manager_yue_record(id,tenant_id,store_id,manager_user_id,manager_name_snapshot,business_date,
-          order_id,member_id,customer_name_snapshot,customer_phone_snapshot)
-        values(:id,:tenant,:store,:manager,:managerName,:date,:order,:member,:name,:phone)
+          submission_kind,order_id,member_id,customer_name_snapshot,customer_phone_snapshot)
+        values(:id,:tenant,:store,:manager,:managerName,:date,:submissionKind,:order,:member,:name,:phone)
         """).param("id", id).param("tenant", TENANT_ID).param("store", storeId)
           .param("manager", manager.userId()).param("managerName", manager.name()).param("date", order.businessDate())
+          .param("submissionKind", kind)
           .param("order", order.orderId()).param("member", order.memberId()).param("name", order.customerName())
           .param("phone", order.customerPhone()).update();
       storeAttachment(storeId, id, actorId, file, order.businessDate());
@@ -122,12 +123,11 @@ public class ManagerRewardService {
                              String customerPhone, String note, MultipartFile file) {
     lockRewardStore(storeId);
     YueRecord current = findYue(storeId, id);
-    requireCurrentBusinessDate(storeId, current.businessDate());
-    requireMonthUnlocked(storeId, current.businessDate());
+    requireWithinOpenPeriod(storeId, current.businessDate());
     ManagerIdentity manager = requireAssignedManager(storeId, current.businessDate());
     if (!manager.userId().equals(current.managerUserId())) throw conflict("当前约客记录不属于本店店长");
     OrderCandidate order = order(storeId, orderId == null ? current.orderId() : orderId);
-    requireCurrentBusinessDate(storeId, order.businessDate());
+    requireWithinOpenPeriod(storeId, order.businessDate());
     if (!order.businessDate().equals(current.businessDate())) throw badRequest("只能更正同一营业日的约客记录");
     if (!order.orderId().equals(current.orderId()) || !same(customerName, current.customerNameSnapshot()) || !same(customerPhone, current.customerPhoneSnapshot())) {
       jdbc.sql("""
@@ -244,10 +244,16 @@ public class ManagerRewardService {
     }
   }
 
-  private void requireCurrentBusinessDate(UUID storeId, LocalDate date) {
-    if (!businessClock.currentBusinessDate(storeId).equals(date)) {
-      throw badRequest("约客只能提交或更正当前营业日订单");
-    }
+  private LocalDate requireWithinOpenPeriod(UUID storeId, LocalDate date) {
+    LocalDate currentBusinessDate = businessClock.currentBusinessDate(storeId);
+    submissionKind(date, currentBusinessDate);
+    requireMonthUnlocked(storeId, date);
+    return currentBusinessDate;
+  }
+
+  static String submissionKind(LocalDate date, LocalDate currentBusinessDate) {
+    if (date.isAfter(currentBusinessDate)) throw badRequest("不能预录未来营业日的约客");
+    return date.isBefore(currentBusinessDate) ? "BACKFILL" : "NORMAL";
   }
 
   private void requireMonthUnlocked(UUID storeId, LocalDate date) {
@@ -422,7 +428,7 @@ public class ManagerRewardService {
 
   private YueRecord findYue(UUID storeId, UUID id) {
     return jdbc.sql("""
-      select r.id,r.store_id,r.business_date,r.order_id,o.order_no,r.member_id,
+      select r.id,r.store_id,r.business_date,r.submission_kind,r.order_id,o.order_no,r.member_id,
              r.manager_user_id,r.manager_name_snapshot,r.customer_name_snapshot,r.customer_phone_snapshot,
              r.submitted_at,r.replaced_at,r.replacement_note,r.active,
              a.id attachment_id,a.original_filename,a.content_type,a.file_size_bytes
@@ -446,7 +452,7 @@ public class ManagerRewardService {
       List<RewardSnapshot> rows, long cashFlowCents, long yueCount, long bigProjectCount, long rechargeCount, long totalRewardCents) {}
   public record YueOrder(UUID orderId, String orderNo, UUID memberId, String memberName, String memberPhone, long paidCents, String refundStatus, boolean submitted) {}
   public record ManagerCandidate(UUID userId, String name, String attendanceStatus, boolean isPrimary) {}
-  public record YueRecord(UUID id, UUID storeId, LocalDate businessDate, UUID orderId, String orderNo, UUID memberId,
+  public record YueRecord(UUID id, UUID storeId, LocalDate businessDate, String submissionKind, UUID orderId, String orderNo, UUID memberId,
       UUID managerUserId, String managerNameSnapshot, String customerNameSnapshot, String customerPhoneSnapshot,
       java.time.OffsetDateTime submittedAt, java.time.OffsetDateTime replacedAt, String replacementNote, boolean active,
       UUID attachmentId, String originalFilename, String contentType, Long fileSizeBytes) {}

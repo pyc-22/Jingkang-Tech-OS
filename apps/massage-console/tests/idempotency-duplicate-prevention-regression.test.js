@@ -212,12 +212,12 @@ test('historical backfill uses the same idempotent write and offline queue path'
 });
 
 test('updated idempotency assets use their matching cache versions', () => {
-  assert.match(index, /offline-sync\.js\?v=20260927-perf-polling-v1/);
-  assert.match(mobileHtml, /mobile\.js\?v=20261001-manager-ownership-conversion-v2/);
-  assert.match(mobileHtml, /offline-sync\.js\?v=20260927-perf-polling-v1/);
+  assert.match(index, /offline-sync\.js\?v=20261002-yue-backfill-v1/);
+  assert.match(mobileHtml, /mobile\.js\?v=20261002-yue-backfill-v1/);
+  assert.match(mobileHtml, /offline-sync\.js\?v=20261002-yue-backfill-v1/);
   assert.match(offline, /if \(document\.hidden \|\| flushing \|\| !navigator\.onLine\) return/);
-  assert.match(mobile, /technician-service-worker\.js\?v=20261001-manager-ownership-conversion-v2/);
-  assert.match(technicianWorker, /jingkang-technician-20261001-manager-ownership-conversion-v2/);
+  assert.match(mobile, /technician-service-worker\.js\?v=20261002-yue-backfill-v1/);
+  assert.match(technicianWorker, /jingkang-technician-20261002-yue-backfill-v1/);
 });
 
 test('release health endpoint exposes a versioned release identifier', () => {

@@ -110,7 +110,7 @@ test('pending technician card exposes a direct start-service action', () => {
 });
 
 test('front desk loads the updated application script without stale browser cache', () => {
-  assert.match(index, /app\.js\?v=20261002-settlement-payment-combined-v1/);
+  assert.match(index, /app\.js\?v=20261002-yue-backfill-v1/);
 });
 
 test('technician-card and settlement room-transfer dialogs have unique ids', () => {

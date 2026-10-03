@@ -5,7 +5,7 @@ const path = require('node:path');
 
 const app = path.resolve(__dirname, '..');
 const read = name => fs.readFileSync(path.join(app, name), 'utf8');
-const version = '20260927-remove-login-bg-v1';
+const version = '20261002-yue-backfill-v1';
 
 test('all three login pages use the image-free portal stylesheet', () => {
   const css = read('login-portal.css');
@@ -20,7 +20,7 @@ test('all three login pages use the image-free portal stylesheet', () => {
 });
 
 test('technician service worker and page use matching updated asset versions', () => {
-  const appVersion = '20261001-manager-ownership-conversion-v2';
+  const appVersion = '20261002-yue-backfill-v1';
   assert.ok(read('mobile.html').includes(`mobile.js?v=${appVersion}`));
   assert.ok(read('mobile.js').includes(`technician-service-worker.js?v=${appVersion}`));
   const worker = read('technician-service-worker.js');

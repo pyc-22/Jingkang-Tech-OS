@@ -66,14 +66,14 @@ test('download buttons resolve to both same-origin APKs with explicit filenames'
       assert.equal(url.origin, base);
       assert.equal(url.pathname, `/downloads/${names[index]}`);
       assert.equal(link.download, names[index]);
-      assert.equal(url.searchParams.get('v'), '20260918-android-downloads-v1');
+      assert.equal(url.searchParams.get('v'), '20261002-yue-backfill-v1');
     }
   } finally { dom.window.close(); }
 });
 
 for (const name of names) {
   test(`${name}: Android GET and HEAD return attachment metadata and exact bytes`, async () => {
-    for (const suffix of ['', '?v=20260918-android-downloads-v1']) {
+    for (const suffix of ['', '?v=20261002-yue-backfill-v1']) {
       const url = `${base}/downloads/${name}${suffix}`;
       for (const method of ['HEAD', 'GET']) {
         const response = await fetch(url, { method, headers: { 'User-Agent': android } });
