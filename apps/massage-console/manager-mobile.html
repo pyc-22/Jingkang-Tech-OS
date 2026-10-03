@@ -4,17 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>靖康科技运营 - 管理看板</title>
-    <link rel="stylesheet" href="./manager-mobile.css?v=20261002-yue-backfill-v1" />
+    <link rel="stylesheet" href="./manager-mobile.css?v=20261003-console-manager-opt-v1" />
     <link rel="stylesheet" href="./login-portal.css?v=20261002-yue-backfill-v1" />
     <link rel="stylesheet" href="./manager-rewards.css?v=20261002-yue-backfill-v1" />
   </head>
   <body class="login-portal-page">
     <main class="manager-shell">
-      <header class="manager-header">
-        <div><p>靖康科技运营</p><h1>管理看板</h1></div>
-        <button class="icon-button hidden" id="manager-refresh" type="button" title="刷新数据" aria-label="刷新数据">↻</button>
-      </header>
-
       <section class="manager-login login-portal-surface" id="manager-login-screen">
         <div class="login-portal-brand"><span class="login-portal-mark">JK</span><h1>靖康科技运营</h1><span class="login-portal-role">店长手机管理端</span><p>随时查看授权门店经营数据</p></div>
         <div><h2>店长手机管理端登录</h2><p>登录后仅可查看已授权门店的经营数据</p></div>
@@ -26,18 +21,21 @@
       </section>
 
       <section class="manager-dashboard hidden" id="manager-dashboard">
-        <div class="manager-context"><label>当前门店<select id="manager-store-select" aria-label="当前门店"></select></label><button id="manager-logout" type="button">退出</button></div>
+        <header class="manager-topbar" id="manager-topbar">
+          <select id="manager-store-select" aria-label="切换授权门店"></select>
+          <span class="manager-home-sync" id="manager-sync-time" data-manager-sync role="status">正在同步</span>
+          <button class="icon-button" id="manager-refresh" type="button" title="刷新数据" aria-label="刷新数据"><img src="./assets/lucide/refresh-cw.svg" alt="" /></button>
+          <button class="icon-button" id="manager-logout" type="button" title="退出登录" aria-label="退出登录"><img src="./assets/lucide/log-out.svg" alt="" /></button>
+        </header>
         <section class="manager-home-overview" data-manager-page-panel="home">
-          <div><p>今日经营</p><h2 id="manager-business-date">今日经营概览</h2></div>
-          <span class="manager-home-sync"><i aria-hidden="true"></i><small id="manager-sync-time">正在同步</small></span>
+          <h2>今日经营</h2><span id="manager-business-date">当前营业日</span>
         </section>
 
         <section class="manager-metrics" aria-label="经营数据" data-manager-page-panel="home">
-          <article class="manager-metric-primary"><div class="manager-metric-label"><span>当日营业额</span><em>日报</em></div><strong id="metric-sales">--</strong><small id="metric-order-count">前台日报同步</small></article>
-          <article class="manager-metric-service"><div class="manager-metric-label"><span>当日现金流</span><em>日报</em></div><strong id="metric-service">--</strong><small id="metric-service-count">前台日报同步</small></article>
+          <article class="manager-metric-primary"><div class="manager-metric-label"><span>当日营业额</span></div><strong id="metric-sales">--</strong><small id="metric-order-count">前台日报同步</small></article>
+          <article class="manager-metric-service"><div class="manager-metric-label"><span>当日现金流</span></div><strong id="metric-service">--</strong><small id="metric-service-count">前台日报同步</small></article>
           <article><div class="manager-metric-label"><span>会员充值</span></div><strong id="metric-recharge">¥0.00</strong><small id="metric-bonus">赠送 ¥0.00</small></article>
-          <article><div class="manager-metric-label"><span>开卡数量</span><em>张</em></div><strong id="metric-card-open-count">0</strong><small>首笔充值会员数</small></article>
-          <article><div class="manager-metric-label"><span>余额消费</span></div><strong id="metric-consumption">¥0.00</strong><small id="metric-net-sales">净订单收入 ¥0.00</small></article>
+          <article><div class="manager-metric-label"><span>开卡数量</span></div><strong id="metric-card-open-count">0</strong><small>首笔充值会员数</small></article>
         </section>
 
         <section class="manager-business-heading" data-manager-page-panel="business" data-manager-permission="DAILY_REPORT_VIEW">
@@ -70,23 +68,45 @@
           <div id="manager-commission-adjustments" class="manager-commission-records"><p class="comparison-empty">正在加载调整记录</p></div>
         </section>
 
-        <section class="manager-section manager-home-operation" id="manager-operation-section" data-manager-page-panel="home">
-          <div class="section-heading manager-home-section-heading"><div><p class="manager-section-kicker">现场状态</p><h2>实时运营</h2><small>房间与技师同步更新</small></div><span id="technician-count">启用技师 0 位</span></div>
-          <div class="operation-grid">
-            <div class="operation-row"><span class="operation-icon idle" aria-hidden="true"></span><div><b>空闲房间</b><small>可立即安排</small></div><strong id="room-idle-count">0</strong></div>
-            <div class="operation-row"><span class="operation-icon serving" aria-hidden="true"></span><div><b>服务中房间</b><small>正在计时</small></div><strong id="room-serving-count">0</strong></div>
-            <div class="operation-row"><span class="operation-icon cleaning" aria-hidden="true"></span><div><b>待清理房间</b><small>需要处理</small></div><strong id="room-cleaning-count">0</strong></div>
-            <div class="operation-row"><span class="operation-icon tech" aria-hidden="true"></span><div><b>服务中技师</b><small>当前上钟</small></div><strong id="active-tech-count">0</strong></div>
-          </div>
-          <div class="manager-live-room-heading"><div><b>房间实时明细</b><small>优先显示使用中和待处理房间</small></div><span id="manager-live-room-summary">正在同步</span></div>
-          <div class="manager-live-room-list" id="manager-live-room-list"><p class="comparison-empty">正在加载房间状态</p></div>
-          <div class="manager-live-technician-heading"><div><b>技师实时明细</b><small>服务、接单和当日轮钟状态</small></div><span id="manager-live-technician-summary">正在同步</span></div>
-          <div class="manager-live-technician-attention hidden" id="manager-live-technician-attention"></div>
-          <div class="manager-live-technician-groups" id="manager-live-technician-groups"><p class="comparison-empty">正在加载技师状态</p></div>
+        <section class="manager-home-operation" id="manager-operation-section" data-manager-page-panel="home">
+          <button class="manager-live-entry" type="button" data-manager-shortcut="rooms">
+            <span class="manager-live-entry-heading"><b>现场状态</b><span>进入房间上钟 <img src="./assets/lucide/chevron-right.svg" alt="" /></span></span>
+            <span class="manager-occupancy-caption" id="manager-occupancy-caption">正在同步</span>
+            <span class="manager-occupancy-bar" id="manager-occupancy-bar" role="meter" aria-label="房间占用" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i class="serving" id="manager-occupancy-serving"></i><i class="pending" id="manager-occupancy-pending"></i><i class="cleaning" id="manager-occupancy-cleaning"></i></span>
+            <span class="manager-live-entry-stats">
+              <span><strong id="room-idle-count">0</strong><span>空闲房间</span></span>
+              <span><strong id="room-serving-count">0</strong><span>服务中</span></span>
+              <span><strong id="room-cleaning-count">0</strong><span>待清洁</span></span>
+              <span><strong id="active-tech-count">0</strong><span>上钟技师</span></span>
+            </span>
+          </button>
         </section>
-        <section class="manager-section manager-dispatch-section" id="manager-dispatch-section" data-manager-page-panel="home" data-manager-permission="FRONTDESK_SETTLE">
-          <div class="section-heading manager-home-section-heading"><div><p class="manager-section-kicker">现场安排</p><h2>安排技师上钟</h2><small>复用前台派钟流程，提交后由技师端确认接单</small></div><button class="manager-primary-button" id="manager-open-dispatch" type="button">安排上钟</button></div>
-          <div class="manager-dispatch-summary"><span>钟类、项目、房间和技师均按当前门店实时状态加载</span><span id="manager-dispatch-sync">等待同步</span></div>
+        <section class="manager-room-workspace" id="manager-room-workspace" data-manager-page-panel="rooms" aria-label="房间上钟" hidden>
+          <header class="manager-room-header"><button class="icon-button" type="button" data-manager-shortcut="home" title="返回首页" aria-label="返回首页"><img src="./assets/lucide/chevron-left.svg" alt="" /></button><h2 tabindex="-1" id="manager-room-title">房间上钟</h2><span class="manager-home-sync" data-manager-sync>正在同步</span><button class="icon-button" id="manager-room-refresh" type="button" title="刷新房间状态" aria-label="刷新房间状态"><img src="./assets/lucide/refresh-cw.svg" alt="" /></button></header>
+          <div class="manager-room-subtabs" id="manager-room-subtabs" role="tablist" aria-label="房间上钟视图">
+            <button class="selected" type="button" role="tab" aria-selected="true" data-manager-room-view="rooms">按房间</button>
+            <button type="button" role="tab" aria-selected="false" data-manager-room-view="technicians">按技师</button>
+          </div>
+          <div id="manager-room-view-rooms" data-manager-room-panel="rooms">
+            <div class="manager-room-statistics" aria-label="房间上钟统计">
+              <span><strong id="manager-room-stat-idle">0</strong><small>空闲房间</small></span>
+              <span><strong id="manager-room-stat-serving">0</strong><small>服务中</small></span>
+              <span><strong id="manager-room-stat-cleaning">0</strong><small>待清洁</small></span>
+              <span><strong id="manager-room-stat-technicians">0</strong><small>上钟技师</small></span>
+            </div>
+            <div class="manager-room-occupancy"><div><b>房间占用</b><span id="manager-room-occupancy-label">正在同步</span></div><div class="manager-room-occupancy-bar" id="manager-room-occupancy-bar" role="meter" aria-label="房间占用进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></div>
+            <div class="manager-live-room-heading"><div><b>房间实时明细</b><small>优先显示服务中、待结算和待清洁房间</small></div><span id="manager-live-room-summary">正在同步</span></div>
+            <div class="manager-live-room-list" id="manager-live-room-list"><p class="comparison-empty">正在加载房间状态</p></div>
+          </div>
+          <div id="manager-room-view-technicians" data-manager-room-panel="technicians" hidden>
+            <div class="manager-live-technician-heading"><div><b>技师实时明细</b><small>上钟技师展开，空闲技师默认折叠</small></div><span id="manager-live-technician-summary">正在同步</span></div>
+            <p id="technician-count">启用技师 0 位</p>
+            <div class="manager-live-technician-attention hidden" id="manager-live-technician-attention"></div>
+            <div class="manager-live-technician-groups" id="manager-live-technician-groups"><p class="comparison-empty">正在加载技师状态</p></div>
+          </div>
+          <section class="manager-room-dispatch-bar manager-dispatch-section" id="manager-dispatch-section" data-manager-permission="FRONTDESK_SETTLE">
+            <button class="manager-primary-button" id="manager-open-dispatch" type="button"><span aria-hidden="true">＋</span> 安排技师上钟</button>
+          </section>
         </section>
         <section class="manager-section manager-backfill-section" id="manager-backfill-section" data-manager-page-panel="more" data-manager-permission="HISTORICAL_ORDER_CREATE">
           <div class="section-heading manager-home-section-heading"><div><p class="manager-section-kicker">历史补录</p><h2>历史补单记录</h2><small>店长端仅查看本门店补单记录，创建补单请在前台端完成</small></div></div>
@@ -95,21 +115,23 @@
           <div id="manager-historical-backfill-list" class="manager-expense-list"><p class="comparison-empty">正在加载历史补单记录</p></div>
         </section>
 
-        <section class="manager-section attention-section manager-home-attention" data-manager-page-panel="home">
-          <div class="section-heading manager-home-section-heading"><div><p class="manager-section-kicker">工作提醒</p><h2>待处理事项</h2></div><small>及时跟进</small></div>
-          <div class="attention-row" data-manager-permission="FRONTDESK_SETTLE"><span><i class="attention-icon settlement" aria-hidden="true">¥</i><b>待结算服务</b></span><strong id="pending-service-count">0</strong></div>
-          <div class="attention-row" data-manager-permission="ORDER_REFUND"><span><i class="attention-icon refund" aria-hidden="true">↩</i><b>待确认退款</b></span><strong id="pending-refund-count">0</strong></div>
+        <section class="manager-home-attention" data-manager-page-panel="home">
+          <div class="section-heading manager-home-section-heading"><h2>待处理事项</h2></div>
+          <div class="manager-home-todo" id="manager-todo-settlement" data-manager-permission="FRONTDESK_SETTLE" hidden><span class="manager-todo-mark settlement" aria-hidden="true">结</span><b>待结算</b><span><strong id="pending-service-count">0</strong> 项</span><button type="button" data-manager-shortcut="rooms" aria-label="查看待结算">查看</button></div>
+          <div class="manager-home-todo" id="manager-todo-cleaning" hidden><span class="manager-todo-mark cleaning" aria-hidden="true">洁</span><b>待清洁</b><span><strong id="pending-cleaning-count">0</strong> 间</span><button type="button" data-manager-shortcut="rooms" aria-label="查看待清洁">查看</button></div>
+          <div class="manager-home-todo" id="manager-todo-expense" data-manager-permission="EXPENSE_STORE_VIEW" hidden><span class="manager-todo-mark expense" aria-hidden="true">审</span><b>待审核报销</b><span><strong id="pending-expense-count">0</strong> 单</span><button type="button" data-manager-shortcut="rooms" aria-label="查看待处理事项">查看</button></div>
+          <p class="manager-home-empty" id="manager-home-todo-status" role="status">正在同步待处理事项</p>
         </section>
         <section class="manager-home-shortcuts-section" data-manager-page-panel="home" aria-label="常用管理">
-          <div class="section-heading manager-home-section-heading"><div><p class="manager-section-kicker">快捷入口</p><h2>常用管理</h2></div><small>进入详细页面</small></div>
+          <div class="section-heading manager-home-section-heading"><h2>常用管理</h2></div>
           <div class="manager-home-shortcuts">
-            <button type="button" data-manager-shortcut="business" data-manager-permission="DAILY_REPORT_VIEW"><span aria-hidden="true">▥</span><b>营业数据</b><small>日报与渠道</small></button>
-            <button type="button" data-manager-shortcut="commission" data-manager-permission="REPORT_VIEW"><span aria-hidden="true">¥</span><b>技师提成</b><small>汇总与明细</small></button>
-            <button type="button" data-manager-shortcut="expense" data-manager-permission="EXPENSE_STORE_VIEW"><span aria-hidden="true">▣</span><b>费用报销</b><small>提交与进度</small></button>
-            <button type="button" data-manager-shortcut="rewards" data-manager-permission="MANAGER_REWARD_VIEW"><span aria-hidden="true">★</span><b>店长奖励</b><small>四项绩效与约客</small></button>
-            <button type="button" data-manager-shortcut="more"><span aria-hidden="true">•••</span><b>更多管理</b><small>跨门店查询</small></button>
+            <button type="button" data-manager-shortcut="commission" data-manager-permission="REPORT_VIEW"><span aria-hidden="true"><img src="./assets/lucide/banknote.svg" alt="" /></span><b>技师提成</b></button>
+            <button type="button" data-manager-shortcut="expense" data-manager-permission="EXPENSE_STORE_VIEW"><span aria-hidden="true"><img src="./assets/lucide/wallet.svg" alt="" /></span><b>费用报销</b></button>
+            <button type="button" data-manager-shortcut="business" data-manager-permission="DAILY_REPORT_VIEW"><span aria-hidden="true"><img src="./assets/lucide/receipt-text.svg" alt="" /></span><b>每日日报</b></button>
+            <button type="button" data-manager-shortcut="more" data-manager-target="manager-store-comparison"><span aria-hidden="true"><img src="./assets/lucide/chart-no-axes-combined.svg" alt="" /></span><b>多店对比</b></button>
           </div>
         </section>
+        <section class="manager-rewards-entry" data-manager-page-panel="more" data-manager-permission="MANAGER_REWARD_VIEW"><button type="button" data-manager-shortcut="rewards"><span>店长奖励与约客</span><img src="./assets/lucide/chevron-right.svg" alt="" /></button></section>
         <section class="manager-section manager-business-operation" data-manager-page-panel="business"><div class="section-heading manager-business-section-heading"><div><p class="manager-section-kicker">当前门店</p><h2>运营状态</h2></div><small>实时</small></div><div class="manager-business-operation-grid"><article><span class="idle"></span><div><small>空闲房间</small><strong id="manager-business-room-idle">0</strong></div></article><article><span class="serving"></span><div><small>服务中房间</small><strong id="manager-business-room-serving">0</strong></div></article><article><span class="cleaning"></span><div><small>待清理房间</small><strong id="manager-business-room-cleaning">0</strong></div></article><article><span class="tech"></span><div><small>服务中技师</small><strong id="manager-business-active-tech">0</strong></div></article></div></section>
         <section class="manager-section manager-business-channels" data-manager-page-panel="business"><div class="section-heading manager-business-section-heading"><div><p class="manager-section-kicker">收款构成</p><h2>资金渠道</h2></div><small>收入减退款</small></div><div id="manager-channel-list" class="manager-channel-list"></div></section>
         <section class="manager-section store-comparison-section" data-manager-page-panel="more"><div class="section-heading"><div><h2>多门店经营对比</h2><p>仅显示当前账号已授权的门店</p></div><select id="manager-comparison-sort" aria-label="对比排序"><option value="SALES">按订单实收</option><option value="SERVICE">按服务业绩</option><option value="CASH">按现金净额</option></select></div><div id="manager-store-comparison" class="manager-store-comparison"></div></section>
@@ -183,9 +205,9 @@
     <div class="manager-toast hidden" id="manager-toast"></div>
     <dialog id="manager-expense-preview"><div class="manager-expense-preview-card"><div class="expense-editor-title"><h3 id="manager-expense-preview-title">凭证预览</h3><button class="manager-quiet-button" id="manager-expense-preview-close" type="button">关闭</button></div><div id="manager-expense-preview-content" class="manager-expense-preview-content"></div></div></dialog>
     <dialog id="manager-expense-detail-dialog"><div class="manager-expense-detail-card"><div class="expense-editor-title"><div><p>费用报销单</p><h3 id="manager-expense-detail-title">报销详情</h3></div><button class="manager-quiet-button" id="manager-expense-detail-close" type="button">关闭</button></div><div id="manager-expense-detail-content" class="manager-expense-detail-content"></div><div class="expense-editor-actions" id="manager-expense-detail-actions"></div></div></dialog>
-    <dialog id="manager-clock-dialog"><form id="manager-clock-form" class="manager-clock-dialog-card"><div class="expense-editor-title"><div><p>现场安排</p><h3>安排技师上钟</h3></div><button class="manager-quiet-button" id="manager-clock-close" type="button">关闭</button></div><div class="manager-clock-grid"><label>上钟类别<select id="manager-clock-type" name="clockType"><option value="QUEUE">排钟</option><option value="CALL">点钟</option><option value="SELECTED">选钟</option><option value="BOOKED_QUEUE">预定排钟</option><option value="BOOKED_CALL">预定点钟</option></select></label><label>服务房间<select id="manager-clock-room" name="roomId" required></select></label><label class="manager-clock-full">服务项目<select id="manager-clock-service" name="serviceItemId" required></select></label><label>服务时长<input id="manager-clock-duration" name="duration" type="number" min="15" max="360" step="5" required /><small>分钟，默认跟随项目</small></label></div><div class="manager-clock-picker"><div class="manager-clock-picker-heading"><b>选择技师</b><small id="manager-clock-tech-count">最多选择 4 位</small></div><div id="manager-clock-tech-list" class="manager-clock-tech-list"></div></div><div id="manager-clock-allocation" class="manager-clock-allocation"></div><p class="manager-clock-note">即时派钟会进入技师端待接单；预定钟会先占用房间并在前一单结束后提醒技师。</p><div class="expense-editor-actions"><button class="manager-secondary-button" id="manager-clock-cancel" type="button">取消</button><button class="manager-primary-button" type="submit">确认安排</button></div></form></dialog>
+    <dialog id="manager-clock-dialog"><form id="manager-clock-form" class="manager-clock-dialog-card"><div class="expense-editor-title"><div><p>现场安排</p><h3>安排技师上钟</h3></div><button class="manager-quiet-button" id="manager-clock-close" type="button">关闭</button></div><div class="manager-clock-grid"><label>上钟类别<select id="manager-clock-type" name="clockType"><option value="QUEUE">排钟</option><option value="CALL">点钟</option><option value="SELECTED">选钟</option><option value="BOOKED_QUEUE">预定排钟</option><option value="BOOKED_CALL">预定点钟</option></select></label><label>服务房间<select id="manager-clock-room" name="roomId" required></select></label><label>床位<select id="manager-clock-bed" name="bedId"></select></label><label class="manager-clock-full">服务项目<select id="manager-clock-service" name="serviceItemId" required></select></label><label>服务时长<input id="manager-clock-duration" name="duration" type="number" min="15" max="360" step="5" required /><small>分钟，默认跟随项目</small></label></div><div class="manager-clock-picker"><div class="manager-clock-picker-heading"><b>选择技师</b><small id="manager-clock-tech-count">最多选择 4 位</small></div><div id="manager-clock-tech-list" class="manager-clock-tech-list"></div></div><div id="manager-clock-allocation" class="manager-clock-allocation"></div><p class="manager-clock-note">即时派钟会进入技师端待接单；预定钟会先占用房间并在前一单结束后提醒技师。</p><div class="expense-editor-actions"><button class="manager-secondary-button" id="manager-clock-cancel" type="button">取消</button><button class="manager-primary-button" type="submit">确认安排</button></div></form></dialog>
     <script src="./expense-ui.js?v=20261002-yue-backfill-v1"></script>
-    <script src="./manager-mobile.js?v=20261002-yue-backfill-v1"></script>
+    <script src="./manager-mobile.js?v=20261003-console-manager-opt-v1"></script>
     <script src="./manager-rewards.js?v=20261002-yue-backfill-v1"></script>
   </body>
 </html>

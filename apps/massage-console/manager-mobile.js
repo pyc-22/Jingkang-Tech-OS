@@ -20,6 +20,7 @@ let managerCommissionDetails=[];
 let managerCommissionAdjustments=[];
 let managerPaymentMethods=[];
 let managerFoundationRooms=[];
+let managerFoundationBeds=[];
 let managerFoundationTechnicians=[];
 let managerFoundationServices=[];
 let managerFoundationRoomStatuses=new Map();
@@ -34,6 +35,9 @@ let managerExtensionSessionId=null;
 let managerExtensionTechnicianId=null;
 let managerActiveSessions=[];
 let managerExtensionRequestToken=0;
+let managerRoomView='rooms';
+let managerIdleRoomsExpanded=false;
+let managerIdleTechniciansExpanded=false;
 
 function clearManagerSession() {
   [managerTokenKey,managerStoreKey,managerRolesKey,managerPermissionsKey].forEach(key=>localStorage.removeItem(key));
@@ -79,19 +83,22 @@ function showManagerDashboard() {
   restoreManagerPage();
 }
 function switchManagerPage(page,{remember=true}={}) {
-  const allowedPages=['home','business','commission','expense','rewards','more'];
+  const allowedPages=['home','business','commission','expense','rewards','more','rooms'];
   let targetPage=allowedPages.includes(page)?page:'home';
   if(targetPage==='rewards'&&!managerHasPermission('MANAGER_REWARD_VIEW'))targetPage='home';
   let targetButton=document.querySelector(`[data-manager-nav="${targetPage}"]`);
-  if(targetPage!=='rewards'&&(!targetButton||targetButton.classList.contains('hidden'))){
+  if(!['rewards','rooms'].includes(targetPage)&&(!targetButton||targetButton.classList.contains('hidden'))){
     targetButton=[...document.querySelectorAll('[data-manager-nav]')].find(button=>!button.classList.contains('hidden'));
     targetPage=targetButton?.dataset.managerNav||'home';
   }
   document.querySelectorAll('[data-manager-page-panel]').forEach(panel=>{panel.hidden=panel.dataset.managerPagePanel!==targetPage;});
+  document.querySelector('#manager-topbar').hidden=targetPage==='rooms';
+  document.querySelector('#manager-tabbar').hidden=targetPage==='rooms';
   document.querySelectorAll('[data-manager-nav]').forEach(button=>{const selected=button.dataset.managerNav===targetPage;button.classList.toggle('selected',selected);button.setAttribute('aria-current',selected?'page':'false');});
   if(remember)localStorage.setItem(managerPageKey,targetPage);
   if(targetPage==='rewards') window.ManagerRewards?.load?.();
   window.scrollTo({top:0,behavior:'auto'});
+  if(targetPage==='rooms'){setManagerRoomView(managerRoomView);document.querySelector('#manager-room-workspace').scrollTop=0;document.querySelector('#manager-room-title').focus();}
 }
 function restoreManagerPage(){switchManagerPage(localStorage.getItem(managerPageKey)||'home',{remember:false});}
 async function managerJson(path, headers=managerStoreHeaders()) {
@@ -114,36 +121,82 @@ function renderManagerStores() {
   const selected=managerCurrentStoreId();
   select.innerHTML=managerStores.map(store=>`<option value="${managerEscape(store.id)}" ${store.id===selected?'selected':''}>${managerEscape(store.name)}</option>`).join('');
   select.disabled=managerStores.length<2;
-}
-function countRoomStatuses(rooms,statuses) {
-  const latest=new Map(statuses.map(status=>[status.roomId,status.status]));
-  return rooms.reduce((count,room)=>{const status=latest.get(room.id)||'IDLE';count[status]=(count[status]||0)+1;return count;},{});
+  select.title=managerStores.find(store=>store.id===selected)?.name||'切换授权门店';
 }
 const managerRoomStatusLabel={IN_SERVICE:'服务中',RESERVED:'待接单/待开始',PENDING_PAYMENT:'待结算',CLEANING:'待清洁',IDLE:'空闲',MAINTENANCE:'维修中'};
 const managerServiceStatusLabel={IN_SERVICE:'正在上钟',PENDING_ACCEPTANCE:'等待接单',ACCEPTED:'已接单待开始',REASSIGNMENT_REQUIRED:'待重新派单',DISPATCH_CANCELLED:'待与顾客沟通',COMPLETED:'已完成待结算',COMPLETED_UNSETTLED:'已完成待结算'};
 const managerRoomStatusOrder={IN_SERVICE:0,RESERVED:1,PENDING_PAYMENT:2,CLEANING:3,MAINTENANCE:4,IDLE:5};
 function managerTime(value){if(!value)return'—';const date=new Date(value);return Number.isNaN(date.getTime())?'—':new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false}).format(date);}
+function managerCountdown(value){
+  if(!value)return'—';
+  const remaining=Math.max(0,new Date(value).getTime()-Date.now());
+  if(Number.isNaN(remaining))return'—';
+  const minutes=Math.floor(remaining/60000),seconds=Math.floor(remaining/1000)%60;
+  return remaining?'剩余 '+String(minutes).padStart(2,'0')+':'+String(seconds).padStart(2,'0'):'已结束';
+}
+function updateManagerCountdowns(){
+  document.querySelectorAll('[data-manager-countdown]').forEach(element=>{element.textContent=managerCountdown(element.dataset.managerCountdown);});
+}
+function renderManagerRoomStatistics(rooms=[]){
+  const roomCount=rooms.reduce((count,room)=>{count[room.status]=(count[room.status]||0)+1;return count;},{});
+  const occupied=rooms.reduce((sum,room)=>sum+Number(room.occupiedBedCount||0),0);
+  const capacity=rooms.reduce((sum,room)=>sum+Math.max(1,Number(room.bedCount||1)),0);
+  const percent=capacity?Math.round(occupied/capacity*10000)/100:0;
+  const set=(id,value)=>{const node=document.querySelector(id);if(node)node.textContent=String(value);};
+  set('#manager-room-stat-idle',roomCount.IDLE||0);
+  set('#manager-room-stat-serving',roomCount.IN_SERVICE||0);
+  set('#manager-room-stat-cleaning',roomCount.CLEANING||0);
+  set('#manager-room-stat-technicians',(managerLiveTechnicianOverview.technicians||[]).filter(item=>item.status==='IN_SERVICE').length);
+  const bar=document.querySelector('#manager-room-occupancy-bar');
+  if(bar){bar.setAttribute('aria-valuenow',String(percent));bar.setAttribute('aria-valuetext',`已占 ${occupied} / ${capacity} 床`);bar.querySelector('i').style.width=`${percent}%`;}
+  set('#manager-room-occupancy-label',capacity?`已占 ${occupied} / ${capacity} 床 · 空闲 ${Math.max(0,capacity-occupied)} 床`:'暂无启用床位');
+}
+function setManagerRoomView(view='rooms'){
+  managerRoomView=view==='technicians'?'technicians':'rooms';
+  document.querySelectorAll('[data-manager-room-view]').forEach(button=>{
+    const selected=button.dataset.managerRoomView===managerRoomView;
+    button.classList.toggle('selected',selected);
+    button.setAttribute('aria-selected',selected?'true':'false');
+  });
+  document.querySelectorAll('[data-manager-room-panel]').forEach(panel=>{panel.hidden=panel.dataset.managerRoomPanel!==managerRoomView;});
+}
+function renderManagerRoomService(service){
+  const extensions=Array.isArray(service.extensions)?service.extensions:[];
+  const extensionRows=extensions.map(extension=>`<li><span>${managerEscape(extension.serviceNameSnapshot||'加钟项目')}</span><small>${managerEscape([extension.technicianCode,extension.technicianName].filter(Boolean).join(' · ')||'技师')} · ${Number(extension.plannedDurationMinutes||0)} 分钟 · ${managerMoney(extension.servicePriceCents)}${extension.addedAt?` · ${managerTime(extension.addedAt)}`:''}</small></li>`).join('');
+  const extensionDetails=extensions.length?`<div class="manager-live-extension-details"><b>加钟 ${extensions.length} 项</b><ul>${extensionRows}</ul></div>`:'';
+  const totalDuration=Number(service.totalDurationMinutes??service.plannedDurationMinutes??0);
+  const mainDuration=Number(service.mainDurationMinutes??Math.max(0,totalDuration-extensions.reduce((sum,item)=>sum+Number(item.plannedDurationMinutes||0),0)));
+  const timing=service.startedAt?`上钟 ${managerTime(service.startedAt)} · 预计 ${managerTime(service.expectedEndAt)} 结束`:`预计 ${managerTime(service.expectedEndAt)} 结束`;
+  const countdown=service.expectedEndAt?`<strong class="manager-live-countdown" data-manager-countdown="${managerEscape(service.expectedEndAt)}">${managerEscape(managerCountdown(service.expectedEndAt))}</strong>`:'';
+  const pending=['PENDING_PAYMENT','COMPLETED_UNSETTLED'].includes(service.serviceStatus)?`<b class="manager-live-pending-amount">待结算 ${managerMoney(service.totalAmountCents)}</b>`:'';
+  const servingTechnicians=(managerLiveTechnicianOverview.technicians||[]).filter(item=>String(item.serviceSessionId||'')===String(service.serviceSessionId||'')&&item.status==='IN_SERVICE');
+  const extensionButtons=managerCanArrange&&service.serviceStatus==='IN_SERVICE'
+    ?servingTechnicians.map(technician=>`<button class="manager-live-service-action" type="button" data-manager-extension-session="${managerEscape(service.serviceSessionId)}" data-manager-extension-tech="${managerEscape(technician.technicianId)}" aria-label="为${managerEscape(technician.technicianName||'技师')}安排加钟">${servingTechnicians.length>1?`加钟 · ${managerEscape(technician.technicianName||'技师')}`:'加钟'}</button>`).join(''):'';
+  const extensionActions=extensionButtons?`<div class="manager-live-service-actions">${extensionButtons}</div>`:'';
+  return `<div class="manager-live-service"><div class="manager-live-service-title"><b>${managerEscape(service.serviceNameSnapshot||'未命名项目')}</b><span>${managerEscape(managerClockTypeLabel[service.clockType]||service.clockType||'排钟')}</span></div><p>${managerEscape(service.technicianDisplay||[service.technicianCode,service.technicianName].filter(Boolean).join(' · ')||'待安排技师')}</p><small>${managerEscape(service.bedName||service.bedCode||'未指定床位')} · ${managerEscape(managerServiceStatusLabel[service.serviceStatus]||service.serviceStatus||'')}</small><div class="manager-live-service-meta"><span>主项目 ${mainDuration} 分钟 · 共 ${totalDuration} 分钟 · ${timing}</span>${countdown}</div>${extensionDetails}${pending}${extensionActions}</div>`;
+}
+function renderManagerRoomCard(room){
+  const services=room.services||[];
+  const serviceRows=services.map(renderManagerRoomService).join('');
+  const emptyText=room.status==='IDLE'?'当前可立即安排':room.status==='CLEANING'?'等待完成清洁':room.status==='PENDING_PAYMENT'?'服务已完成，等待结算':room.status==='MAINTENANCE'?'当前暂停使用':'暂无进行中的服务记录';
+  const canArrangeRoom=managerCanArrange&&managerClockAvailableRooms().some(item=>String(item.id)===String(room.roomId));
+  const arrangeButton=canArrangeRoom?`<button class="manager-live-arrange-button" type="button" data-manager-clock-room="${managerEscape(room.roomId)}">安排上钟</button>`:'';
+  return `<article class="manager-live-room ${managerEscape(room.status||'IDLE')}"><div class="manager-live-room-top"><div><strong>${managerEscape(room.roomCode)} 房</strong><small>${managerEscape(room.roomName||'')}</small></div><div class="manager-live-room-actions"><span class="manager-room-status ${managerEscape(room.status||'IDLE')}">${managerEscape(managerRoomStatusLabel[room.status]||room.status||'空闲')}</span>${arrangeButton}</div></div><div class="manager-live-room-capacity"><span>床位 ${Number(room.occupiedBedCount||0)}/${Number(room.bedCount||1)} 已用</span><span>剩余 ${Number(room.availableBedCount||0)}</span></div><div class="manager-live-services">${serviceRows||`<p class="manager-live-room-empty">${emptyText}</p>`}</div></article>`;
+}
 function renderManagerLiveRooms(rooms=[]){
   const target=document.querySelector('#manager-live-room-list');
   const summary=document.querySelector('#manager-live-room-summary');
   if(!target||!summary)return;
-  const active=rooms.filter(room=>['IN_SERVICE','RESERVED'].includes(room.status)).length;
-  summary.textContent=`使用中 ${active} / ${rooms.length} 间`;
+  renderManagerRoomStatistics(rooms);
+  const active=rooms.filter(room=>room.status!=='IDLE').length;
+  summary.textContent=`非空闲 ${active} / ${rooms.length} 间`;
   const sorted=[...rooms].sort((left,right)=>(managerRoomStatusOrder[left.status]??9)-(managerRoomStatusOrder[right.status]??9)||String(left.roomCode||'').localeCompare(String(right.roomCode||''),'zh-CN',{numeric:true}));
-  target.innerHTML=sorted.map(room=>{
-    const services=room.services||[];
-    const serviceRows=services.map(service=>{
-      const servingTechnicians=(managerLiveTechnicianOverview.technicians||[]).filter(item=>String(item.serviceSessionId||'')===String(service.serviceSessionId||'')&&item.status==='IN_SERVICE');
-      const extensionButtons=managerCanArrange&&service.serviceStatus==='IN_SERVICE'
-        ?servingTechnicians.map(technician=>`<button class="manager-live-service-action" type="button" data-manager-extension-session="${managerEscape(service.serviceSessionId)}" data-manager-extension-tech="${managerEscape(technician.technicianId)}" aria-label="为${managerEscape(technician.technicianName||'技师')}安排加钟">${servingTechnicians.length>1?`加钟 · ${managerEscape(technician.technicianName||'技师')}`:'加钟'}</button>`).join(''):'';
-      const extensionActions=extensionButtons?`<div class="manager-live-service-actions">${extensionButtons}</div>`:'';
-      return `<div class="manager-live-service"><div class="manager-live-service-title"><b>${managerEscape(service.serviceNameSnapshot||'未命名项目')}</b><span>${managerEscape(managerClockTypeLabel[service.clockType]||service.clockType||'排钟')}</span></div><p>${managerEscape(service.technicianDisplay||'待安排技师')}</p><small>${managerEscape(service.bedName||service.bedCode||'未指定床位')} · ${managerEscape(managerServiceStatusLabel[service.serviceStatus]||service.serviceStatus||'')}</small><small>${service.startedAt?managerEscape(`上钟 ${managerTime(service.startedAt)} · 预计 ${managerTime(service.expectedEndAt)}结束`):managerEscape(`尚未上钟${service.expectedEndAt?` · 预计 ${managerTime(service.expectedEndAt)}`:''}`)}</small>${extensionActions}</div>`;
-    }).join('');
-    const emptyText=room.status==='IDLE'?'当前可立即安排':room.status==='CLEANING'?'等待完成清洁':room.status==='PENDING_PAYMENT'?'服务已完成，等待结算':room.status==='MAINTENANCE'?'当前暂停使用':'暂无进行中的服务记录';
-    const canArrangeRoom=managerCanArrange&&managerClockAvailableRooms().some(item=>String(item.id)===String(room.roomId));
-    const arrangeButton=canArrangeRoom?`<button class="manager-live-arrange-button" type="button" data-manager-clock-room="${managerEscape(room.roomId)}">安排上钟</button>`:'';
-    return `<article class="manager-live-room ${managerEscape(room.status||'IDLE')}"><div class="manager-live-room-top"><div><strong>${managerEscape(room.roomCode)} 房</strong><small>${managerEscape(room.roomName||'')}</small></div><div class="manager-live-room-actions"><span class="manager-room-status ${managerEscape(room.status||'IDLE')}">${managerEscape(managerRoomStatusLabel[room.status]||room.status||'空闲')}</span>${arrangeButton}</div></div><div class="manager-live-room-capacity"><span>床位 ${Number(room.occupiedBedCount||0)}/${Number(room.bedCount||1)} 已用</span><span>剩余 ${Number(room.availableBedCount||0)}</span></div><div class="manager-live-services">${serviceRows||`<p class="manager-live-room-empty">${emptyText}</p>`}</div></article>`;
-  }).join('')||'<p class="comparison-empty">当前门店暂无启用房间</p>';
+  const busy=sorted.filter(room=>room.status!=='IDLE');
+  const idle=sorted.filter(room=>room.status==='IDLE');
+  const idleSummary=idle.length?`<button class="manager-idle-summary" type="button" data-manager-toggle-idle-rooms aria-expanded="${managerIdleRoomsExpanded}"><b>${idle.length} 间空闲房间可立即安排</b><span>${managerIdleRoomsExpanded?'收起':'展开'}</span></button>`:'';
+  const idleCards=managerIdleRoomsExpanded?idle.map(renderManagerRoomCard).join(''):'';
+  target.innerHTML=busy.map(renderManagerRoomCard).join('')+idleSummary+idleCards||'<p class="comparison-empty">当前门店暂无启用房间</p>';
+  updateManagerCountdowns();
 }
 function ensureManagerExtensionDialog(){
   if(document.querySelector('#manager-extension-dialog'))return;
@@ -249,6 +302,19 @@ function managerClockEligibleTechnicians(reservation=false){
     return reservation || managerTechnicianLiveStatus(tech.id)==='IDLE';
   });
 }
+function renderManagerClockBeds(){
+  const bedSelect=document.querySelector('#manager-clock-bed');
+  const reservation=['BOOKED_QUEUE','BOOKED_CALL'].includes(document.querySelector('#manager-clock-type').value);
+  const roomId=document.querySelector('#manager-clock-room').value;
+  const roomBeds=managerFoundationBeds.filter(bed=>String(bed.roomId)===String(roomId)&&bed.active!==false);
+  const occupied=new Set((managerLiveRoomsSnapshot.find(room=>String(room.roomId)===String(roomId))?.services||[])
+    .map(service=>String(service.bedId||'')).filter(Boolean));
+  const freeBeds=roomBeds.filter(bed=>!occupied.has(String(bed.id)));
+  bedSelect.disabled=reservation;
+  bedSelect.innerHTML=reservation?'<option value="">预定钟派工时自动分配</option>'
+    :freeBeds.length?freeBeds.map(bed=>`<option value="${managerEscape(bed.id)}">${managerEscape(bed.name||bed.code||'床位')}</option>`).join('')
+    :`<option value="">${roomBeds.length?'暂无可用床位':'自动分配可用床位'}</option>`;
+}
 function managerClockEqualAllocation(index,count){const base=Math.floor(10000/count);return ((base+(index===0?10000-base*count:0))/100).toFixed(2);}
 function renderManagerClockAllocation(){
   const target=document.querySelector('#manager-clock-allocation');
@@ -267,6 +333,7 @@ function renderManagerClockDialog(){
   const currentService=service.value;
   room.innerHTML=rooms.map(item=>`<option value="${managerEscape(item.id)}">${managerEscape(item.code)} 房 · ${managerEscape(item.name||'')} · ${Number(item.bedCount||1)} 床</option>`).join('');
   room.value=rooms.some(item=>String(item.id)===String(managerClockingRoomId||currentRoom))?(managerClockingRoomId||currentRoom):rooms[0]?.id||'';
+  renderManagerClockBeds();
   service.innerHTML=managerFoundationServices.map(item=>`<option value="${managerEscape(item.id)}">${managerEscape(item.name)} · ${Number(item.defaultDurationMinutes||0)} 分钟 · ${managerMoney(item.priceCents)}</option>`).join('');
   service.value=managerFoundationServices.some(item=>String(item.id)===String(currentService))?currentService:managerFoundationServices[0]?.id||'';
   const durationInput=document.querySelector('#manager-clock-duration');
@@ -306,12 +373,13 @@ async function submitManagerClock(event){
   const duration=Number(form.get('duration'));
   if(!selected.length)return managerToast('请至少选择一位技师');
   if(!service||!form.get('roomId'))return managerToast('请选择房间和服务项目');
+  if(!reservation&&managerFoundationBeds.some(bed=>String(bed.roomId)===String(form.get('roomId'))&&bed.active!==false)&&!form.get('bedId'))return managerToast('该房间没有可用床位');
   if(!Number.isInteger(duration)||duration<15||duration>360)return managerToast('服务时长必须是 15-360 分钟的整数');
   if(reservation&&selected.length!==1)return managerToast('预定排钟和预定点钟每单只能选择一位技师');
   const participants=selected.map((tech,index)=>{const input=document.querySelector(`[data-manager-tech-allocation="${tech.id}"]`);return {technicianId:tech.id,allocationBp:reservation?10000:selected.length===1?10000:Math.round(Number(input?.value||0)*100)};});
   if(!reservation&&(participants.some(item=>!Number.isInteger(item.allocationBp)||item.allocationBp<=0)||participants.reduce((sum,item)=>sum+item.allocationBp,0)!==10000))return managerToast('技师业绩分配比例必须大于 0%，且合计正好为 100%');
   const endpoint=reservation?`${managerApi}/service-reservations`:`${managerApi}/service-sessions/clock-in`;
-  const body=reservation?{technicianId:selected[0].id,roomId:form.get('roomId'),serviceItemId:service.id,plannedDurationMinutes:duration,reservationType:clockType,note:null}:{technicianId:selected[0].id,participants,roomId:form.get('roomId'),serviceItemId:service.id,plannedDurationMinutes:duration,clockType};
+  const body=reservation?{technicianId:selected[0].id,roomId:form.get('roomId'),serviceItemId:service.id,plannedDurationMinutes:duration,reservationType:clockType,note:null}:{technicianId:selected[0].id,participants,roomId:form.get('roomId'),...(form.get('bedId')?{bedId:form.get('bedId')}:{}),serviceItemId:service.id,plannedDurationMinutes:duration,clockType};
   const response=await fetch(endpoint,{method:'POST',headers:{...managerStoreHeaders(),'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(!response.ok){const detail=(await response.text()).replace(/^"|"$/g,'');return managerToast(`${reservation?'预约登记':'上钟'}失败：${detail||'技师或房间状态已变化'}`);}
   document.querySelector('#manager-clock-dialog').close();
@@ -342,47 +410,70 @@ function renderManagerLiveTechnicians(overview={}){
   const technicians=[...(overview.technicians||[])].sort((left,right)=>(managerTechnicianStatusOrder[left.status]??9)-(managerTechnicianStatusOrder[right.status]??9)||Number(left.queuePosition||999999)-Number(right.queuePosition||999999)||String(left.technicianCode||'').localeCompare(String(right.technicianCode||''),'zh-CN',{numeric:true}));
   const serving=technicians.filter(item=>item.status==='IN_SERVICE').length;
   const waiting=technicians.filter(item=>['PENDING_ACCEPTANCE','ACCEPTED'].includes(item.status)).length;
-  const idle=technicians.filter(item=>item.status==='IDLE').length;
-  summary.textContent=`服务 ${serving} · 待处理 ${waiting} · 空闲 ${idle}`;
+  const idle=technicians.filter(item=>item.status==='IDLE');
+  summary.textContent=`服务 ${serving} · 待处理 ${waiting} · 空闲 ${idle.length}`;
   const reassignment=Number(overview.reassignmentRequiredCount||0);
   const cancelled=Number(overview.dispatchCancelledCount||0);
   attention.classList.toggle('hidden',reassignment+cancelled===0);
   attention.innerHTML=[reassignment?`待重新派单 ${reassignment} 项`:'',cancelled?`待与顾客沟通 ${cancelled} 项`:''].filter(Boolean).join(' · ');
   const groups=[
     ['待接单/待开始',technicians.filter(item=>['PENDING_ACCEPTANCE','ACCEPTED'].includes(item.status))],
-    ['正在上钟',technicians.filter(item=>item.status==='IN_SERVICE')],
-    ['空闲轮钟',technicians.filter(item=>item.status==='IDLE')]
+    ['正在上钟',technicians.filter(item=>item.status==='IN_SERVICE')]
   ];
-  target.innerHTML=groups.map(([title,rows])=>`<section class="manager-live-technician-group"><div><b>${title}</b><span>${managerEscape(rows.length)} 位</span></div><div>${rows.map(managerLiveTechnicianCard).join('')||'<p class="manager-live-technician-empty">当前无技师</p>'}</div></section>`).join('')||'<p class="comparison-empty">当前门店暂无启用技师</p>';
+  const expandedGroups=groups.map(([title,rows])=>`<section class="manager-live-technician-group"><div><b>${title}</b><span>${managerEscape(rows.length)} 位</span></div><div>${rows.map(managerLiveTechnicianCard).join('')||'<p class="manager-live-technician-empty">当前无技师</p>'}</div></section>`).join('');
+  const idleSummary=idle.length?`<button class="manager-idle-summary manager-idle-technician-summary" type="button" data-manager-toggle-idle-technicians aria-expanded="${managerIdleTechniciansExpanded}"><b>${idle.length} 位空闲技师待派</b><span>${managerIdleTechniciansExpanded?'收起':'展开'}</span></button>`:'';
+  const idleCards=managerIdleTechniciansExpanded&&idle.length?`<section class="manager-live-technician-group manager-idle-technician-list"><div><b>空闲轮钟</b><span>${managerEscape(idle.length)} 位</span></div><div>${idle.map(managerLiveTechnicianCard).join('')}</div></section>`:'';
+  target.innerHTML=expandedGroups+idleSummary+idleCards||'<p class="comparison-empty">当前门店暂无启用技师</p>';
 }
-function renderManagerDashboard(report,dailyReport,rooms,statuses,technicians,sessions,pending,refunds,liveRooms=[],liveTechnicians={}) {
-  managerCurrentBusinessDate=report?.businessDate||managerToday();
-  const roomCount=liveRooms.length?liveRooms.reduce((count,room)=>{count[room.status]=(count[room.status]||0)+1;return count;},{}):countRoomStatuses(rooms,statuses);
+function renderManagerHomeActivity(rooms,roomCount,pendingCount,expensePage){
+  const total=rooms.length;
+  const serving=(roomCount.IN_SERVICE||0)+(roomCount.RESERVED||0);
+  const pending=roomCount.PENDING_PAYMENT||0;
+  const cleaning=roomCount.CLEANING||0;
+  const occupied=serving+pending;
+  const percent=count=>total?Math.round(count/total*10000)/100:0;
+  document.querySelector('#manager-occupancy-caption').textContent=`占用 ${occupied} / ${total} 间${pending?` · 待结算 ${pending} 间`:''}`;
+  const bar=document.querySelector('#manager-occupancy-bar');
+  bar.setAttribute('aria-valuenow',percent(occupied));
+  bar.setAttribute('aria-valuetext',`共 ${total} 间，占用 ${occupied} 间，待清洁 ${cleaning} 间`);
+  for(const [kind,count] of [['serving',serving],['pending',pending],['cleaning',cleaning]])document.querySelector(`#manager-occupancy-${kind}`).style.width=`${percent(count)}%`;
+  const expenseCount=Number(expensePage?.total||0);
+  const todos=[['settlement','pending-service-count',managerHasPermission('FRONTDESK_SETTLE')?pendingCount:0],['cleaning','pending-cleaning-count',cleaning],['expense','pending-expense-count',managerHasPermission('EXPENSE_STORE_VIEW')?expenseCount:0]];
+  for(const [kind,id,count] of todos){document.querySelector(`#manager-todo-${kind}`).hidden=count===0;document.getElementById(id).textContent=count;}
+  const status=document.querySelector('#manager-home-todo-status');
+  const expenseUnavailable=managerHasPermission('EXPENSE_STORE_VIEW')&&!expensePage;
+  status.textContent=expenseUnavailable?'待审核报销暂未同步':'暂无待处理事项';
+  status.hidden=!expenseUnavailable&&todos.some(([, ,count])=>count>0);
+}
+function renderManagerHomeBusiness(report,dailyReport){
+  const dailyValues=dailyReport?.currentValues;
+  const hasDailyReport=Number.isFinite(Number(dailyValues?.dailySalesCents))&&Number.isFinite(Number(dailyValues?.dailyCashFlowCents));
+  document.querySelector('#manager-business-date').textContent=report.businessDate;
+  document.querySelector('#metric-sales').textContent=hasDailyReport?managerMoney(dailyValues.dailySalesCents):'--';
+  document.querySelector('#metric-service').textContent=hasDailyReport?managerMoney(dailyValues.dailyCashFlowCents):'--';
+  for(const id of ['metric-order-count','metric-service-count'])document.getElementById(id).textContent=hasDailyReport?'前台日报同步':'前台日报暂不可用';
+  document.querySelector('#metric-recharge').textContent=managerMoney(report.rechargeAmountCents);
+  document.querySelector('#metric-bonus').textContent=`赠送 ${managerMoney(report.bonusAmountCents)}`;
+  document.querySelector('#metric-card-open-count').textContent=Number(report.cardOpenCount||0).toLocaleString('zh-CN');
+}
+function renderManagerDashboard(report,dailyReport,pending,liveRooms=[],liveTechnicians={},homeExpenses=null,homeReport=report,homeDailyReport=dailyReport) {
+  managerCurrentBusinessDate=homeReport?.businessDate||managerToday();
+  const roomCount=liveRooms.reduce((count,room)=>{count[room.status]=(count[room.status]||0)+1;return count;},{});
   const dailyValues=dailyReport?.currentValues;
   const hasDailyReport=Number.isFinite(Number(dailyValues?.dailySalesCents))&&Number.isFinite(Number(dailyValues?.dailyCashFlowCents));
   const dailySalesText=hasDailyReport?managerMoney(dailyValues.dailySalesCents):'--';
   const dailyCashFlowText=hasDailyReport?managerMoney(dailyValues.dailyCashFlowCents):'--';
   const dailyReportLabel=hasDailyReport?'前台日报同步':'前台日报暂不可用';
-  document.querySelector('#manager-business-date').textContent=`${report.businessDate} 经营概览`;
-  document.querySelector('#manager-sync-time').textContent=`${new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date())} 已同步`;
-  document.querySelector('#metric-sales').textContent=dailySalesText;
-  document.querySelector('#metric-order-count').textContent=dailyReportLabel;
-  document.querySelector('#metric-service').textContent=dailyCashFlowText;
-  document.querySelector('#metric-service-count').textContent=dailyReportLabel;
-  document.querySelector('#metric-recharge').textContent=managerMoney(report.rechargeAmountCents);
-  document.querySelector('#metric-bonus').textContent=`赠送 ${managerMoney(report.bonusAmountCents)}`;
-  document.querySelector('#metric-card-open-count').textContent=Number(report.cardOpenCount||0).toLocaleString('zh-CN');
-  document.querySelector('#metric-consumption').textContent=managerMoney(report.consumptionAmountCents);
-  document.querySelector('#metric-net-sales').textContent=`净订单收入 ${managerMoney(report.netSalesAmountCents)}`;
+  renderManagerHomeBusiness(homeReport,homeDailyReport);
+  document.querySelectorAll('[data-manager-sync]').forEach(element=>{element.textContent=`${managerTime(new Date())} 已同步`;});
   document.querySelector('#room-idle-count').textContent=roomCount.IDLE||0;
   document.querySelector('#room-serving-count').textContent=roomCount.IN_SERVICE||0;
   document.querySelector('#room-cleaning-count').textContent=roomCount.CLEANING||0;
-  const liveTechnicianCount=liveRooms.flatMap(room=>room.services||[]).filter(service=>service.serviceStatus==='IN_SERVICE').reduce((count,service)=>count+Number(service.technicianCount||0),0);
-  document.querySelector('#active-tech-count').textContent=liveRooms.length?liveTechnicianCount:sessions.length;
-  const activeTechnicianCount=(liveTechnicians.technicians||[]).length||technicians.filter(technician=>technician.active).length;
+  const liveTechnicianCount=(liveTechnicians.technicians||[]).filter(technician=>technician.status==='IN_SERVICE').length;
+  document.querySelector('#active-tech-count').textContent=liveTechnicianCount;
+  const activeTechnicianCount=(liveTechnicians.technicians||[]).length;
   document.querySelector('#technician-count').textContent=`启用技师 ${activeTechnicianCount} 位`;
-  document.querySelector('#pending-service-count').textContent=pending.length;
-  document.querySelector('#pending-refund-count').textContent=refunds.length;
+  renderManagerHomeActivity(liveRooms,roomCount,pending.length,homeExpenses);
   document.querySelector('#manager-business-page-date').textContent=`${report.businessDate} 营业日`;
   document.querySelector('#manager-business-sales').textContent=dailySalesText;
   document.querySelector('#manager-business-order-count').textContent=dailyReportLabel;
@@ -396,7 +487,7 @@ function renderManagerDashboard(report,dailyReport,rooms,statuses,technicians,se
   document.querySelector('#manager-business-room-idle').textContent=roomCount.IDLE||0;
   document.querySelector('#manager-business-room-serving').textContent=roomCount.IN_SERVICE||0;
   document.querySelector('#manager-business-room-cleaning').textContent=roomCount.CLEANING||0;
-  document.querySelector('#manager-business-active-tech').textContent=liveRooms.length?liveTechnicianCount:sessions.length;
+  document.querySelector('#manager-business-active-tech').textContent=liveTechnicianCount;
   renderManagerLiveRooms(liveRooms);
   renderManagerLiveTechnicians(liveTechnicians);
 }
@@ -488,32 +579,40 @@ async function loadManagerDashboard({manual=false}={}) {
     const canBackfill=managerHasPermission('HISTORICAL_ORDER_CREATE');
     const canViewFoundation=managerHasPermission('FRONTDESK_SETTLE')||managerHasPermission('FOUNDATION_MANAGE')||canBackfill;
     const canSettle=managerHasPermission('FRONTDESK_SETTLE');
-    const canRefund=managerHasPermission('ORDER_REFUND');
     const canViewDailyReport=managerHasPermission('DAILY_REPORT_VIEW');
     const canViewExpenses=managerHasPermission('EXPENSE_STORE_VIEW');
     const canViewCommissions=managerHasPermission('REPORT_VIEW');
     const canViewPaymentMethods=managerHasPermission('FRONTDESK_SETTLE')||managerHasPermission('FOUNDATION_MANAGE')||canBackfill;
     const date=ensureManagerReportDate();
     const dateQuery=date?`?date=${encodeURIComponent(date)}`:'';
-    const [report,dailyReport,clockSummary,rooms,liveState,technicians,sessions,pending,refunds,channels,paymentMethods,eligibility,queueSnapshot,services]=await Promise.all([
+    const [report,dailyReport,clockSummary,rooms,beds,liveState,technicians,sessions,pending,channels,paymentMethods,eligibility,queueSnapshot,services,homeExpenses]=await Promise.all([
       managerJson(`/operations/daily-report${dateQuery}`),
       canViewDailyReport?managerOptionalJson(`/daily-reports${dateQuery}`,null):null,
       managerOptionalJson(`/operations/service-clock-summary${dateQuery}`,{daily:{},monthly:{}}),
       canViewFoundation?managerOptionalJson('/foundation/rooms',[]):[],
+      canViewFoundation?managerOptionalJson('/rooms/beds',[]):[],
       managerOptionalJson('/operations/live-state',{businessDate:date,rooms:[],technicians:[],reassignmentRequiredCount:0,dispatchCancelledCount:0}),
       canViewFoundation?managerOptionalJson('/foundation/technicians',[]):[],
       canSettle?managerOptionalJson('/service-sessions?status=IN_SERVICE',[]):[],
       canSettle?managerOptionalJson('/sales-orders/pending-service-sessions',[]):[],
-      canRefund?managerOptionalJson('/refunds?status=PENDING',[]):[],
       managerOptionalJson(`/operations/payment-channel-summary${dateQuery}`,{sales:[],refunds:[],recharges:[],cashNetCents:0}),
       canViewPaymentMethods?managerOptionalJson('/payment-methods?includeInactive=true',[]):[],
       canSettle?managerOptionalJson('/technician-schedules/clock-eligibility',{technicians:[]}):{technicians:[]},
       canSettle?managerOptionalJson('/technician-queue',{technicians:[]}):{technicians:[]},
-      canViewFoundation?managerOptionalJson('/foundation/service-items',[]):[]
+      canViewFoundation?managerOptionalJson('/foundation/service-items',[]):[],
+      canViewExpenses?managerOptionalJson(`/expense-claims/page?status=SUBMITTED&from=0001-01-01&to=${managerToday()}&page=0&size=1`,null):null
     ]);
     if(requestSequence!==managerRequestSequence||requestedStoreId!==managerCurrentStoreId()) return null;
+    let homeReport=report,homeDailyReport=dailyReport;
+    // Home follows the live business day, independently of the business tab's date filter.
+    if(liveState?.businessDate&&report.businessDate!==liveState.businessDate){
+      const todayQuery=`?date=${encodeURIComponent(liveState.businessDate)}`;
+      [homeReport,homeDailyReport]=await Promise.all([managerJson(`/operations/daily-report${todayQuery}`),canViewDailyReport?managerOptionalJson(`/daily-reports${todayQuery}`,null):null]);
+      if(requestSequence!==managerRequestSequence||requestedStoreId!==managerCurrentStoreId()) return null;
+    }
     managerCanArrange=canSettle;
     managerFoundationRooms=rooms||[];
+    managerFoundationBeds=beds||[];
     managerFoundationTechnicians=technicians||[];
     managerFoundationServices=services||[];
     managerActiveSessions=sessions||[];
@@ -522,7 +621,7 @@ async function loadManagerDashboard({manual=false}={}) {
     managerLiveTechnicianOverview={businessDate:liveState?.businessDate,reassignmentRequiredCount:liveState?.reassignmentRequiredCount||0,dispatchCancelledCount:liveState?.dispatchCancelledCount||0,technicians:liveState?.technicians||[]};
     managerTechnicianEligibility=new Map((eligibility?.technicians||[]).map(item=>[String(item.technicianId),item]));
     managerQueuePositions=new Map((queueSnapshot?.technicians||[]).map(item=>[String(item.technicianId),item.queuePosition]));
-    renderManagerDashboard(report,dailyReport,rooms,liveState?.rooms||[],technicians,sessions,pending,refunds,managerLiveRoomsSnapshot,managerLiveTechnicianOverview);
+    renderManagerDashboard(report,dailyReport,pending,managerLiveRoomsSnapshot,managerLiveTechnicianOverview,homeExpenses,homeReport,homeDailyReport);
     managerPaymentMethods=paymentMethods;
     renderManagerHistoricalBackfillControls();
     if(canBackfill) await managerOptionalTask(loadManagerHistoricalBackfills);
@@ -573,19 +672,21 @@ document.querySelector('#manager-login-form').addEventListener('submit',async ev
   formElement.reset();
   await loadManagerStores();
 });
-document.querySelector('#manager-store-select').addEventListener('change',async event=>{if(!managerStores.some(store=>store.id===event.target.value)){renderManagerStores();return managerToast('该门店未分配给当前账号');}resetManagerExtensionState({close:true});localStorage.setItem(managerStoreKey,event.target.value);await loadManagerDashboard();window.ManagerRewards?.load?.();});
+document.querySelector('#manager-store-select').addEventListener('change',async event=>{if(!managerStores.some(store=>store.id===event.target.value)){renderManagerStores();return managerToast('该门店未分配给当前账号');}resetManagerExtensionState({close:true});localStorage.setItem(managerStoreKey,event.target.value);renderManagerStores();await loadManagerDashboard();window.ManagerRewards?.load?.();});
 document.querySelector('#manager-report-date').addEventListener('change',()=>loadManagerDashboard({manual:true}).catch(()=>managerToast('所选营业日数据暂时无法加载')));
 document.querySelector('#manager-tabbar').addEventListener('click',event=>{const button=event.target.closest('[data-manager-nav]');if(!button||button.classList.contains('hidden'))return;switchManagerPage(button.dataset.managerNav);});
-document.querySelector('.manager-home-shortcuts').addEventListener('click',event=>{const button=event.target.closest('[data-manager-shortcut]');if(!button)return;const page=button.dataset.managerShortcut;const permission=button.dataset.managerPermission;if(permission&&!managerHasPermission(permission))return managerToast('当前账号没有该模块权限');switchManagerPage(page);});
+document.querySelector('#manager-dashboard').addEventListener('click',event=>{const button=event.target.closest('[data-manager-shortcut]');if(!button)return;const page=button.dataset.managerShortcut;const permission=button.dataset.managerPermission;if(permission&&!managerHasPermission(permission))return managerToast('当前账号没有该模块权限');switchManagerPage(page);if(button.dataset.managerTarget)document.getElementById(button.dataset.managerTarget)?.scrollIntoView({block:'start'});});
+document.querySelector('#manager-room-subtabs').addEventListener('click',event=>{const button=event.target.closest('[data-manager-room-view]');if(!button)return;setManagerRoomView(button.dataset.managerRoomView);});
 document.querySelector('#manager-open-dispatch').addEventListener('click',()=>openManagerClockDialog());
-document.querySelector('#manager-live-room-list').addEventListener('click',event=>{const extension=event.target.closest('[data-manager-extension-session]');if(extension)return openManagerExtension(extension.dataset.managerExtensionSession,extension.dataset.managerExtensionTech).catch(handleManagerExtensionFailure);const button=event.target.closest('[data-manager-clock-room]');if(button)openManagerClockDialog({roomId:button.dataset.managerClockRoom});});
-document.querySelector('#manager-live-technician-groups').addEventListener('click',event=>{const button=event.target.closest('[data-manager-clock-tech]');if(button)openManagerClockDialog({technicianId:button.dataset.managerClockTech});});
+document.querySelector('#manager-live-room-list').addEventListener('click',event=>{const toggle=event.target.closest('[data-manager-toggle-idle-rooms]');if(toggle){managerIdleRoomsExpanded=!managerIdleRoomsExpanded;renderManagerLiveRooms(managerLiveRoomsSnapshot);return;}const extension=event.target.closest('[data-manager-extension-session]');if(extension)return openManagerExtension(extension.dataset.managerExtensionSession,extension.dataset.managerExtensionTech).catch(handleManagerExtensionFailure);const button=event.target.closest('[data-manager-clock-room]');if(button)openManagerClockDialog({roomId:button.dataset.managerClockRoom});});
+document.querySelector('#manager-live-technician-groups').addEventListener('click',event=>{const toggle=event.target.closest('[data-manager-toggle-idle-technicians]');if(toggle){managerIdleTechniciansExpanded=!managerIdleTechniciansExpanded;renderManagerLiveTechnicians(managerLiveTechnicianOverview);return;}const button=event.target.closest('[data-manager-clock-tech]');if(button)openManagerClockDialog({technicianId:button.dataset.managerClockTech});});
 document.querySelector('#manager-clock-close').addEventListener('click',()=>document.querySelector('#manager-clock-dialog').close());
 document.querySelector('#manager-clock-cancel').addEventListener('click',()=>document.querySelector('#manager-clock-dialog').close());
+document.querySelector('#manager-clock-dialog').addEventListener('cancel',event=>{event.preventDefault();event.currentTarget.close();});
 document.querySelector('#manager-clock-form').addEventListener('submit',event=>submitManagerClock(event).catch(()=>managerToast('安排上钟失败，请刷新后重试')));
 document.querySelector('#manager-clock-type').addEventListener('change',event=>{const reservation=['BOOKED_QUEUE','BOOKED_CALL'].includes(event.target.value);if(reservation&&managerClockingTechIds.length>1){managerClockingTechIds=[managerClockingTechIds[0]];managerToast('预约服务保持单技师，已保留第一位技师');}renderManagerClockDialog();});
 document.querySelector('#manager-clock-service').addEventListener('change',event=>{const service=managerFoundationServices.find(item=>String(item.id)===String(event.target.value));const duration=document.querySelector('#manager-clock-duration');if(duration)duration.value=Number(service?.defaultDurationMinutes||0)||'';});
-document.querySelector('#manager-clock-room').addEventListener('change',event=>{managerClockingRoomId=event.target.value;});
+document.querySelector('#manager-clock-room').addEventListener('change',event=>{managerClockingRoomId=event.target.value;renderManagerClockBeds();});
 document.querySelector('#manager-clock-tech-list').addEventListener('click',event=>{const button=event.target.closest('[data-manager-clock-tech]');if(!button)return;const id=button.dataset.managerClockTech;const selectedIndex=managerClockingTechIds.findIndex(item=>String(item)===String(id));const reservation=['BOOKED_QUEUE','BOOKED_CALL'].includes(document.querySelector('#manager-clock-type').value);if(selectedIndex>=0)managerClockingTechIds.splice(selectedIndex,1);else if(reservation&&managerClockingTechIds.length)managerClockingTechIds=[id];else if(managerClockingTechIds.length>=4)return managerToast('一单最多安排 4 位技师');else managerClockingTechIds.push(id);renderManagerClockDialog();});
 document.querySelector('#manager-business-period-tabs').addEventListener('click',event=>{const button=event.target.closest('[data-business-period]');if(!button)return;const period=button.dataset.businessPeriod;document.querySelectorAll('[data-business-period]').forEach(item=>item.classList.toggle('selected',item===button));document.querySelectorAll('[data-business-period-panel]').forEach(panel=>{panel.hidden=panel.dataset.businessPeriodPanel!==period;});});
 document.querySelector('#manager-commission-month').addEventListener('change',()=>loadManagerCommissions().catch(()=>managerToast('提成数据暂时无法加载')));
@@ -597,6 +698,7 @@ document.querySelector('#manager-cross-store-search').addEventListener('input',(
 document.querySelector('#manager-cross-store-type').addEventListener('change',()=>loadManagerCrossStoreTransactions().catch(()=>managerToast('跨门店记录暂时无法加载')));
 document.querySelector('#manager-cross-store-records').addEventListener('click',async event=>{const button=event.target.closest('[data-manager-cross-store]');if(!button)return;localStorage.setItem(managerStoreKey,button.dataset.managerCrossStore);document.querySelector('#manager-store-select').value=button.dataset.managerCrossStore;await loadManagerDashboard({manual:true});});
 document.querySelector('#manager-refresh').addEventListener('click',()=>loadManagerDashboard({manual:true}));
+document.querySelector('#manager-room-refresh').addEventListener('click',()=>loadManagerDashboard({manual:true}));
 document.querySelector('#manager-logout').addEventListener('click',()=>{clearManagerSession();showManagerLogin('已退出管理端');});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&!document.querySelector('#manager-dashboard').classList.contains('hidden'))loadManagerDashboard();});
 window.setInterval(()=>{if(document.visibilityState==='visible'&&!document.querySelector('#manager-dashboard').classList.contains('hidden'))loadManagerDashboard();},30000);
@@ -729,7 +831,6 @@ async function loadManagerExpenses(append=false,background=false) {
     renderManagerExpenseSummary(result.summary);renderManagerExpenseList(managerExpenseRows);
     document.querySelector('#manager-expense-progress').textContent=`已加载 ${managerExpenseRows.length} 条 / 共 ${result.total} 条`;
     document.querySelector('#manager-expense-more').hidden=managerExpenseRows.length>=result.total;
-    const sync=document.querySelector('#manager-sync-time');if(sync)sync.textContent=ExpenseUI.time(new Date())+' 已同步';
   } catch(error) { if(request===managerExpenseRequest)managerToast(error.message||'报销记录加载失败'); }
   finally { if(request===managerExpenseRequest){managerExpenseLoading=false;document.querySelector('#manager-expense-more').disabled=false;} }
 }
