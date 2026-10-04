@@ -1572,6 +1572,73 @@ dialog > .dialog-card {
   #frontdesk-view .technician-list { grid-template-columns:1fr; }
 }
 
+#frontdesk-view .room-top { min-height:44px; font-size:14px; }
+#frontdesk-view .room-detail-button { min-width:44px; min-height:44px; padding:4px 8px; border:1px solid rgba(255,255,255,.4); border-radius:5px; background:rgba(255,255,255,.18); color:inherit; font:inherit; cursor:pointer; }
+#frontdesk-view .room-detail-button:hover { background:rgba(255,255,255,.3); }
+#frontdesk-view .room-detail-button:focus-visible { outline:2px solid #fff; outline-offset:2px; }
+#frontdesk-view .room-services { gap:10px; }
+#frontdesk-view .room-service-row { align-items:start; font-size:14px; }
+#frontdesk-view .room-service-row > b { grid-row:1; font-size:14px; }
+#frontdesk-view .room-service-main { grid-column:1 / -1; grid-row:2; }
+#frontdesk-view .room-service-row .room-service-primary { overflow:visible; color:inherit; font-size:14px; line-height:1.5; text-overflow:clip; white-space:normal; }
+#frontdesk-view .room-service-row .room-service-extensions { overflow:visible; color:#ffe49a; font-size:14px; line-height:1.5; text-overflow:clip; white-space:normal; }
+#frontdesk-view .room-service-timer,
+#frontdesk-view .room-service-state { grid-column:3; grid-row:1; color:inherit; font-size:14px; }
+#frontdesk-view .room-service-timer { color:#fef08a; }
+
+#room-service-detail-dialog { width:min(560px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); padding:0; overflow:hidden; color:#172222; background:#fff; font-size:14px; line-height:1.5; overflow-wrap:anywhere; }
+#room-service-detail-dialog[open] { display:flex; flex-direction:column; }
+#room-service-detail-dialog .service-detail-header { display:flex; flex-shrink:0; align-items:start; justify-content:space-between; gap:12px; padding:18px 22px 14px; border-bottom:1px solid #dce5e1; }
+#room-service-detail-dialog .service-detail-header h2 { margin:0; font-size:18px; }
+#room-service-detail-dialog .service-detail-header p { margin:3px 0 0; color:#dc2626; font-weight:700; }
+#room-service-detail-dialog .service-detail-header p.pending { color:#7c3aed; }
+#room-service-detail-dialog .icon-button { flex-shrink:0; width:44px; height:44px; font-size:24px; cursor:pointer; }
+#room-service-detail-dialog .service-detail-body { min-height:0; padding:16px 22px; overflow-y:auto; }
+#room-service-detail-dialog .service-detail-session + .service-detail-session { margin-top:20px; padding-top:20px; border-top:1px solid #dce5e1; }
+#room-service-detail-dialog .service-detail-bed { margin:0 0 12px; color:#05635d; font-size:16px; }
+#room-service-detail-dialog .service-detail-meta { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:0 0 14px; }
+#room-service-detail-dialog .service-detail-meta > div { min-width:0; padding:9px 12px; border-radius:7px; background:#f5f8f6; }
+#room-service-detail-dialog dt { color:#6a7775; }
+#room-service-detail-dialog dd { margin:2px 0 0; font-weight:600; }
+#room-service-detail-dialog .service-detail-section-title { display:flex; align-items:center; gap:8px; margin:14px 0 8px; font-size:14px; }
+#room-service-detail-dialog .service-detail-section-title::before { content:""; width:3px; height:14px; border-radius:2px; background:#087b73; }
+#room-service-detail-dialog .service-detail-timeline { display:grid; gap:0; margin:0; padding:0; list-style:none; }
+#room-service-detail-dialog .service-detail-timeline li { position:relative; display:grid; grid-template-columns:48px minmax(0,1fr); gap:6px; padding:0 0 16px 22px; }
+#room-service-detail-dialog .service-detail-timeline li::before { content:""; position:absolute; left:4px; top:5px; width:9px; height:9px; border-radius:50%; background:#087b73; }
+#room-service-detail-dialog .service-detail-timeline li.extension::before { background:#df7e39; }
+#room-service-detail-dialog .service-detail-timeline li::after { content:""; position:absolute; left:8px; top:14px; bottom:0; width:2px; background:#e3eae7; }
+#room-service-detail-dialog .service-detail-timeline li:last-child::after { display:none; }
+#room-service-detail-dialog .service-detail-timeline time { color:#6a7775; font-variant-numeric:tabular-nums; }
+#room-service-detail-dialog .service-detail-timeline small { display:block; color:#6a7775; font-size:14px; }
+#room-service-detail-dialog .service-detail-items { display:grid; gap:8px; }
+#room-service-detail-dialog .service-detail-item { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; align-items:center; gap:10px; min-width:0; padding:10px 12px; border:1px solid #dce5e1; border-radius:8px; }
+#room-service-detail-dialog .service-detail-tag { padding:2px 8px; border-radius:5px; font-weight:700; }
+#room-service-detail-dialog .service-detail-tag.main { color:#05635d; background:#dff2ea; }
+#room-service-detail-dialog .service-detail-tag.extension { color:#c2570a; background:#fdeede; }
+#room-service-detail-dialog .service-detail-info { min-width:0; }
+#room-service-detail-dialog .service-detail-info small { display:block; margin-top:2px; color:#6a7775; font-size:14px; }
+#room-service-detail-dialog .service-detail-duration { color:#6a7775; }
+#room-service-detail-dialog .service-detail-price { font-size:15px; font-variant-numeric:tabular-nums; }
+#room-service-detail-dialog .service-detail-footer { display:flex; flex-shrink:0; align-items:center; justify-content:space-between; gap:12px; padding:14px 22px; border-top:1px solid #dce5e1; background:#f5f8f6; color:#6a7775; }
+#room-service-detail-dialog .service-detail-footer > div { min-width:0; }
+#room-service-detail-dialog .service-detail-footer strong { display:block; margin-top:2px; color:#172222; font-size:14px; }
+#room-service-detail-dialog #room-service-detail-amount { color:#05635d; font-size:20px; }
+#room-service-detail-dialog .service-detail-legacy { margin:10px 0 0; color:#6a7775; }
+@media (max-width:480px) {
+  #room-service-detail-dialog .service-detail-header,
+  #room-service-detail-dialog .service-detail-body,
+  #room-service-detail-dialog .service-detail-footer { padding:12px; }
+  #room-service-detail-dialog .service-detail-meta { grid-template-columns:minmax(0,1fr); gap:6px; }
+  #room-service-detail-dialog .service-detail-meta > div { display:grid; grid-template-columns:70px minmax(0,1fr); gap:8px; }
+  #room-service-detail-dialog dd { margin:0; }
+  #room-service-detail-dialog .service-detail-item { grid-template-columns:auto minmax(0,1fr); gap:6px 10px; }
+  #room-service-detail-dialog .service-detail-tag { align-self:start; }
+  #room-service-detail-dialog .service-detail-duration { grid-column:2; }
+  #room-service-detail-dialog .service-detail-price { grid-column:2; }
+  #room-service-detail-dialog .service-detail-footer { align-items:start; }
+  #room-service-detail-dialog .service-detail-footer > div:first-child { flex:1; }
+}
+
 .combined-payment-options .payment-option { display:block; padding:10px 12px; }
 .combined-payment-options b { float:none; }
 .combined-payment-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px; min-width:0; }

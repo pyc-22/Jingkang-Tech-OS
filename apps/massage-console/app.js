@@ -551,14 +551,14 @@ async function loadFoundationDataOnce({ silent = false, requestSequence = founda
          const fallbackNames = String(item.technicianDisplay || '').split('、').map(value => value.trim()).filter(Boolean);
          return participants.map((technicianId, index) => {
            const technician = technicianId ? state.technicians.find(candidate => String(candidate.id) === String(technicianId)) : null;
-           return { sessionId:item.serviceSessionId, roomId:item.roomId, bedId:item.bedId, bedName:item.bedName||item.bedCode||'未指定床位', technicianId, technicianName: technician?.name || fallbackNames[index] || '待派单', serviceName:item.serviceNameSnapshot, status:item.serviceStatus, plannedDurationMinutes:Number(item.plannedDurationMinutes||0), expectedEndAt:item.expectedEndAt, startedAt:item.startedAt, extensionSummary:item.extensionSummary||'' };
+           return { ...item, sessionId:item.serviceSessionId, roomId:item.roomId, bedId:item.bedId, bedName:item.bedName||item.bedCode||'未指定床位', technicianId, technicianName: technician?.name || fallbackNames[index] || '待派单', serviceName:item.serviceNameSnapshot, status:item.serviceStatus, plannedDurationMinutes:Number(item.plannedDurationMinutes||0), expectedEndAt:item.expectedEndAt, startedAt:item.startedAt, extensionSummary:item.extensionSummary||'' };
          });
        });
        const occupiedBedCount = Number(liveRoom?.occupiedBedCount || 0);
        const bedText = `${occupiedBedCount}/${capacity} 床已用 · 余 ${Math.max(0, capacity - occupiedBedCount)} 床`;
        const details = bedText;
        const exceptionSession = roomList.find(item => ['REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED'].includes(item.serviceStatus));
-       return { id: room.code, apiId: room.id, sessionId: session?.serviceSessionId || null, exceptionSessionId: exceptionSession?.serviceSessionId || null, exceptionStatus: exceptionSession?.serviceStatus || null, status, label, detail: details, services, expectedEndAt: session?.expectedEndAt, bedCount: capacity, occupiedBedCount, availableBedCount: Number(liveRoom?.availableBedCount ?? Math.max(0, capacity - occupiedBedCount)) };
+       return { id: room.code, apiId: room.id, sessionId: session?.serviceSessionId || null, exceptionSessionId: exceptionSession?.serviceSessionId || null, exceptionStatus: exceptionSession?.serviceStatus || null, status, label, detail: details, services, serviceDetails:roomList, expectedEndAt: session?.expectedEndAt, bedCount: capacity, occupiedBedCount, availableBedCount: Number(liveRoom?.availableBedCount ?? Math.max(0, capacity - occupiedBedCount)) };
      });
     state.serviceCategories = serviceCategories || [];
     state.services = services.map(service => ({ id: service.id, code: service.code, name: service.name, category: service.category || '未分类', categoryId: service.categoryId || null, duration: `${service.defaultDurationMinutes} 分钟`, durationMinutes:service.defaultDurationMinutes, price: service.priceCents / 100, dispatchType: service.dispatchType || 'QUEUE', allowsExtension:service.allowsExtension !== false }));
@@ -755,13 +755,18 @@ function renderRooms() {
       const technicianLabel = room.status === 'reserved' ? service.technicianName : serviceTechnician?.code || service.technicianName || '待派单';
       const timer = service.status === 'IN_SERVICE' && service.expectedEndAt
         ? `<span class="room-service-timer" data-room-countdown="${roomTransferEscape(service.expectedEndAt)}">${formatRoomCountdown(service.expectedEndAt)}</span>`
-        : `<span class="room-service-state">${service.status === 'PENDING_ACCEPTANCE' ? '待接单' : service.status === 'ACCEPTED' ? '待开始' : ''}</span>`;
-      const extension = service.extensionSummary ? ` · 加钟：${service.extensionSummary}` : '';
-      const duration = room.status === 'serving' ? '' : ` · ${Number(service.plannedDurationMinutes || 0)} 分钟`;
-      return `<span class="room-service-row"><b>${roomTransferEscape(technicianLabel)}</b><small>${roomTransferEscape(service.serviceName)}${roomTransferEscape(extension)}${duration}</small>${timer}</span>`;
+        : `<span class="room-service-state">${service.status === 'PENDING_ACCEPTANCE' ? '待接单' : service.status === 'ACCEPTED' ? '待开始' : service.status === 'COMPLETED_UNSETTLED' ? '待结算' : ''}</span>`;
+      const extensions = Array.isArray(service.extensions) ? service.extensions : [];
+      const mainDuration = service.mainDurationMinutes ?? (extensions.length || service.extensionSummary ? null : service.plannedDurationMinutes);
+      const extension = extensions.length
+        ? `加钟 ${extensions.length} 项 · 共 ${Number(service.totalDurationMinutes ?? service.plannedDurationMinutes)}′`
+        : service.extensionSummary ? `加钟：${service.extensionSummary}` : '';
+      return `<span class="room-service-row"><b>${roomTransferEscape(technicianLabel)}</b><span class="room-service-main"><small class="room-service-primary">${roomTransferEscape(service.serviceName)}${mainDuration == null ? '' : ` ${Number(mainDuration)}′`}</small>${extension ? `<small class="room-service-extensions">${roomTransferEscape(extension)}</small>` : ''}</span>${timer}</span>`;
     }).join('');
+    const detailButton = ['serving','pending-payment'].includes(room.status) && (room.serviceDetails || room.services || []).length
+      ? `<button class="room-detail-button" data-room-service-detail="${roomTransferEscape(room.id)}" type="button" aria-label="${roomTransferEscape(room.id)} 房服务详情">详情</button>` : '';
     const exceptionActions = room.exceptionSessionId && room.apiId ? `<button class="room-dispatch-action" data-dispatch-reassignment="${roomTransferEscape(room.exceptionSessionId)}" type="button">重新派单</button>${room.exceptionStatus === 'REASSIGNMENT_REQUIRED' ? `<button class="room-dispatch-action danger" data-dispatch-cancellation="${roomTransferEscape(room.exceptionSessionId)}" type="button">取消派单</button>` : ''}` : '';
-    return `<article class="room ${roomTransferEscape(room.status)}"><div class="room-card" data-room="${roomTransferEscape(room.id)}" role="button" tabindex="0"><span class="room-top"><span class="dot ${roomTransferEscape(room.status)}"></span><span>${roomTransferEscape(room.label)}</span></span><strong>${roomTransferEscape(room.id)}</strong><small class="room-beds">${roomTransferEscape(room.detail || '')}</small>${pendingSummary}${serviceRows ? `<span class="room-services">${serviceRows}</span>` : ''}</div><div class="room-actions">${exceptionActions}${room.status === 'serving' && room.apiId ? `<button class="room-transfer-tech-action" data-transfer-technician="${roomTransferEscape(room.id)}" type="button">换技师</button>` : ''}${room.status === 'pending-payment' && room.apiId ? `<button class="room-paid-action" data-confirm-payment="${roomTransferEscape(room.id)}" type="button">已付款</button>` : ''}${room.status === 'cleaning' && room.apiId ? `<button class="room-clean-action" data-complete-cleaning="${roomTransferEscape(room.id)}" type="button">完成清洁</button>` : ''}${room.apiId ? `<button class="room-status-action" data-room-status="${roomTransferEscape(room.id)}" type="button">状态</button>` : ''}</div></article>`;
+    return `<article class="room ${roomTransferEscape(room.status)}"><div class="room-top"><span><span class="dot ${roomTransferEscape(room.status)}"></span> ${roomTransferEscape(room.label)}</span>${detailButton}</div><div class="room-card" data-room="${roomTransferEscape(room.id)}" role="button" tabindex="0"><strong>${roomTransferEscape(room.id)}</strong><small class="room-beds">${roomTransferEscape(room.detail || '')}</small>${pendingSummary}${serviceRows ? `<span class="room-services">${serviceRows}</span>` : ''}</div><div class="room-actions">${exceptionActions}${room.status === 'serving' && room.apiId ? `<button class="room-transfer-tech-action" data-transfer-technician="${roomTransferEscape(room.id)}" type="button">换技师</button>` : ''}${room.status === 'pending-payment' && room.apiId ? `<button class="room-paid-action" data-confirm-payment="${roomTransferEscape(room.id)}" type="button">已付款</button>` : ''}${room.status === 'cleaning' && room.apiId ? `<button class="room-clean-action" data-complete-cleaning="${roomTransferEscape(room.id)}" type="button">完成清洁</button>` : ''}${room.apiId ? `<button class="room-status-action" data-room-status="${roomTransferEscape(room.id)}" type="button">状态</button>` : ''}</div></article>`;
     }).join('');
   } catch (error) {
     console.warn('renderRooms failed', error);
@@ -778,12 +783,72 @@ function renderRooms() {
   grid?.querySelectorAll?.('[data-dispatch-cancellation]').forEach(button => {
     button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); dispatchReassignmentSessionId = button.dataset.dispatchCancellation; openDispatchCancellation(); });
   });
+  const detailDialog = document.querySelector('#room-service-detail-dialog');
+  if (detailDialog?.open) openRoomServiceDetail(detailDialog.dataset.roomId);
 }
 function formatExpectedClockTime(expectedEndAt) {
   if (!expectedEndAt) return '';
   const date = new Date(expectedEndAt);
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function ensureRoomServiceDetailDialog() {
+  let dialog = document.querySelector('#room-service-detail-dialog');
+  if (dialog) return dialog;
+  document.body.insertAdjacentHTML('beforeend', '<dialog id="room-service-detail-dialog" aria-labelledby="room-service-detail-title"><header class="service-detail-header"><div><h2 id="room-service-detail-title"></h2><p id="room-service-detail-state"></p></div><button class="icon-button" id="close-room-service-detail" type="button" title="关闭服务详情" aria-label="关闭服务详情">×</button></header><div class="service-detail-body" id="room-service-detail-body"></div><footer class="service-detail-footer"><div>总时长<strong id="room-service-detail-duration"></strong></div><div><span>合计金额</span><strong id="room-service-detail-amount"></strong></div></footer></dialog>');
+  dialog = document.querySelector('#room-service-detail-dialog');
+  document.querySelector('#close-room-service-detail').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('click', event => {
+    if (event.target !== dialog) return;
+    const rect = dialog.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
+  });
+  return dialog;
+}
+
+function openRoomServiceDetail(roomId) {
+  const room = state.rooms.find(item => String(item.id) === String(roomId));
+  if (!room || !['serving','pending-payment'].includes(room.status)) {
+    document.querySelector('#room-service-detail-dialog')?.close();
+    return;
+  }
+  const dialog = ensureRoomServiceDetailDialog();
+  dialog.dataset.roomId = room.id;
+  renderRoomServiceDetail(room);
+  if (!dialog.open) dialog.showModal();
+}
+
+function renderRoomServiceDetail(room) {
+  // Board rows expand technician participants; details count each service once.
+  const sessions = [...new Map((room.serviceDetails || room.services || []).map(item => [item.serviceSessionId || item.sessionId, item])).values()];
+  const statusLabels = { IN_SERVICE:'服务中', COMPLETED_UNSETTLED:'待结算', PENDING_ACCEPTANCE:'待接单', ACCEPTED:'待开始', REASSIGNMENT_REQUIRED:'待重新派单', DISPATCH_CANCELLED:'派单已取消' };
+  const renderItem = (item, main = false) => {
+    const technician = main ? item.technicianDisplay || [item.technicianCode,item.technicianName].filter(Boolean).join(' · ')
+      : [item.technicianCode,item.technicianName].filter(Boolean).join(' · ');
+    return `<div class="service-detail-item"><span class="service-detail-tag ${main ? 'main' : 'extension'}">${main ? '主项' : '加钟'}</span><div class="service-detail-info"><b>${roomTransferEscape(item.serviceNameSnapshot || item.serviceName)}</b><small>${roomTransferEscape(technician || '未记录技师')} · ${main ? '上钟' : '加钟'} ${formatExpectedClockTime(main ? item.startedAt : item.addedAt) || '—'}</small></div><span class="service-detail-duration">${item.plannedDurationMinutes == null ? '—' : `${Number(item.plannedDurationMinutes)} 分钟`}</span><strong class="service-detail-price">${money(Number(item.servicePriceCents || 0) / 100)}</strong></div>`;
+  };
+  document.querySelector('#room-service-detail-title').textContent = `${room.id} 房 · 服务详情`;
+  document.querySelector('#room-service-detail-state').textContent = room.label;
+  document.querySelector('#room-service-detail-state').classList.toggle('pending', room.status === 'pending-payment');
+  document.querySelector('#room-service-detail-body').innerHTML = sessions.map(session => {
+    const extensions = Array.isArray(session.extensions) ? session.extensions : [];
+    const mainDuration = session.mainDurationMinutes ?? (extensions.length || session.extensionSummary ? null : session.plannedDurationMinutes);
+    const main = { ...session, plannedDurationMinutes:mainDuration };
+    const timeline = [{ ...main, addedAt:session.startedAt }, ...extensions].map((item, index) => {
+      const technician = index === 0 ? session.technicianDisplay || [session.technicianCode,session.technicianName].filter(Boolean).join(' · ')
+        : [item.technicianCode,item.technicianName].filter(Boolean).join(' · ');
+      return `<li class="${index ? 'extension' : 'main'}"><time>${formatExpectedClockTime(item.addedAt) || '—'}</time><span>${index ? '加钟' : '上钟'} · ${roomTransferEscape(item.serviceNameSnapshot || item.serviceName)}<small>${roomTransferEscape(technician || '未记录技师')}</small></span></li>`;
+    }).join('');
+    return `<section class="service-detail-session">${sessions.length > 1 ? `<h3 class="service-detail-bed">${roomTransferEscape(session.bedName || session.bedCode || '未指定床位')} · ${statusLabels[session.serviceStatus || session.status] || '状态未记录'}</h3>` : ''}<dl class="service-detail-meta"><div><dt>会员</dt><dd>${roomTransferEscape(session.memberName || '未关联会员')}</dd></div><div><dt>营业日</dt><dd>${roomTransferEscape(session.businessDate || '—')}</dd></div><div><dt>上钟时间</dt><dd>${formatExpectedClockTime(session.startedAt) || '—'}</dd></div></dl><h3 class="service-detail-section-title">服务时间线</h3><ol class="service-detail-timeline">${timeline}</ol><h3 class="service-detail-section-title">项目明细</h3><div class="service-detail-items">${renderItem(main, true)}${extensions.map(item => renderItem(item)).join('')}</div>${!Array.isArray(session.extensions) && session.extensionSummary ? `<p class="service-detail-legacy">加钟：${roomTransferEscape(session.extensionSummary)}</p>` : ''}</section>`;
+  }).join('');
+  const totalMinutes = sessions.reduce((sum, item) => sum + Number(item.totalDurationMinutes ?? item.plannedDurationMinutes ?? 0), 0);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const duration = [hours ? `${hours} 小时` : '', minutes ? `${minutes} 分` : ''].filter(Boolean).join(' ');
+  document.querySelector('#room-service-detail-duration').textContent = `${totalMinutes} 分钟${duration ? `（${duration}）` : ''}`;
+  document.querySelector('#room-service-detail-amount').textContent = money(sessions.reduce((sum, item) => sum
+    + Number(item.totalAmountCents ?? (Number(item.servicePriceCents || 0) + (item.extensions || []).reduce((total, extension) => total + Number(extension.servicePriceCents || 0), 0))), 0) / 100);
 }
 
 const dispatchEscape = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[character]));
@@ -4362,23 +4427,41 @@ let mergeSettlementGroups=[];
 let mergeSettlementSelection=new Set();
 let mergeSettlementMemberId=null;
 let mergePaymentEditor;
+const mergeUnitReceipts=new Map();
 
 function mergeSelectedGroups(){return [...mergeSettlementSelection].map(index=>mergeSettlementGroups[index]).filter(Boolean);}
 function mergeSelectedSessions(){return mergeSelectedGroups().flatMap(group=>group.sessions);}
 function mergeOriginalCents(){return mergeSelectedSessions().reduce((sum,item)=>sum+Number(item.servicePriceCents||0),0);}
-function mergeAmountCents(){return Math.round(Math.max(0,Number(document.querySelector('#merge-settlement-amount')?.value)||0)*100);}
+function mergeUnitAmountCents(session){
+  if(mergeIsWaived())return 0;
+  const value=mergeUnitReceipts.get(session.id)??(Number(session.servicePriceCents||0)/100).toFixed(2);
+  const cents=Math.round(Number(value)*100);
+  return /^(?:\d+(?:\.\d{1,2})?|\.\d{1,2})$/.test(value)&&Number.isSafeInteger(cents)?cents:null;
+}
+function mergeAmountCents(){return mergeSelectedSessions().reduce((sum,session)=>sum+(mergeUnitAmountCents(session)??0),0);}
 function mergeIsWaived(){return Boolean(document.querySelector('#merge-settlement-waive')?.checked);}
 function mergePayments(){return mergePaymentEditor?.payments()||[];}
+function mergeReceiptError(){
+  if(mergeSelectedSessions().some(session=>mergeUnitAmountCents(session)===null))return '各单实收须填写有效金额，最多两位小数且不得为负数';
+  if(!Number.isSafeInteger(mergeAmountCents()))return '实收合计超出支持范围';
+  if(mergeSelectedSessions().some(session=>mergeUnitAmountCents(session)===0)&&!document.querySelector('#merge-waive-reason').value.trim())return '0.00 元单元实收必须填写免单原因';
+  return '';
+}
 
 function setupMergeSettlementDialog(){
   if(document.querySelector('#merge-settlement-dialog'))return;
-  document.body.insertAdjacentHTML('beforeend','<dialog id="merge-settlement-dialog" class="merge-settlement-dialog"><form id="merge-settlement-form" class="dialog-card merge-settlement-card"><div class="dialog-heading"><div><p class="eyebrow">分单 / 合并结算工作台</p><h2>按房间和床位选择服务</h2></div><button class="icon-button" type="button" id="close-merge-settlement" aria-label="关闭">×</button></div><div class="merge-settlement-layout"><section class="merge-settlement-room-pane"><div class="merge-settlement-section-heading"><div><b>待结算房间 / 床位</b><small>同一床位的主服务与加钟作为一个结算单元，可与其他床位合并</small></div><label class="merge-room-search"><span>⌕</span><input id="merge-room-search" placeholder="搜索房间号、床位、工单号或项目"></label></div><div id="merge-settlement-rooms" class="merge-settlement-rooms"></div><div class="merge-settlement-selected" id="merge-settlement-selected"><p>请选择一个或多个房间 / 床位</p></div></section><aside class="merge-settlement-summary"><section class="settlement-member merge-settlement-member"><div><span>结算会员</span><b id="merge-member-name">散客</b><small id="merge-member-meta">非会员结算</small></div><button class="button secondary" type="button" id="merge-select-member">查询会员</button></section><section class="settlement-amount-summary"><div><span>项目原价</span><strong id="merge-original-total">¥0.00</strong></div><div><span>优惠/加价</span><strong id="merge-adjustment">¥0.00</strong></div><div class="settlement-received"><span>实收金额</span><label class="settlement-amount-input"><span>¥</span><input id="merge-settlement-amount" type="number" min="0" step="0.01" value="0.00" aria-label="分单或合并结算实收金额"></label></div></section><label class="settlement-waive-option"><input id="merge-settlement-waive" type="checkbox"> 免单</label><label class="settlement-waive-reason" id="merge-waive-reason-wrap" hidden>免单原因<textarea id="merge-waive-reason" rows="2" maxlength="240" placeholder="请输入免单原因"></textarea></label><div class="settlement-payment-heading"><span>支付方式</span><small>支持组合支付</small></div><div class="payment-options" id="merge-payment-options"></div><section class="settlement-allocation-summary"><span>已分配 <b id="merge-allocated">¥0.00</b></span><span>待分配 <b id="merge-remaining">¥0.00</b></span></section><button class="button primary" type="submit" id="submit-merge-settlement" disabled>确认分单 / 合并收款</button></aside></div></form></dialog>');
+  document.body.insertAdjacentHTML('beforeend','<dialog id="merge-settlement-dialog" class="merge-settlement-dialog"><form id="merge-settlement-form" class="dialog-card merge-settlement-card"><div class="dialog-heading"><div><p class="eyebrow">分单 / 合并结算工作台</p><h2>按房间和床位选择服务</h2></div><button class="icon-button" type="button" id="close-merge-settlement" aria-label="关闭">×</button></div><div class="merge-settlement-layout"><section class="merge-settlement-room-pane"><div class="merge-settlement-section-heading"><div><b>待结算房间 / 床位</b></div><label class="merge-room-search"><span aria-hidden="true">⌕</span><input id="merge-room-search" aria-label="搜索待结算房间或床位" placeholder="搜索房间号、床位、工单号或项目"></label></div><div id="merge-settlement-rooms" class="merge-settlement-rooms"></div><h3 class="merge-selected-title">已选明细 · 逐单实收</h3><div class="merge-settlement-selected" id="merge-settlement-selected"><p>请选择一个或多个房间 / 床位</p></div></section><aside class="merge-settlement-summary"><section class="settlement-member merge-settlement-member"><div><span>结算会员</span><b id="merge-member-name">散客</b><small id="merge-member-meta">非会员结算</small></div><button class="button secondary" type="button" id="merge-select-member">查询会员</button></section><section class="settlement-amount-summary"><div><span>项目原价</span><strong id="merge-original-total">¥0.00</strong></div><div><span>优惠/加价</span><strong id="merge-adjustment">¥0.00</strong></div><div class="settlement-received"><span>实际收入</span><strong id="merge-real-total">¥0.00</strong></div></section><p id="merge-payment-verification" class="merge-payment-verification neutral" role="status" aria-live="polite">请先勾选要结算的订单</p><label class="settlement-waive-option"><input id="merge-settlement-waive" type="checkbox"> 免单</label><label class="settlement-waive-reason" id="merge-waive-reason-wrap" hidden>免单原因<textarea id="merge-waive-reason" rows="2" maxlength="240" placeholder="请输入免单原因"></textarea></label><div class="settlement-payment-heading"><span>支付方式</span></div><div class="payment-options" id="merge-payment-options"></div><section class="settlement-allocation-summary"><span>已分配 <b id="merge-allocated">¥0.00</b></span><span>待分配 <b id="merge-remaining">¥0.00</b></span></section><button class="button primary" type="submit" id="submit-merge-settlement" disabled>确认分单 / 合并收款</button></aside></div></form></dialog>');
   document.querySelector('#close-merge-settlement').addEventListener('click',()=>document.querySelector('#merge-settlement-dialog').close());
-  document.querySelector('#merge-settlement-rooms').addEventListener('click',event=>{const button=event.target.closest('[data-merge-room]');if(!button||button.disabled)return;const index=Number(button.dataset.mergeRoom);if(mergeSettlementSelection.has(index))mergeSettlementSelection.delete(index);else mergeSettlementSelection.add(index);renderMergeSettlement({resetAmount:true});});
+  document.querySelector('#merge-settlement-rooms').addEventListener('click',event=>{const button=event.target.closest('[data-merge-room]');if(!button||button.disabled)return;const index=Number(button.dataset.mergeRoom);if(mergeSettlementSelection.has(index))mergeSettlementSelection.delete(index);else mergeSettlementSelection.add(index);renderMergeSettlement();});
   document.querySelector('#merge-room-search').addEventListener('input',()=>renderMergeSettlement());
   document.querySelector('#merge-select-member').addEventListener('click',()=>openSettlementMemberSearch('merge'));
-  document.querySelector('#merge-settlement-amount').addEventListener('input',()=>{if(mergeIsWaived()){document.querySelector('#merge-settlement-waive').checked=false;document.querySelector('#merge-waive-reason-wrap').hidden=true;}updateMergeSettlementAllocation();});
-  document.querySelector('#merge-settlement-waive').addEventListener('change',event=>{const checked=event.currentTarget.checked;document.querySelector('#merge-settlement-amount').value=checked?'0.00':(mergeOriginalCents()/100).toFixed(2);document.querySelector('#merge-waive-reason-wrap').hidden=!checked;renderMergePaymentMethods({reset:true});});
+  document.querySelector('#merge-settlement-selected').addEventListener('input',event=>{
+    const input=event.target.closest('[data-merge-unit-amount]');if(!input)return;
+    mergeUnitReceipts.set(input.dataset.mergeUnitAmount,input.value);
+    input.closest('.merge-unit-receipt').classList.toggle('zero',input.value!==''&&Number(input.value)===0);
+    updateMergeSettlementAllocation();
+  });
+  document.querySelector('#merge-settlement-waive').addEventListener('change',()=>{renderMergeSettlement();renderMergePaymentMethods({reset:true});});
   document.querySelector('#merge-waive-reason').addEventListener('input',updateMergeSettlementAllocation);
   mergePaymentEditor=createCombinedPaymentEditor(document.querySelector('#merge-payment-options'),{amountCents:mergeAmountCents,memberId:()=>mergeSettlementMemberId,onChange:updateMergeSettlementAllocation,payerTarget:'merge-payment'});
   document.querySelector('#merge-settlement-form').addEventListener('submit',submitMergeSettlement);
@@ -4393,29 +4476,37 @@ function renderMergePaymentMethods({reset=false}={}){
 }
 
 function updateMergeSettlementAllocation(){
-  const original=mergeOriginalCents(),amount=mergeAmountCents(),allocated=mergePayments().reduce((sum,item)=>sum+item.amountCents,0),remaining=amount-allocated;
-  document.querySelector('#merge-original-total').textContent=money(original/100);document.querySelector('#merge-adjustment').textContent=money((original-amount)/100);document.querySelector('#merge-allocated').textContent=money(allocated/100);document.querySelector('#merge-remaining').textContent=remaining===0?money(0):`${remaining<0?'-':''}${money(Math.abs(remaining)/100)}`;document.querySelector('#merge-remaining').classList.toggle('settlement-overpaid',remaining<0);
-  const memberPayments=mergePayments().filter(payment=>activePaymentMethods.find(method=>method.code===payment.method)?.methodKind==='MEMBER_BALANCE');const validMember=!memberPayments.some(payment=>!payment.walletId);
-  const waiveReason=document.querySelector('#merge-waive-reason')?.value.trim()||'';document.querySelector('#submit-merge-settlement').disabled=mergeSelectedGroups().length<1||(!mergeIsWaived()&&amount<1)||(mergeIsWaived()&&(!waiveReason||amount!==0))||remaining!==0||(amount>0&&!mergePayments().length)||!validMember||!mergePaymentEditor?.valid();
+  const sessions=mergeSelectedSessions(),original=mergeOriginalCents(),amount=mergeAmountCents(),payments=mergePayments(),allocated=payments.reduce((sum,item)=>sum+item.amountCents,0),remaining=amount-allocated;
+  document.querySelector('#merge-original-total').textContent=money(original/100);document.querySelector('#merge-adjustment').textContent=money((original-amount)/100);document.querySelector('#merge-real-total').textContent=money(amount/100);document.querySelector('#merge-allocated').textContent=money(allocated/100);document.querySelector('#merge-remaining').textContent=remaining===0?money(0):`${remaining<0?'-':''}${money(Math.abs(remaining)/100)}`;document.querySelector('#merge-remaining').classList.toggle('settlement-overpaid',remaining<0);
+  document.querySelector('#merge-waive-reason-wrap').hidden=!mergeIsWaived()&&!sessions.some(session=>mergeUnitAmountCents(session)===0);
+  const error=mergeReceiptError(),validPayment=Boolean(mergePaymentEditor?.valid());
+  const verification=document.querySelector('#merge-payment-verification');
+  verification.className=`merge-payment-verification ${!sessions.length?'neutral':error||remaining!==0||!validPayment?'bad':'ok'}`;
+  verification.textContent=!sessions.length?'请先勾选要结算的订单':error||(remaining<0?`支付多填 ${money(-remaining/100)}`:remaining>0?`还少分配 ${money(remaining/100)}`:!validPayment?'请选择有效的付款会员卡':`各单实收合计 ${money(amount/100)}，与支付分配一致`);
+  document.querySelector('#submit-merge-settlement').disabled=!sessions.length||Boolean(error)||remaining!==0||!validPayment;
 }
 
 async function openMergeSettlement(){
-  setupMergeSettlementDialog();closeSettlementActions();mergeSettlementSelection.clear();mergeSettlementMemberId=null;document.querySelector('#merge-room-search').value='';document.querySelector('#merge-settlement-waive').checked=false;document.querySelector('#merge-waive-reason').value='';document.querySelector('#merge-waive-reason-wrap').hidden=true;
+  setupMergeSettlementDialog();closeSettlementActions();mergeSettlementSelection.clear();mergeUnitReceipts.clear();mergeSettlementMemberId=null;document.querySelector('#merge-room-search').value='';document.querySelector('#merge-settlement-waive').checked=false;document.querySelector('#merge-waive-reason').value='';document.querySelector('#merge-waive-reason-wrap').hidden=true;
   const [pendingLoaded,paymentResponse]=await Promise.all([loadPendingServiceSessions({silent:true}),fetch('http://localhost:8080/api/v1/payment-methods',{headers:storeContextHeaders()})]);if(!pendingLoaded||!paymentResponse.ok)return toast('合并结算资料加载失败');activePaymentMethods=(await paymentResponse.json()).filter(item=>item.active!==false);
-  const groups=new Map();state.pendingServiceSessions.forEach(session=>{const bedKey=session.bedId||session.bedCode||'unassigned';const key=`${session.businessDate||''}|${session.roomCode}|${bedKey}`;if(!groups.has(key))groups.set(key,{businessDate:session.businessDate||'',roomCode:session.roomCode,bedId:session.bedId||null,bedCode:session.bedCode||'',bedName:session.bedName||'',sessions:[]});groups.get(key).sessions.push(session);});mergeSettlementGroups=[...groups.values()].sort((a,b)=>`${a.roomCode}|${a.bedCode}`.localeCompare(`${b.roomCode}|${b.bedCode}`,'zh-CN',{numeric:true}));renderMergeMember();renderMergeSettlement({resetAmount:true});document.querySelector('#merge-settlement-dialog').showModal();
+  const groups=new Map();state.pendingServiceSessions.forEach(session=>{const bedKey=session.bedId||session.bedCode||'unassigned';const key=`${session.businessDate||''}|${session.roomCode}|${bedKey}`;if(!groups.has(key))groups.set(key,{businessDate:session.businessDate||'',roomCode:session.roomCode,bedId:session.bedId||null,bedCode:session.bedCode||'',bedName:session.bedName||'',sessions:[]});groups.get(key).sessions.push(session);});mergeSettlementGroups=[...groups.values()].sort((a,b)=>`${a.roomCode}|${a.bedCode}`.localeCompare(`${b.roomCode}|${b.bedCode}`,'zh-CN',{numeric:true}));renderMergeMember();renderMergeSettlement();renderMergePaymentMethods({reset:true});document.querySelector('#merge-settlement-dialog').showModal();
 }
 
-function renderMergeSettlement({resetAmount=false}={}){
+function renderMergeSettlement(){
   const selectedDates=new Set(mergeSelectedGroups().map(group=>group.businessDate).filter(Boolean));const activeDate=selectedDates.size===1?[...selectedDates][0]:null;const keyword=document.querySelector('#merge-room-search')?.value.trim().toLowerCase()||'';
    document.querySelector('#merge-settlement-rooms').innerHTML=mergeSettlementGroups.map((group,index)=>({group,index})).filter(({group})=>!keyword||`${group.roomCode} ${group.bedCode} ${group.bedName} ${group.sessions.map(item=>`${item.serviceNo||''} ${item.serviceNameSnapshot||''} ${item.technicianName||''}`).join(' ')}`.toLowerCase().includes(keyword)).map(({group,index})=>{const selected=mergeSettlementSelection.has(index);const disabled=!selected&&activeDate&&group.businessDate!==activeDate;const total=group.sessions.reduce((sum,item)=>sum+Number(item.servicePriceCents||0),0);const bedLabel=group.bedCode||group.bedName||'未指定床位';return `<button type="button" class="merge-settlement-room${selected?' selected':''}" data-merge-room="${index}" ${disabled?'disabled':''}><i>${selected?'✓':''}</i><span><b>${memberBusinessEscape(group.roomCode)} 房 · ${memberBusinessEscape(bedLabel)}</b><small>${roomTransferEscape(group.businessDate||'当前营业日')} · ${roomTransferEscape(group.sessions.length)} 项 · ${group.sessions.map(item=>memberBusinessEscape(item.serviceNo||'')).join('、')}</small></span><strong>${money(total/100)}</strong></button>`;}).join('')||'<p class="merge-settlement-empty">没有匹配的待结算房间 / 床位</p>';
-   const selected=mergeSelectedGroups();document.querySelector('#merge-settlement-selected').innerHTML=selected.length?selected.map(group=>`<div><span><b>${memberBusinessEscape(group.roomCode)} 房 · ${memberBusinessEscape(group.bedCode||group.bedName||'未指定床位')}</b><small>${group.sessions.map(item=>memberBusinessEscape(item.serviceNameSnapshot)).join('、')}</small></span><strong>${money(group.sessions.reduce((sum,item)=>sum+Number(item.servicePriceCents||0),0)/100)}</strong></div>`).join(''):'<p>请选择一个或多个房间 / 床位</p>';
-  if(resetAmount)document.querySelector('#merge-settlement-amount').value=mergeIsWaived()?'0.00':(mergeOriginalCents()/100).toFixed(2);renderMergePaymentMethods({reset:resetAmount});
+  const sessions=mergeSelectedSessions();document.querySelector('#merge-settlement-selected').innerHTML=sessions.length?sessions.map(session=>{
+    if(!mergeUnitReceipts.has(session.id))mergeUnitReceipts.set(session.id,(Number(session.servicePriceCents||0)/100).toFixed(2));
+    const value=mergeIsWaived()?'0.00':mergeUnitReceipts.get(session.id),label=`${session.roomCode} 房 · ${session.bedCode||session.bedName||'未指定床位'}`;
+    return `<div class="merge-unit-row"><span class="merge-unit-info"><b>${memberBusinessEscape(label)}</b><small>${memberBusinessEscape(session.serviceNameSnapshot||'')}${session.extensionSummary?` + ${memberBusinessEscape(session.extensionSummary)}`:''}</small><small>${memberBusinessEscape(session.serviceNo||'')} · ${memberBusinessEscape(session.plannedDurationMinutes)} 分钟</small></span><s class="merge-unit-original">${money(Number(session.servicePriceCents||0)/100)}</s><label class="merge-unit-receipt${value!==''&&Number(value)===0?' zero':''}"><span>¥</span><input type="number" min="0" step="0.01" inputmode="decimal" value="${roomTransferEscape(value)}" data-merge-unit-amount="${roomTransferEscape(session.id)}" aria-label="${roomTransferEscape(label)} ${roomTransferEscape(session.serviceNo||'')} 实收金额" ${mergeIsWaived()?'disabled':''}></label></div>`;
+  }).join(''):'<p>请选择一个或多个房间 / 床位</p>';
+  updateMergeSettlementAllocation();
 }
 
 async function submitMergeSettlement(event){
-  event.preventDefault();const groups=mergeSelectedGroups();if(groups.length<1)return toast('请至少选择一个房间 / 床位');if(new Set(groups.map(group=>group.businessDate)).size>1)return toast('不同营业日的订单需要分开结算');const sessions=mergeSelectedSessions(),amount=mergeAmountCents(),waived=mergeIsWaived(),waiveReason=document.querySelector('#merge-waive-reason').value.trim(),payments=mergePayments();if(waived&&amount!==0)return toast('免单结算的实收金额必须为 0.00 元');if(amount===0&&(!waived||!waiveReason))return toast('0.00 元结算必须勾选免单并填写原因');if(amount>0&&amount<1)return toast('普通结算最低实收金额为 0.01 元');if(payments.reduce((sum,item)=>sum+item.amountCents,0)!==amount)return toast('收款金额合计必须等于实收金额');
+  event.preventDefault();const groups=mergeSelectedGroups();if(groups.length<1)return toast('请至少选择一个房间 / 床位');if(new Set(groups.map(group=>group.businessDate)).size>1)return toast('不同营业日的订单需要分开结算');const error=mergeReceiptError();if(error)return toast(error);const sessions=mergeSelectedSessions(),amount=mergeAmountCents(),waiveReason=document.querySelector('#merge-waive-reason').value.trim(),payments=mergePayments();if(payments.reduce((sum,item)=>sum+item.amountCents,0)!==amount)return toast('收款金额合计必须等于实收金额');if(!mergePaymentEditor?.valid())return toast('请选择有效的付款会员卡');
   const submit=document.querySelector('#submit-merge-settlement');submit.disabled=true;const printWindow=storePrintSetting?.autoPrint?window.open('','massage-merge-receipt','popup,width=480,height=720'):null;
-  try{const response=await fetch('http://localhost:8080/api/v1/sales-orders/settle',{method:'POST',headers:storeContextHeaders(true),body:JSON.stringify({memberId:mergeSettlementMemberId,settlementAmountCents:amount,waiveReason:waived?waiveReason:null,lines:sessions.map(item=>({serviceItemId:item.serviceItemId,serviceSessionId:item.id,durationMinutes:Number(item.plannedDurationMinutes)})),payments})});if(!response.ok){if(printWindow)printWindow.close();return toast(await responseMessage(response,'合并结算失败，请刷新订单后重试'));}const order=await response.json();document.querySelector('#merge-settlement-dialog').close();mergeSettlementSelection.clear();await Promise.all([loadPendingServiceSessions({silent:true}),loadFoundationData({silent:true}),loadSalesOrders(),loadDailyReport()]);if(storePrintSetting?.autoPrint){const detailResponse=await fetch(`http://localhost:8080/api/v1/sales-orders/${order.id}`,{headers:storeContextHeaders()});if(detailResponse.ok)printOrder(await detailResponse.json(),printWindow).catch(()=>{if(printWindow)printWindow.close();toast('订单已完成，小票打印失败，请检查浏览器弹窗');});else{if(printWindow)printWindow.close();toast('订单已完成，小票加载失败');}}toast(`合并结算成功，订单 ${order.orderNo}`);}catch{if(printWindow)printWindow.close();toast('合并结算服务连接失败');}finally{submit.disabled=false;updateMergeSettlementAllocation();}
+  try{const response=await fetch('http://localhost:8080/api/v1/sales-orders/settle',{method:'POST',headers:storeContextHeaders(true),body:JSON.stringify({memberId:mergeSettlementMemberId,settlementAmountCents:amount,waiveReason:sessions.some(item=>mergeUnitAmountCents(item)===0)?waiveReason:null,lines:sessions.map(item=>({serviceItemId:item.serviceItemId,serviceSessionId:item.id,durationMinutes:Number(item.plannedDurationMinutes),settlementAmountCents:mergeUnitAmountCents(item)})),payments})});if(!response.ok){if(printWindow)printWindow.close();return toast(await responseMessage(response,'合并结算失败，请刷新订单后重试'));}const order=await response.json();document.querySelector('#merge-settlement-dialog').close();mergeSettlementSelection.clear();await Promise.all([loadPendingServiceSessions({silent:true}),loadFoundationData({silent:true}),loadSalesOrders(),loadDailyReport()]);if(storePrintSetting?.autoPrint){const detailResponse=await fetch(`http://localhost:8080/api/v1/sales-orders/${order.id}`,{headers:storeContextHeaders()});if(detailResponse.ok)printOrder(await detailResponse.json(),printWindow).catch(()=>{if(printWindow)printWindow.close();toast('订单已完成，小票打印失败，请检查浏览器弹窗');});else{if(printWindow)printWindow.close();toast('订单已完成，小票加载失败');}}toast(`合并结算成功，订单 ${order.orderNo}`);}catch{if(printWindow)printWindow.close();toast('合并结算服务连接失败');}finally{submit.disabled=false;updateMergeSettlementAllocation();}
 }
 function setupFrontdeskRoomTransferDialog(){if(document.querySelector('#frontdesk-room-transfer-dialog'))return;document.body.insertAdjacentHTML('beforeend','<dialog id="frontdesk-room-transfer-dialog" class="frontdesk-room-transfer-dialog"><form id="frontdesk-room-transfer-form" class="dialog-card frontdesk-room-transfer-card"><div class="dialog-heading"><div><p class="eyebrow">前台更换房间</p><h2>转移服务与计时</h2></div><button class="icon-button" type="button" id="close-frontdesk-room-transfer" aria-label="关闭">×</button></div><div class="frontdesk-room-transfer-flow"><label><span>当前服务</span><select name="serviceSessionId" id="frontdesk-transfer-session" required></select></label><span class="frontdesk-transfer-arrow">→</span><label><span>目标可用床位</span><select name="toRoomId" id="frontdesk-transfer-room" required></select></label></div><div class="frontdesk-transfer-preview" id="frontdesk-transfer-preview"></div><label class="frontdesk-transfer-reason">换房原因<textarea name="reason" rows="3" maxlength="240" required placeholder="例如：顾客临时加项目，需要更换项目房"></textarea></label><p class="frontdesk-transfer-note">确认后原房间按剩余服务状态更新，新房间继续当前服务倒计时，技师端同步显示新房间。</p><div class="dialog-actions"><button class="button secondary" type="button" id="cancel-frontdesk-room-transfer">取消</button><button class="button primary" type="submit" id="submit-frontdesk-room-transfer">确认更换房间</button></div></form></dialog>');document.querySelector('#close-frontdesk-room-transfer').addEventListener('click',()=>document.querySelector('#frontdesk-room-transfer-dialog').close());document.querySelector('#cancel-frontdesk-room-transfer').addEventListener('click',()=>document.querySelector('#frontdesk-room-transfer-dialog').close());document.querySelector('#frontdesk-transfer-session').addEventListener('change',()=>{renderFrontdeskRoomTransferRooms();renderFrontdeskRoomTransferPreview();});document.querySelector('#frontdesk-transfer-room').addEventListener('change',renderFrontdeskRoomTransferPreview);document.querySelector('#frontdesk-room-transfer-form').addEventListener('submit',submitFrontdeskRoomTransfer);}
 function renderFrontdeskRoomTransferRooms(){const session=state.activeSessions.find(item=>item.id===document.querySelector('#frontdesk-transfer-session')?.value);const rooms=state.rooms.filter(room=>Number(room.availableBedCount||0)>0&&['idle','reserved','serving'].includes(room.status)&&String(room.apiId)!==String(session?.roomId));const target=document.querySelector('#frontdesk-transfer-room');if(!target)return;target.innerHTML=rooms.map(room=>`<option value="${roomTransferEscape(room.apiId)}">${memberBusinessEscape(room.id)} 房 · ${memberBusinessEscape(room.availableBedCount)}/${memberBusinessEscape(room.bedCount)} 床可用</option>`).join('')||'<option value="">没有其他房间可用</option>';}
@@ -5137,6 +5228,8 @@ async function confirmRoomPayment(room) {
 }
 document.querySelector('#room-grid').addEventListener('click', async event => {
   console.log('[room-grid] click', event.target, event.target?.closest?.('[data-dispatch-reassignment]'), event.target?.closest?.('[data-dispatch-cancellation]'));
+  const serviceDetail = event.target.closest('[data-room-service-detail]');
+  if (serviceDetail) { openRoomServiceDetail(serviceDetail.dataset.roomServiceDetail); return; }
   const reassignment = event.target.closest('[data-dispatch-reassignment]');
   if (reassignment) { await openDispatchReassignment(reassignment.dataset.dispatchReassignment); return; }
   const cancellation = event.target.closest('[data-dispatch-cancellation]');

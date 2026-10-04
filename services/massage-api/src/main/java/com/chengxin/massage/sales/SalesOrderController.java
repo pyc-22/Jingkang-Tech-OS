@@ -1,5 +1,6 @@
 package com.chengxin.massage.sales;
 
+import java.io.IOException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -16,6 +17,12 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonDeserializer;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.dao.DuplicateKeyException;
@@ -55,8 +62,14 @@ public class SalesOrderController {
   private final BusinessClockService businessClock;
   private final ServiceItemVersionService itemVersions;
   private final MonthlyCommissionTierService monthlyTiers;
+  private final SettlementAmountService settlementAmounts;
 
   SalesOrderController(JdbcClient jdbc, StoreContextService storeContext, AuditService audits, BusinessClockService businessClock, ServiceItemVersionService itemVersions, MonthlyCommissionTierService monthlyTiers, AdminSessionService adminSessions) {
+    this(jdbc, storeContext, audits, businessClock, itemVersions, monthlyTiers, adminSessions, new SettlementAmountService());
+  }
+
+  @Autowired
+  SalesOrderController(JdbcClient jdbc, StoreContextService storeContext, AuditService audits, BusinessClockService businessClock, ServiceItemVersionService itemVersions, MonthlyCommissionTierService monthlyTiers, AdminSessionService adminSessions, SettlementAmountService settlementAmounts) {
     this.jdbc = jdbc;
     this.storeContext = storeContext;
     this.adminSessions = adminSessions;
@@ -64,6 +77,7 @@ public class SalesOrderController {
     this.businessClock = businessClock;
     this.itemVersions = itemVersions;
     this.monthlyTiers = monthlyTiers;
+    this.settlementAmounts = settlementAmounts;
   }
 
   @GetMapping
@@ -157,11 +171,12 @@ public class SalesOrderController {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     OrderSummary order = jdbc.sql("select o.id,o.order_no,o.settlement_no,o.cashier_name_snapshot,o.status,o.refund_status,o.receivable_cents,o.paid_cents,o.created_at,o.settled_at,o.cancel_reason,o.cancelled_at,o.member_id,m.name member_name,m.phone member_phone,coalesce((select balance_cents from member_wallet where member_id=m.id and is_default),0) member_balance_cents,o.corrected_from_order_id,source.order_no corrected_from_order_no,o.correction_reason,o.financial_correction_version,o.business_correction_version,o.is_historical_backfill historical_backfill,o.backfill_date backfill_date,o.backfill_by backfill_by,o.backfill_at backfill_at,backfill_actor.display_name backfill_by_name from sales_order o left join member m on m.id=o.member_id left join sales_order source on source.id=o.corrected_from_order_id left join app_user backfill_actor on backfill_actor.id=o.backfill_by where o.id=:id and o.store_id=:store")
       .param("id", id).param("store", storeId).query(OrderSummary.class).single();
-    List<OrderLine> lines = jdbc.sql("select line.id,line.service_item_id,line.item_name_snapshot,line.unit_price_cents,line.duration_minutes,line.quantity,line.line_amount_cents,link.service_session_id,session.technician_id,coalesce((select string_agg(technician.name,'、' order by participant.slot_no,participant.sequence_no) from service_session_participant participant join technician technician on technician.id=participant.technician_id where participant.service_session_id=session.id and participant.status='COMPLETED'),technician.name) technician_name,room.code room_code,room.name room_name,session.ended_at service_ended_at,case when session.converted then 'CONVERSION' else session.clock_type end clock_type,coalesce((select count(*) from service_session_participant participant where participant.service_session_id=session.id and participant.status='COMPLETED'),0) participant_count from sales_order_line line left join sales_order_service_session link on link.order_line_id=line.id left join service_session session on session.id=link.service_session_id left join technician technician on technician.id=session.technician_id left join room room on room.id=session.room_id where line.order_id=:id")
+    List<OrderLine> lines = jdbc.sql("select line.id,line.service_item_id,line.item_name_snapshot,line.unit_price_cents,line.duration_minutes,line.quantity,line.line_amount_cents,coalesce(line.settlement_amount_cents,line.line_amount_cents) settlement_amount_cents,line.settlement_amount_cents is null settlement_amount_estimated,link.service_session_id,session.technician_id,coalesce((select string_agg(technician.name,'、' order by participant.slot_no,participant.sequence_no) from service_session_participant participant join technician technician on technician.id=participant.technician_id where participant.service_session_id=session.id and participant.status='COMPLETED'),technician.name) technician_name,room.code room_code,room.name room_name,session.ended_at service_ended_at,case when session.converted then 'CONVERSION' else session.clock_type end clock_type,coalesce((select count(*) from service_session_participant participant where participant.service_session_id=session.id and participant.status='COMPLETED'),0) participant_count from sales_order_line line left join sales_order_service_session link on link.order_line_id=line.id left join service_session session on session.id=link.service_session_id left join technician technician on technician.id=session.technician_id left join room room on room.id=session.room_id where line.order_id=:id")
       .param("id", id).query(OrderLine.class).list();
     List<Payment> payments = jdbc.sql("select payment.id,payment.payment_method,payment.payment_method_name_snapshot,payment.wallet_id,w.account_code,w.account_name,payer.id payer_member_id,payer.name payer_member_name,payer.code payer_member_code,payment.amount_cents,payment.created_at from payment_record payment left join member_wallet w on w.id=payment.wallet_id left join member payer on payer.id=w.member_id where payment.order_id=:id order by payment.created_at")
       .param("id", id).query(Payment.class).list();
-    return new OrderDetail(order, lines, payments, loadBusinessCorrections(storeId, id));
+    return new OrderDetail(order, lines, payments, loadBusinessCorrections(storeId, id),
+        settlementAmounts.totals(lines.stream().map(OrderLine::lineAmountCents).toList(), order.paidCents()));
   }
 
   private List<BusinessCorrectionView> loadBusinessCorrections(UUID storeId, UUID orderId) {
@@ -408,16 +423,14 @@ public class SalesOrderController {
     Set<LocalDate> serviceBusinessDates = new HashSet<>();
     for (Line line : lines) if (line.businessDate() != null) serviceBusinessDates.add(line.businessDate());
     if (serviceBusinessDates.size() > 1) throw conflict("所选服务不属于同一营业日，请分开结算");
-    long originalTotal = lines.stream().mapToLong(Line::priceCents).sum();
-    long total = input.settlementAmountCents() == null ? originalTotal : input.settlementAmountCents();
-    if (total < 0) throw bad("实收金额不能为负数");
-    boolean waived = total == 0;
     String waiveReason = input.waiveReason() == null ? "" : input.waiveReason().trim();
-    if (waived && waiveReason.isBlank()) throw bad("0.00 元结算必须填写免单原因");
-    if (!waived && total < 1) throw bad("普通结算最低实收金额为 0.01 元");
-    long paid = input.payments().stream().mapToLong(PaymentInput::amountCents).sum();
-    if (waived && !input.payments().isEmpty()) throw bad("免单不能填写收款金额");
-    if (total != paid) throw bad("各收款方式合计必须等于实收金额");
+    SettlementAmountService.Amounts amounts = settlementAmounts.resolve(
+        lines.stream().map(line -> line.priceCents().longValue()).toList(),
+        input.lines().stream().map(LineInput::settlementAmountCents).toList(),
+        input.settlementAmountCents(), waiveReason, input.payments().stream().map(PaymentInput::amountCents).toList());
+    long originalTotal = amounts.totals().originalTotalCents();
+    long total = amounts.totals().settlementAmountCents();
+    long paid = total;
     List<ResolvedPayment> resolvedPayments = resolvePayments(storeId, input.memberId(), input.payments());
 
     UUID orderId = UUID.randomUUID();
@@ -429,14 +442,16 @@ public class SalesOrderController {
     jdbc.sql("insert into sales_order(id,tenant_id,store_id,member_id,order_no,settlement_no,cashier_name_snapshot,status,receivable_cents,paid_cents,settled_at,business_date,corrected_from_order_id,correction_reason) values(:id,:tenant,:store,:member,:no,:settlement,:cashier,'SETTLED',:total,:paid,:settled,:businessDate,:correctedFrom,:correctionReason)")
       .param("id", orderId).param("tenant", TENANT_ID).param("store", storeId).param("member", input.memberId()).param("no", orderNo).param("settlement", settlementNo).param("cashier", cashierName).param("total", total).param("paid", paid).param("settled", settledAt).param("businessDate", businessDate).param("correctedFrom", input.correctedFromOrderId()).param("correctionReason", correctionReason.isBlank() ? null : correctionReason).update();
     List<Line> materializedLines = new ArrayList<>(lines.size());
-    for (Line line : lines) {
+    for (int index = 0; index < lines.size(); index++) {
+      Line line = lines.get(index);
       Line materialized = line.serviceSessionId() == null
         ? materializeManualLine(storeId, line, settledAt, businessDate)
         : line;
       materializedLines.add(materialized);
       UUID orderLineId = UUID.randomUUID();
-      jdbc.sql("insert into sales_order_line(id,order_id,service_item_id,item_name_snapshot,unit_price_cents,duration_minutes,line_amount_cents) values(:id,:order,:service,:name,:price,:duration,:amount)")
-        .param("id", orderLineId).param("order", orderId).param("service", materialized.serviceItemId()).param("name", materialized.name()).param("price", materialized.priceCents()).param("duration", materialized.durationMinutes()).param("amount", materialized.priceCents()).update();
+      jdbc.sql("insert into sales_order_line(id,order_id,service_item_id,item_name_snapshot,unit_price_cents,duration_minutes,line_amount_cents,settlement_amount_cents) values(:id,:order,:service,:name,:price,:duration,:amount,:settlementAmount)")
+        .param("id", orderLineId).param("order", orderId).param("service", materialized.serviceItemId()).param("name", materialized.name()).param("price", materialized.priceCents()).param("duration", materialized.durationMinutes()).param("amount", materialized.priceCents())
+        .param("settlementAmount", amounts.unitAmountsCents().get(index)).update();
       if (materialized.serviceSessionId() != null) {
         linkServiceSession(storeId, orderId, orderLineId, materialized.serviceSessionId());
         createCommissionRecords(storeId, orderId, orderLineId, orderNo, settlementNo, materialized.serviceSessionId(), settledAt, businessDate);
@@ -452,7 +467,8 @@ public class SalesOrderController {
     if (correctionSource == null) updateLinkedServiceRoomStates(storeId, materializedLines, orderNo);
     Order settled = new Order(orderId, orderNo, total, paid, "SETTLED", settledAt);
     audits.record(authorization, storeId, "SALES", "ORDER_SETTLED", "sales_order", orderId,
-      "Sales order settled; original=" + originalTotal + "; settlement=" + total + (waived ? "; waiveReason=" + waiveReason : "")
+      "Sales order settled; original=" + originalTotal + "; settlement=" + total + "; adjustment=" + amounts.totals().adjustmentCents()
+        + (waiveReason.isBlank() ? "" : "; waiveReason=" + waiveReason)
         + (correctionSource == null ? "" : "; correctedFrom=" + correctionSource.orderNo() + "; correctionReason=" + correctionReason), null, settled);
     return settled;
   }
@@ -1218,7 +1234,8 @@ public class SalesOrderController {
   record OrderSummary(UUID id, String orderNo, String settlementNo, String cashierNameSnapshot, String status, String refundStatus, Long receivableCents, Long paidCents, OffsetDateTime createdAt, OffsetDateTime settledAt, String cancelReason, OffsetDateTime cancelledAt, UUID memberId, String memberName, String memberPhone, Long memberBalanceCents, UUID correctedFromOrderId, String correctedFromOrderNo, String correctionReason, Integer financialCorrectionVersion, Integer businessCorrectionVersion, Boolean historicalBackfill, LocalDate backfillDate, UUID backfillBy, OffsetDateTime backfillAt, String backfillByName) {}
   record OrderVoidState(String status, Long paidCents, String orderNo, Long paymentCount, Long commissionCount, Long refundCount) {}
   record OrderLine(UUID id, UUID serviceItemId, String itemNameSnapshot, Long unitPriceCents, Short durationMinutes, Short quantity, Long lineAmountCents,
-                   UUID serviceSessionId, UUID technicianId, String technicianName, String roomCode, String roomName, OffsetDateTime serviceEndedAt, String clockType, Long participantCount) {}
+                   UUID serviceSessionId, UUID technicianId, String technicianName, String roomCode, String roomName, OffsetDateTime serviceEndedAt, String clockType, Long participantCount,
+                   Long settlementAmountCents, Boolean settlementAmountEstimated) {}
   record Payment(UUID id, String paymentMethod, String paymentMethodNameSnapshot, UUID walletId, String accountCode, String accountName,
                  UUID payerMemberId, String payerMemberName, String payerMemberCode, Long amountCents, OffsetDateTime createdAt) {}
   record FinancialCorrectionOrder(UUID id, UUID memberId, String orderNo, String status, String refundStatus, Long paidCents, Integer financialCorrectionVersion, LocalDate businessDate) {}
@@ -1244,7 +1261,8 @@ public class SalesOrderController {
   record ParticipantCommissionBase(UUID serviceParticipantId, UUID serviceSessionId, UUID serviceItemId, UUID technicianId, String technicianName, String serviceNameSnapshot, Integer servicePriceCents, String clockType, UUID commissionRuleVersionId, LocalDate businessDate, Boolean countsAsClockSnapshot, Short plannedDurationMinutes, Short slotNo, Short sequenceNo, Integer allocationBp, Integer servedSeconds) {}
   record SettlementParticipant(UUID id, Short slotNo, Short sequenceNo, String participationType, Integer allocationBp, String status, UUID replacedParticipantId) {}
   record CommissionRule(String ruleType, Long fixedCents, Integer rateBp) {}
-  record OrderDetail(OrderSummary order, List<OrderLine> lines, List<Payment> payments, List<BusinessCorrectionView> businessCorrections) {}
+  record OrderDetail(OrderSummary order, List<OrderLine> lines, List<Payment> payments, List<BusinessCorrectionView> businessCorrections,
+                     SettlementAmountService.Totals settlementTotals) {}
   record HistoricalBackfillResult(UUID orderId, String orderNo, String settlementNo, LocalDate backfillDate,
                                   Long receivableCents, Long paidCents, UUID backfillBy, String backfillByName) {}
   record MyHistoricalBackfillRecord(UUID orderId, String orderNo, String settlementNo, LocalDate backfillDate,
@@ -1261,9 +1279,26 @@ public class SalesOrderController {
   record VoidCommission(UUID id, UUID tenantId, UUID storeId, UUID orderId, UUID orderLineId, UUID serviceSessionId, UUID serviceSessionExtensionId, UUID serviceItemId, UUID technicianId, String sourceType, String clockType, String orderNoSnapshot, String technicianNameSnapshot, String serviceNameSnapshot, String ruleType, Integer ruleRateBp, Long ruleFixedCents, Long baseAmountCents, Long commissionCents, Short clockCountAdjustment, Short durationMinutesAdjustment, UUID serviceParticipantId, Integer allocationBpSnapshot, Integer servedSecondsSnapshot, UUID commissionTierPolicyVersionId, UUID commissionTierId, String commissionTierNameSnapshot, Integer commissionTierMinimumClockCountSnapshot, Integer commissionMultiplierBpSnapshot, Integer monthlyClockCountSnapshot) {}
   record VoidInput(@NotBlank String reason) {}
   record LineInput(UUID serviceItemId, UUID serviceSessionId, Short durationMinutes, String clockType, UUID roomId,
-                   List<@Valid ManualTechnicianAllocation> technicians) {
+                   List<@Valid ManualTechnicianAllocation> technicians,
+                   @JsonDeserialize(using = SettlementCentsDeserializer.class) Long settlementAmountCents) {
+    LineInput(UUID serviceItemId, UUID serviceSessionId, Short durationMinutes, String clockType, UUID roomId,
+              List<ManualTechnicianAllocation> technicians) {
+      this(serviceItemId, serviceSessionId, durationMinutes, clockType, roomId, technicians, null);
+    }
     LineInput(UUID serviceItemId, UUID serviceSessionId, Short durationMinutes) {
       this(serviceItemId, serviceSessionId, durationMinutes, null, null, null);
+    }
+  }
+  static class SettlementCentsDeserializer extends JsonDeserializer<Long> {
+    @Override
+    public Long deserialize(JsonParser parser, DeserializationContext context) throws IOException {
+      if (!parser.hasToken(JsonToken.VALUE_NUMBER_INT)) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "单元实收金额必须为整数分");
+      }
+      var amount = parser.getBigIntegerValue();
+      if (amount.bitLength() > 63) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "单元实收金额超出支持范围");
+      if (amount.signum() < 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "单元实收金额不得为负数");
+      return amount.longValue();
     }
   }
   record ManualTechnicianAllocation(@NotNull UUID technicianId, @Min(1) @Max(10000) Integer allocationBp) {}

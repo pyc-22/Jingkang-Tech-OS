@@ -3,6 +3,7 @@ package com.chengxin.massage.catalog;
 import com.chengxin.massage.admin.AdminSessionService;
 import com.chengxin.massage.admin.StoreContextService;
 import com.chengxin.massage.audit.AuditService;
+import com.chengxin.massage.catalog.ServiceSessionExtensionQueryService.Extension;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -33,14 +34,17 @@ public class ServiceSessionExtensionCancellationController {
   private final AdminSessionService adminSessions;
   private final ServiceDurationPolicyService durationPolicies;
   private final AuditService audits;
+  private final ServiceSessionExtensionQueryService extensionQueries;
 
   ServiceSessionExtensionCancellationController(JdbcClient jdbc, StoreContextService storeContext,
-      AdminSessionService adminSessions, ServiceDurationPolicyService durationPolicies, AuditService audits) {
+      AdminSessionService adminSessions, ServiceDurationPolicyService durationPolicies, AuditService audits,
+      ServiceSessionExtensionQueryService extensionQueries) {
     this.jdbc = jdbc;
     this.storeContext = storeContext;
     this.adminSessions = adminSessions;
     this.durationPolicies = durationPolicies;
     this.audits = audits;
+    this.extensionQueries = extensionQueries;
   }
 
   @GetMapping("/{sessionId}/extensions")
@@ -49,8 +53,7 @@ public class ServiceSessionExtensionCancellationController {
       @RequestHeader(value = "X-Store-Id", required = false) String requestedStoreId) {
     UUID storeId = storeContext.currentStore(authorization, requestedStoreId);
     durationPolicies.lockSession(storeId, sessionId);
-    return jdbc.sql("select id,service_session_id,technician_id,service_item_id,service_name_snapshot,service_price_cents,planned_duration_minutes,added_at from service_session_extension where store_id=:store and service_session_id=:session order by added_at desc,id desc")
-      .param("store", storeId).param("session", sessionId).query(Extension.class).list();
+    return extensionQueries.forSessions(storeId, List.of(sessionId)).getOrDefault(sessionId, List.of()).reversed();
   }
 
   @PostMapping("/{sessionId}/extensions/{extensionId}/cancel")
@@ -93,8 +96,6 @@ public class ServiceSessionExtensionCancellationController {
 
   private ResponseStatusException error(HttpStatus status, String message) { return new ResponseStatusException(status, message); }
 
-  record Extension(UUID id, UUID serviceSessionId, UUID technicianId, UUID serviceItemId, String serviceNameSnapshot,
-      Integer servicePriceCents, Short plannedDurationMinutes, OffsetDateTime addedAt) {}
   record ExtensionDetails(UUID id, UUID serviceSessionId, UUID technicianId, UUID serviceItemId, String serviceNameSnapshot,
       Integer servicePriceCents, Short plannedDurationMinutes, UUID priceVersionId, UUID commissionRuleVersionId,
       Boolean countsAsClockSnapshot) {}

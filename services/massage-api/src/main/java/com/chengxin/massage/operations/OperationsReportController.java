@@ -24,6 +24,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.chengxin.massage.admin.AdminSessionService;
 import com.chengxin.massage.admin.StoreContextService;
+import com.chengxin.massage.catalog.ServiceSessionExtensionQueryService;
 
 @RestController
 @RequestMapping("/api/v1/operations")
@@ -88,7 +89,8 @@ public class OperationsReportController {
 
   // Kept for focused controller tests that exercise the static SQL helpers.
   OperationsReportController(JdbcClient jdbc, StoreContextService storeContext, AdminSessionService adminSessions, BusinessClockService businessClock) {
-    this(jdbc, storeContext, adminSessions, businessClock, null, new OperationalStateService(jdbc, businessClock));
+    this(jdbc, storeContext, adminSessions, businessClock, null,
+        new OperationalStateService(jdbc, businessClock, new ServiceSessionExtensionQueryService(jdbc)));
   }
 
   @GetMapping("/daily-report")

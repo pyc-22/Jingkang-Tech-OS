@@ -8,7 +8,7 @@ const manager = fs.readFileSync(path.join(root, 'manager-mobile.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'manager-mobile.html'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'manager-mobile.css'), 'utf8');
 
-test('manager home loads and renders live room details', () => {
+test('manager work page loads and renders live room details', () => {
   assert.match(manager, /managerOptionalJson\('\/operations\/live-state'/);
   assert.match(manager, /renderManagerLiveRooms\(liveRooms\)/);
   assert.match(html, /id="manager-live-room-list"/);
@@ -28,12 +28,12 @@ test('live rooms expose service, technician, clock type, beds and timing', () =>
   assert.match(css, /\.manager-live-service/);
 });
 
-test('manager mobile assets use the dispatch clock cache version', () => {
-  assert.match(html, /manager-mobile\.css\?v=20261002-yue-backfill-v1/);
-  assert.match(html, /manager-mobile\.js\?v=20261002-yue-backfill-v1/);
+test('manager mobile assets use the console manager optimization cache version', () => {
+  assert.match(html, /manager-mobile\.css\?v=20261003-console-manager-opt-v1/);
+  assert.match(html, /manager-mobile\.js\?v=20261003-console-manager-opt-v1/);
 });
 
-test('manager home loads and groups independent live technician status', () => {
+test('manager work page loads and groups independent live technician status', () => {
   assert.match(manager, /managerLiveTechnicianOverview=\{businessDate:liveState\?\.businessDate/);
   assert.match(manager, /renderManagerLiveTechnicians\(liveTechnicians\)/);
   assert.match(manager, /\['PENDING_ACCEPTANCE','ACCEPTED'\]\.includes\(item\.status\)/);
@@ -66,7 +66,7 @@ test('manager expense errors replace the generic server message with Chinese gui
 test('manager home keeps a clear operational reading order', () => {
   const metricsIndex = html.indexOf('class="manager-metrics"');
   const operationIndex = html.indexOf('id="manager-operation-section"');
-  const attentionIndex = html.indexOf('class="manager-section attention-section manager-home-attention"');
+  const attentionIndex = html.indexOf('class="manager-home-attention"');
   const shortcutsIndex = html.indexOf('class="manager-home-shortcuts-section"');
   assert.ok(metricsIndex >= 0 && operationIndex > metricsIndex);
   assert.ok(attentionIndex > operationIndex);

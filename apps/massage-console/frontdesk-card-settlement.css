@@ -26,14 +26,41 @@
 .single-room-service-selection-summary strong { color:#0b7067; font-size:18px; }
 .merge-settlement-dialog { width:min(1180px,calc(100vw - 32px)); max-height:calc(100vh - 32px); }
 .merge-settlement-card { width:100%; max-height:calc(100vh - 32px); overflow:auto; }
-.merge-settlement-layout { display:grid; grid-template-columns:minmax(440px,1.25fr) minmax(390px,.85fr); gap:16px; min-height:560px; }
-.merge-settlement-section-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }.merge-settlement-section-heading > div { display:grid; gap:4px; }.merge-settlement-section-heading b { color:#344740; font-size:13px; }.merge-settlement-section-heading small { color:#7c8b86; font-size:10px; }
-.merge-settlement-rooms { display:grid; grid-template-columns:1fr 1fr; gap:8px; max-height:330px; overflow:auto; }
+.merge-settlement-layout { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(0,.85fr); gap:16px; min-height:560px; }
+.merge-settlement-section-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }.merge-settlement-section-heading > div { display:grid; gap:4px; }.merge-settlement-section-heading b { color:#344740; font-size:14px; }
+.merge-settlement-rooms { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; max-height:330px; overflow:auto; }
 .merge-settlement-room { display:grid; grid-template-columns:18px minmax(0,1fr) auto; align-items:center; gap:9px; min-height:62px; padding:9px 10px; border:1px solid #dce7e2; border-radius:5px; color:#30443e; background:#fff; text-align:left; font:inherit; }.merge-settlement-room:hover { border-color:#69a496; background:#f4faf8; }.merge-settlement-room.selected { border-color:#168477; background:#edf8f5; }.merge-settlement-room:disabled { opacity:.42; cursor:not-allowed; }
-.merge-settlement-room i { display:grid; place-items:center; width:16px; height:16px; border:1px solid #c7d6d1; border-radius:3px; color:#fff; font-size:10px; font-style:normal; }.merge-settlement-room.selected i { border-color:#168477; background:#168477; }.merge-settlement-room b,.merge-settlement-room small { display:block; }.merge-settlement-room b { font-size:12px; }.merge-settlement-room small { margin-top:4px; color:#7d8b87; font-size:9px; }.merge-settlement-room strong { color:#17685f; font-size:12px; white-space:nowrap; }
-.merge-settlement-empty { grid-column:1/-1; padding:30px 0; color:#7d8b87; font-size:11px; text-align:center; }
+.merge-settlement-room i { display:grid; place-items:center; width:16px; height:16px; border:1px solid #c7d6d1; border-radius:3px; color:#fff; font-size:10px; font-style:normal; }.merge-settlement-room.selected i { border-color:#168477; background:#168477; }.merge-settlement-room b,.merge-settlement-room small { display:block; overflow-wrap:anywhere; }.merge-settlement-room b { font-size:14px; }.merge-settlement-room small { margin-top:4px; color:#7d8b87; font-size:14px; }.merge-settlement-room strong { color:#17685f; font-size:14px; white-space:nowrap; }
+.merge-settlement-empty { grid-column:1/-1; padding:30px 0; color:#7d8b87; font-size:14px; text-align:center; }
 .merge-settlement-summary { min-width:0; padding:14px; overflow:auto; border:1px solid #dfe9e5; border-radius:6px; background:#f8fbfa; }.merge-settlement-summary > .settlement-waive-option,.merge-settlement-summary > .settlement-waive-reason { margin-bottom:10px; }.merge-settlement-summary #submit-merge-settlement { width:100%; }
-.merge-settlement-selected { display:grid; gap:5px; max-height:185px; margin-top:12px; overflow:auto; }.merge-settlement-selected > div { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:7px 0; border-bottom:1px solid #e5ece9; }.merge-settlement-selected b,.merge-settlement-selected small { display:block; }.merge-settlement-selected b { font-size:10px; }.merge-settlement-selected small { margin-top:3px; color:#7e8c87; font-size:8px; }.merge-settlement-selected strong { color:#17685f; font-size:10px; }.merge-settlement-selected p { padding:14px 0; color:#80908b; font-size:10px; text-align:center; }
+.merge-selected-title { margin:18px 0 10px; padding-left:8px; border-left:3px solid #087b73; font-size:14px; }
+.merge-settlement-selected { display:grid; gap:8px; }
+.merge-unit-row { display:grid; grid-template-columns:minmax(0,1fr) auto 120px; align-items:center; gap:12px; padding:11px 13px; border:1px solid #dce5e1; border-radius:6px; background:#fff; }
+.merge-unit-info { min-width:0; }.merge-unit-info b,.merge-unit-info small { display:block; font-size:14px; overflow-wrap:anywhere; }.merge-unit-info small { margin-top:3px; color:#6a7775; line-height:1.5; }
+.merge-unit-original { color:#6a7775; font-size:14px; text-align:right; white-space:nowrap; }
+.merge-unit-receipt { display:flex; align-items:center; gap:3px; min-width:0; padding:0 7px; border:1px solid #168477; border-radius:6px; color:#05635d; background:#f2faf7; }
+.merge-unit-receipt input { width:100%; min-width:0; height:44px; padding:0; border:0; outline:0; color:inherit; background:transparent; text-align:right; font:inherit; font-size:14px; font-weight:700; }
+.merge-unit-receipt:focus-within { box-shadow:0 0 0 3px rgba(8,123,115,.12); }
+.merge-unit-receipt.zero { border-color:#d8d8d8; color:#6a7775; background:#f7f7f7; }
+.merge-settlement-selected p { margin:0; padding:18px; border:1px dashed #cdd9d4; border-radius:6px; color:#6a7775; background:#fafcfb; font-size:14px; text-align:center; }
+.merge-payment-verification { margin:0 0 12px; padding:10px; border:1px solid #d4dce6; border-radius:6px; color:#475569; background:#eef2f7; font-size:14px; line-height:1.5; }
+.merge-payment-verification.ok { border-color:#b9e2c8; color:#15803d; background:#e8f6ee; }.merge-payment-verification.bad { border-color:#f5c6c6; color:#b91c1c; background:#fdecec; }
+.merge-settlement-dialog { font-size:14px; }
+.merge-settlement-dialog .dialog-heading h2 { font-size:20px; }
+.merge-settlement-dialog .settlement-waive-reason[hidden] { display:none; }
+.merge-settlement-dialog .payment-option,.merge-settlement-dialog button,.merge-settlement-dialog .payment-amount-control input { font-size:14px; }
+.merge-settlement-dialog .eyebrow,.merge-settlement-dialog .settlement-member span,.merge-settlement-dialog .settlement-member small,.merge-settlement-dialog .settlement-amount-summary span,.merge-settlement-dialog .settlement-payment-heading span,.merge-settlement-dialog .settlement-waive-option,.merge-settlement-dialog .settlement-waive-reason,.merge-settlement-dialog .settlement-waive-reason textarea,.merge-settlement-dialog .combined-payment-options small,.merge-settlement-dialog .combined-member-heading strong,.merge-settlement-dialog .combined-card-choice select,.merge-settlement-dialog .combined-card-choice button,.merge-settlement-dialog .combined-add-card,.merge-settlement-dialog .payment-amount-control button,.merge-settlement-dialog .settlement-allocation-summary { font-size:14px; }
+.merge-settlement-dialog .settlement-amount-summary { grid-template-columns:repeat(3,minmax(0,1fr)); }.merge-settlement-dialog .settlement-amount-summary > div { min-width:0; padding:10px; }.merge-settlement-dialog .settlement-amount-summary strong { overflow-wrap:anywhere; }
+.merge-settlement-dialog button,.merge-settlement-dialog select,.merge-settlement-dialog input:not([type="checkbox"]) { min-height:44px; }
+.merge-settlement-dialog .icon-button { width:44px; height:44px; flex:none; }
+.merge-settlement-dialog .settlement-waive-option { min-height:44px; }
+.merge-settlement-dialog .merge-room-search { min-width:0; }.merge-settlement-dialog .merge-room-search input { min-width:0; font-size:14px; }
+.merge-settlement-dialog .combined-payment-row { grid-template-columns:minmax(0,1fr) auto; }
+.merge-settlement-dialog .combined-member-group .combined-payment-row { position:relative; grid-template-columns:minmax(0,1fr); gap:8px; }
+.merge-settlement-dialog .combined-card-choice > small { display:flex; align-items:center; min-height:44px; padding-right:44px; }
+.merge-settlement-dialog .combined-remove-card { position:absolute; top:0; right:0; }
+.merge-settlement-dialog .combined-payment-options .payment-amount-control { grid-template-columns:12px minmax(70px,90px) 88px; }
+.merge-settlement-dialog .settlement-allocation-summary { flex-wrap:wrap; gap:8px; }
 .merge-settlement-total { display:flex; align-items:end; justify-content:space-between; gap:10px; margin-top:12px; padding-top:11px; border-top:1px solid #dce7e2; }.merge-settlement-total span { color:#64756f; font-size:10px; }.merge-settlement-total strong { color:#0b7067; font-size:20px; }
 .merge-room-search,.pending-service-search { display:flex; align-items:center; gap:7px; min-width:240px; padding:0 9px; border:1px solid #d5e1dc; border-radius:5px; color:#7c8b86; background:#fff; }
 .merge-room-search input,.pending-service-search input { width:100%; height:34px; border:0; outline:0; color:#30443e; background:transparent; font:inherit; font-size:11px; }
@@ -284,6 +311,13 @@
   .member-consume-summary span:first-child { grid-column:1 / -1; }
   .member-sales-toolbar { align-items:stretch; flex-direction:column; }
   .merge-settlement-layout,.merge-settlement-rooms { grid-template-columns:1fr; }
+  .merge-settlement-card { padding:14px; }
+  .merge-unit-row { grid-template-columns:minmax(0,1fr) minmax(100px,120px); gap:8px; padding:10px; }
+  .merge-unit-info { grid-column:1 / -1; }.merge-unit-original { text-align:left; }
+  .merge-settlement-dialog .settlement-member { align-items:flex-start; flex-wrap:wrap; }
+  .merge-settlement-dialog .settlement-amount-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }.merge-settlement-dialog .settlement-amount-summary .settlement-received { grid-column:1 / -1; border-top:1px solid #dce5ef; }
+  .merge-settlement-dialog .combined-payment-row { grid-template-columns:minmax(0,1fr); gap:8px; }
+  .merge-settlement-dialog .combined-payment-options .payment-amount-control { width:100%; grid-template-columns:12px minmax(44px,1fr) 88px; }
   .order-panel { top:8px; width:calc(100vw - 16px); height:calc(100dvh - 16px); grid-template-columns:1fr; grid-template-rows:auto auto minmax(220px,1fr) auto auto minmax(110px,.5fr) auto auto auto; overflow:auto; }
   .order-panel .panel-heading,.order-panel .member-card,.order-panel .pending-service-queue,.order-panel .order-lines,.order-panel .add-service,.order-panel .order-total,.order-panel > .pay-button { grid-column:1; grid-row:auto; margin-left:12px; margin-right:12px; }
   .order-panel #pending-service-list { height:280px; max-height:none; }

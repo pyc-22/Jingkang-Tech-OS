@@ -168,11 +168,11 @@ test('entry versions changed assets independently and keeps the new room node', 
   const appVersion = index.match(/app\.js\?v=([^"']+)/)?.[1];
   const cssVersion = index.match(/styles\.css\?v=([^"']+)/)?.[1];
   assert.ok(appVersion);
-  assert.equal(appVersion, '20261002-yue-backfill-v1');
-  assert.equal(cssVersion, '20261002-yue-backfill-v1');
+  assert.equal(appVersion, '20261003-console-manager-opt-v1');
+  assert.equal(cssVersion, '20261003-console-manager-opt-v1');
   assert.ok(index.includes('expense-ui.js?v=20261002-yue-backfill-v1'));
   assert.ok(managerHtml.includes('expense-ui.js?v=20261002-yue-backfill-v1'));
-  assert.ok(managerHtml.includes('manager-mobile.js?v=20261002-yue-backfill-v1'));
+  assert.ok(managerHtml.includes('manager-mobile.js?v=20261003-console-manager-opt-v1'));
   assert.match(index, /id="idle-room-count"/);
   assert.match(app, /if \(idleCount\) idleCount\.textContent/);
   assert.match(app, /if \(availableCount\) availableCount\.textContent/);

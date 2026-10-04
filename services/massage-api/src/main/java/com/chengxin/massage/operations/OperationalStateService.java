@@ -1,5 +1,7 @@
 package com.chengxin.massage.operations;
 
+import com.chengxin.massage.catalog.ServiceSessionExtensionQueryService;
+import com.chengxin.massage.catalog.ServiceSessionExtensionQueryService.Extension;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -10,6 +12,8 @@ import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Single read model for front-desk and manager live room/technician state. */
 @Service
@@ -19,10 +23,13 @@ public class OperationalStateService {
       "IN_SERVICE", "COMPLETED_UNSETTLED");
   private final JdbcClient jdbc;
   private final BusinessClockService businessClock;
+  private final ServiceSessionExtensionQueryService extensionQueries;
 
-  public OperationalStateService(JdbcClient jdbc, BusinessClockService businessClock) {
+  public OperationalStateService(JdbcClient jdbc, BusinessClockService businessClock,
+                                 ServiceSessionExtensionQueryService extensionQueries) {
     this.jdbc = jdbc;
     this.businessClock = businessClock;
+    this.extensionQueries = extensionQueries;
   }
 
   /** Completed services occupy a bed until the linked order is settled or explicitly voided. */
@@ -57,13 +64,17 @@ public class OperationalStateService {
     return BED_OCCUPYING.contains(status);
   }
 
+  @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
   public LiveState live(UUID storeId) {
     LocalDate businessDate = businessClock.currentBusinessDate(storeId);
     List<RoomRow> rows = jdbc.sql(roomSql()).param("store", storeId).query(RoomRow.class).list();
     List<ServiceRow> serviceRows = jdbc.sql(serviceSql()).param("store", storeId).query(ServiceRow.class).list();
+    Map<UUID, List<Extension>> extensions = extensionQueries.forSessions(storeId,
+        serviceRows.stream().map(ServiceRow::serviceSessionId).toList());
     Map<UUID, List<ServiceState>> servicesByRoom = new LinkedHashMap<>();
     for (ServiceRow row : serviceRows) {
-      servicesByRoom.computeIfAbsent(row.roomId(), ignored -> new ArrayList<>()).add(row.state());
+      servicesByRoom.computeIfAbsent(row.roomId(), ignored -> new ArrayList<>())
+          .add(row.state(extensions.getOrDefault(row.serviceSessionId(), List.of())));
     }
     List<RoomState> rooms = rows.stream().map(row -> {
       List<ServiceState> services = servicesByRoom.getOrDefault(row.roomId(), List.of());
@@ -91,11 +102,12 @@ public class OperationalStateService {
 
   static String serviceSql() {
     return "select ss.id service_session_id,ss.room_id,ss.bed_id,bed.code bed_code,bed.name bed_name,ss.service_name_snapshot,case when ss.converted then 'CONVERSION' else ss.clock_type end clock_type,ss.planned_duration_minutes," +
-        "coalesce((select string_agg(extension.service_name_snapshot || ' ' || extension.planned_duration_minutes || '分钟','、' order by extension.added_at) from service_session_extension extension where extension.service_session_id=ss.id),'') extension_summary," +
+        "coalesce((select string_agg(extension.service_name_snapshot || ' ' || extension.planned_duration_minutes || '分钟','、' order by extension.added_at) from service_session_extension extension where extension.service_session_id=ss.id and extension.store_id=ss.store_id and extension.tenant_id=ss.tenant_id),'') extension_summary," +
         "case when ss.status='COMPLETED' then 'COMPLETED_UNSETTLED' else ss.status end service_status,ss.started_at,ss.expected_end_at," +
         "coalesce((select string_agg(participant.technician_id::text,',' order by participant.slot_no,participant.sequence_no) from service_session_participant participant where participant.service_session_id=ss.id and participant.store_id=:store and participant.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')),'') active_participant_technician_ids," +
         "case when ss.status='REASSIGNMENT_REQUIRED' then '待重新派单' when ss.status='DISPATCH_CANCELLED' then '待与顾客沟通' else coalesce((select string_agg(concat_ws(' · ',tech.code,tech.name),'、' order by participant.slot_no,participant.sequence_no) from service_session_participant participant join technician tech on tech.id=participant.technician_id where participant.service_session_id=ss.id and participant.store_id=:store and participant.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')),concat_ws(' · ',primary_tech.code,primary_tech.name)) end technician_display," +
-        "case when ss.status in ('REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED') then 0 else coalesce((select count(distinct participant.technician_id) from service_session_participant participant where participant.service_session_id=ss.id and participant.store_id=:store and participant.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')),1) end technician_count " +
+        "case when ss.status in ('REASSIGNMENT_REQUIRED','DISPATCH_CANCELLED') then 0 else coalesce((select count(distinct participant.technician_id) from service_session_participant participant where participant.service_session_id=ss.id and participant.store_id=:store and participant.status in ('PENDING_ACCEPTANCE','ACCEPTED','IN_SERVICE')),1) end technician_count," +
+        "ss.service_price_cents,ss.technician_id,primary_tech.code technician_code,primary_tech.name technician_name,ss.business_date " +
         "from service_session ss join technician primary_tech on primary_tech.id=ss.technician_id left join room_bed bed on bed.id=ss.bed_id " +
         "where ss.store_id=:store and " + occupyingServicePredicate("ss") + " " +
         "order by ss.room_id,bed.sort_order nulls last,ss.created_at";
@@ -130,7 +142,10 @@ public class OperationalStateService {
                              String extensionSummary, String serviceStatus,
                              OffsetDateTime startedAt, OffsetDateTime expectedEndAt, String activeParticipantTechnicianIds,
                              String technicianDisplay,
-                             Long technicianCount) {}
+                             Long technicianCount, Integer servicePriceCents, UUID technicianId,
+                             String technicianCode, String technicianName, LocalDate businessDate,
+                             List<Extension> extensions, Integer mainDurationMinutes,
+                             Integer totalDurationMinutes, Long totalAmountCents) {}
   public record TechnicianState(UUID technicianId, String technicianCode, String technicianName, Integer queuePosition,
                                 String status, UUID serviceSessionId, UUID roomId, String roomCode, String roomName,
                                 String serviceNameSnapshot, String clockType, OffsetDateTime startedAt,
@@ -140,8 +155,18 @@ public class OperationalStateService {
                     String serviceNameSnapshot, String clockType, Short plannedDurationMinutes,
                     String extensionSummary, String serviceStatus, OffsetDateTime startedAt,
                     OffsetDateTime expectedEndAt, String activeParticipantTechnicianIds,
-                    String technicianDisplay, Long technicianCount) {
-    ServiceState state() { return new ServiceState(serviceSessionId, roomId, bedId, bedCode, bedName, serviceNameSnapshot, clockType, plannedDurationMinutes, extensionSummary, serviceStatus, startedAt, expectedEndAt, activeParticipantTechnicianIds, technicianDisplay, technicianCount); }
+                    String technicianDisplay, Long technicianCount, Integer servicePriceCents, UUID technicianId,
+                    String technicianCode, String technicianName, LocalDate businessDate) {
+    ServiceState state(List<Extension> extensions) {
+      // The stored session duration already includes all current extensions.
+      int mainDuration = plannedDurationMinutes - extensions.stream().mapToInt(Extension::plannedDurationMinutes).sum();
+      long totalAmount = servicePriceCents + extensions.stream().mapToLong(Extension::servicePriceCents).sum();
+      return new ServiceState(serviceSessionId, roomId, bedId, bedCode, bedName, serviceNameSnapshot, clockType,
+          plannedDurationMinutes, extensionSummary, serviceStatus, startedAt, expectedEndAt,
+          activeParticipantTechnicianIds, technicianDisplay, technicianCount, servicePriceCents, technicianId,
+          technicianCode, technicianName, businessDate, List.copyOf(extensions), mainDuration,
+          (int) plannedDurationMinutes, totalAmount);
+    }
   }
   record Attention(Long reassignmentRequiredCount, Long dispatchCancelledCount) {}
 }
