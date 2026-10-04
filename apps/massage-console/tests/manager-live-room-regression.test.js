@@ -28,9 +28,20 @@ test('live rooms expose service, technician, clock type, beds and timing', () =>
   assert.match(css, /\.manager-live-service/);
 });
 
-test('manager mobile assets use the console manager optimization cache version', () => {
-  assert.match(html, /manager-mobile\.css\?v=20261003-console-manager-opt-v1/);
+test('manager mobile assets use the visual fix CSS and console manager script cache versions', () => {
+  assert.match(html, /manager-mobile\.css\?v=20261004-manager-visual-fix-v1/);
   assert.match(html, /manager-mobile\.js\?v=20261003-console-manager-opt-v1/);
+});
+
+test('dispatch drawer covers the viewport and blocks the fixed action bar', () => {
+  assert.match(css, /#manager-clock-dialog \{[^}]*top:auto;[^}]*bottom:0;[^}]*max-height:100dvh;[^}]*margin:0 auto;/);
+  assert.match(css, /#manager-clock-dialog::backdrop \{ background:#061c27; \}/);
+  assert.match(css, /body:has\(#manager-clock-dialog\[open\]\) \{ overflow:hidden; \}/);
+  assert.match(css, /body:has\(#manager-clock-dialog\[open\]\) \.manager-dispatch-section \{ z-index:0; pointer-events:none; \}/);
+});
+
+test('narrow manager controls have a 44px touch target', () => {
+  assert.match(css, /button,input,select,textarea,summary,a\[href\] \{ min-width:44px !important; min-height:44px !important;/);
 });
 
 test('manager work page loads and groups independent live technician status', () => {
