@@ -121,23 +121,33 @@ body:has(#manager-dashboard:not(.hidden) .manager-room-workspace:not([hidden])) 
 .manager-tabbar button.selected b { font-weight:800; }
 [data-manager-page-panel][hidden] { display:none !important; }
 #manager-dashboard [data-manager-permission].hidden { display:none; }
-.expense-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
-.expense-heading .manager-section-kicker { margin:0 0 3px; color:#168276; font-size:9px; font-weight:800; }.expense-heading > div > p:last-child { margin-top:4px; color:var(--muted); font-size:10px; }.expense-heading button { display:flex; align-items:center; gap:4px; white-space:nowrap; }.expense-heading button span { font-size:15px; line-height:1; }
-.manager-expense-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin:12px 0; }
-.manager-expense-summary button { min-width:0; padding:12px 4px; border:1px solid #dce6e3; border-radius:6px; background:#fff; text-align:center; cursor:pointer; }
+.expense-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.expense-heading button { display:flex; align-items:center; gap:4px; white-space:nowrap; }.expense-heading button span { font-size:15px; line-height:1; }
+.manager-expense-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; margin:10px 0; }
+.manager-expense-summary button { display:grid; align-content:center; gap:4px; min-width:0; min-height:58px; padding:6px 2px; border:1px solid #dce6e3; border-radius:5px; background:#f8fbfa; text-align:center; cursor:pointer; }
 .manager-expense-summary button[aria-pressed="true"] { border-color:#16806c; background:#edf8f4; }
-.manager-expense-summary span,.manager-expense-summary small { display:block; color:#74827c; font-size:10px; }
-.manager-expense-summary strong { display:block; margin:10px 0 6px; color:#263c35; font-size:20px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
-.manager-expense-summary button:first-child strong { font-size:15px; }
+.manager-expense-summary span { display:block; color:#74827c; font-size:9px; line-height:1.3; overflow-wrap:anywhere; }
+.manager-expense-summary strong { display:block; color:#263c35; font-size:16px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.manager-expense-summary button:first-child strong { font-size:13px; }.manager-expense-summary button:first-child strong::before { content:'¥'; }
 .manager-expense-summary button:nth-child(2) strong { color:#b16a12; }
 .manager-expense-summary button:nth-child(3) strong { color:#2678ab; }
 .manager-expense-summary button:nth-child(4) strong { color:#16806c; }
+.manager-expense-filter-panel summary { display:flex; align-items:center; justify-content:space-between; min-height:40px; padding:8px 10px; border:1px dashed var(--line); border-radius:5px; color:#586e65; font-size:11px; cursor:pointer; list-style:none; }
+.manager-expense-filter-panel summary::-webkit-details-marker { display:none; }
+.manager-expense-filter-panel summary img { width:16px; height:16px; transition:transform .2s; }
+.manager-expense-filter-panel[open] summary img { transform:rotate(90deg); }
+.manager-expense-filter-content { display:grid; gap:8px; padding:10px 0 2px; }
 .expense-date-range { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
 .expense-date-range label { display:grid; gap:6px; color:#63746c; font-size:12px; min-width:0; }
 .expense-date-range input { width:100%; min-width:0; box-sizing:border-box; min-height:40px; padding:6px; border:1px solid #ccd9d4; border-radius:4px; background:#fff; }
-#manager-expense-browser .expense-toolbar { grid-template-columns:minmax(0,1fr) auto auto; }
+#manager-expense-browser .expense-toolbar { grid-template-columns:minmax(0,1fr); margin:0; }
 #manager-expense-browser .expense-toolbar label { font-size:12px; }
-#manager-expense-browser .expense-toolbar select { font-size:13px; min-height:38px; }
+#manager-expense-browser .expense-toolbar select { width:100%; min-width:0; font-size:13px; min-height:38px; }
+#manager-expense-browser .manager-expense-list-heading { margin:10px 0 8px; padding-top:9px; }
+.manager-expense-list-heading .manager-inline-actions { display:flex; align-items:center; gap:5px; }
+.manager-expense-list-heading .manager-secondary-button { min-height:32px; }
+.manager-expense-refresh-button { display:grid; place-items:center; width:32px; padding:0; }
+.manager-expense-refresh-button img { width:16px; height:16px; }
 .expense-card-main { display:flex; align-items:start; gap:10px; }
 .expense-card-body { flex:1; min-width:0; }
 .expense-card-title { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 12px; }

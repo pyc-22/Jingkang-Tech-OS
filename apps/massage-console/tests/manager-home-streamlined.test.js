@@ -344,6 +344,81 @@ test('home expenses use full history and total count independently of expense ta
   assert.equal(f.$('#manager-expense-pending-count').textContent, '0');
 });
 
+test('expense tab keeps compact stats above a collapsed filter and the record list', async t => {
+  const f = await fixture(t);
+  const browser = f.$('#manager-expense-browser');
+  const filter = f.$('#manager-expense-filter-panel');
+  assert.equal(browser.firstElementChild.classList.contains('manager-expense-summary'), true);
+  assert.equal(filter.previousElementSibling, browser.firstElementChild);
+  assert.equal(filter.nextElementSibling.classList.contains('manager-expense-list-heading'), true);
+  assert.equal(filter.open, false);
+  for (const id of ['manager-expense-from', 'manager-expense-to', 'manager-expense-status']) {
+    assert.equal(filter.contains(f.$(`#${id}`)), true);
+  }
+  filter.querySelector('summary').click();
+  assert.equal(filter.open, true);
+  filter.querySelector('summary').click();
+  assert.equal(filter.open, false);
+});
+
+test('saving and submitting an expense reloads page zero, its new top row and summary without cache', async t => {
+  let submitted = false;
+  const f = await fixture(t, { permissions: [...permissions, 'EXPENSE_SUBMIT'], respond: (request, data) => {
+    const pathname = request.url.pathname;
+    if (pathname.endsWith('/expense-claims/categories')) return [{ id: 'category', code: 'SUPPLIES', name: 'Supplies', noReceiptAllowed: false, receiptRequired: true }];
+    if (pathname.endsWith('/expense-claims/new-claim')) return { claim: { id: 'new-claim', receiptType: 'INVOICE' }, attachments: [{ attachmentKind: 'EXPENSE_PROOF' }] };
+    if (pathname.endsWith('/expense-claims/new-claim/submit')) { submitted = true; return {}; }
+    if (pathname.endsWith('/expense-claims') && request.method === 'POST') return { claim: { id: 'new-claim' } };
+    if (pathname.endsWith('/expense-claims/page') && request.url.searchParams.get('size') === '20') return submitted
+      ? { items: [{ id: 'new-claim', claimNo: 'NEW', title: 'New expense', categoryName: 'Supplies', amountCents: 12345, status: 'SUBMITTED', submittedAt: new Date().toISOString() }], total: 1,
+        summary: { effectiveAmountCents: 12345, pendingCount: 1, approvedCount: 0, paidCount: 0 } }
+      : { items: [], total: 0, summary: emptySummary };
+    return data;
+  } });
+  f.$('#manager-expense-from').value = '2026-01-01';
+  f.$('#manager-expense-to').value = '2026-01-31';
+  f.$('#manager-expense-status').value = 'PAID';
+  await f.w.loadManagerExpenses();
+  const form = f.$('#manager-expense-form');
+  form.elements.title.value = 'New expense';
+  form.elements.expenseCategoryId.value = 'category';
+  form.elements.expenseDate.value = '2026-10-04';
+  form.elements.amount.value = '123.45';
+  form.elements.description.value = 'Supplies';
+  await f.w.saveManagerExpenseEnhanced(true);
+  const page = f.requests.filter(request => request.url.pathname.endsWith('/expense-claims/page') && request.url.searchParams.get('size') === '20').at(-1);
+  assert.equal(page.url.searchParams.get('page'), '0');
+  assert.equal(page.url.searchParams.get('status'), '');
+  assert.equal(page.cache, 'no-store');
+  assert.equal(f.$('#manager-expense-status').value, '');
+  assert.equal(JSON.parse(f.w.localStorage.getItem('manager-expense-filters')).dateMode, 'recent');
+  assert.match(f.$('#manager-expense-list .expense-card:first-child').textContent, /New expense.*待审核/);
+  assert.equal(f.$('#manager-expense-pending-count').textContent, '1');
+  assert.equal(f.$('#manager-expense-visible-amount').textContent, '123.45');
+});
+
+test('submitting an existing draft uses the same first-page refresh', async t => {
+  let submitted = false;
+  const f = await fixture(t, { permissions: [...permissions, 'EXPENSE_SUBMIT'], respond: (request, data) => {
+    if (request.url.pathname.endsWith('/expense-claims/draft-1/submit')) { submitted = true; return {}; }
+    if (request.url.pathname.endsWith('/expense-claims/page') && request.url.searchParams.get('size') === '20') return submitted
+      ? { items: [{ id: 'draft-1', claimNo: 'D1', title: 'Submitted draft', amountCents: 2000, status: 'SUBMITTED' }], total: 1,
+        summary: { effectiveAmountCents: 2000, pendingCount: 1, approvedCount: 0, paidCount: 0 } }
+      : { items: [], total: 0, summary: emptySummary };
+    return data;
+  } });
+  f.$('#manager-expense-status').value = 'DRAFT';
+  await f.w.loadManagerExpenses();
+  await f.w.managerExpenseAction('draft-1', 'submit', '提交');
+  const page = f.requests.filter(request => request.url.pathname.endsWith('/expense-claims/page') && request.url.searchParams.get('size') === '20').at(-1);
+  assert.equal(page.url.searchParams.get('page'), '0');
+  assert.equal(page.url.searchParams.get('status'), '');
+  assert.equal(page.cache, 'no-store');
+  assert.match(f.$('#manager-expense-list .expense-card:first-child').textContent, /Submitted draft.*待审核/);
+  assert.equal(f.$('#manager-expense-pending-count').textContent, '1');
+  assert.equal(f.$('#manager-expense-visible-amount').textContent, '20.00');
+});
+
 test('a delayed response from the previous store does not overwrite new store home state', async t => {
   let delay = false, release;
   const f = await fixture(t, { respond: async (request, data) => {
