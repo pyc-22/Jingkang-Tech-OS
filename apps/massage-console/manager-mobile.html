@@ -38,23 +38,12 @@
           <article><div class="manager-metric-label"><span>开卡数量</span></div><strong id="metric-card-open-count">0</strong><small>首笔充值会员数</small></article>
         </section>
 
-        <section class="manager-business-heading" data-manager-page-panel="business" data-manager-permission="DAILY_REPORT_VIEW">
-           <div><p>经营分析</p><h2>营业数据</h2><small id="manager-business-page-date">当前营业日</small></div><label class="manager-report-date"><span>营业日期</span><input id="manager-report-date" type="date" aria-label="选择营业日期"></label>
-          <span><i aria-hidden="true"></i>实时同步</span>
-        </section>
-
-        <section class="manager-business-metrics" data-manager-page-panel="business" data-manager-permission="DAILY_REPORT_VIEW" aria-label="营业核心数据">
-          <article class="sales"><span>当日营业额</span><strong id="manager-business-sales">--</strong><small id="manager-business-order-count">前台日报同步</small></article>
-          <article class="service"><span>当日现金流</span><strong id="manager-business-service">--</strong><small id="manager-business-service-count">前台日报同步</small></article>
-          <article><span>会员充值</span><strong id="manager-business-recharge">¥0.00</strong><small id="manager-business-bonus">赠送 ¥0.00</small></article>
-          <article><span>开卡数量</span><strong id="manager-business-card-open-count">0</strong><small>张 · 首笔充值会员数</small></article>
-          <article><span>余额消费</span><strong id="manager-business-consumption">¥0.00</strong><small id="manager-business-net-sales">净收入 ¥0.00</small></article>
-        </section>
+        <div class="manager-business-filter" data-manager-page-panel="business" data-manager-permission="DAILY_REPORT_VIEW"><span id="manager-business-page-date">当前营业日</span><label class="manager-report-date"><span>营业日期</span><input id="manager-report-date" type="date" aria-label="选择营业日期"></label></div>
 
         <section class="manager-section manager-service-section" id="manager-service-section" data-manager-page-panel="business" data-manager-permission="DAILY_REPORT_VIEW">
-          <div class="section-heading manager-business-section-heading"><div><p class="manager-section-kicker">服务结构</p><h2>客流与钟数</h2></div><div class="manager-period-tabs" id="manager-business-period-tabs"><button class="selected" type="button" data-business-period="daily">当日</button><button type="button" data-business-period="monthly">当月</button></div></div>
-           <div class="manager-service-group" data-business-period-panel="daily"><div class="manager-service-title"><b>当日数据</b><small>所选营业日</small></div><div class="manager-service-grid" id="manager-service-daily"></div></div>
-           <div class="manager-service-group" data-business-period-panel="monthly" hidden><div class="manager-service-title"><b>当月累计</b><small>累计至所选日期</small></div><div class="manager-service-grid" id="manager-service-monthly"></div></div>
+          <div class="section-heading manager-business-section-heading"><h2>客流与钟数</h2><div class="manager-period-tabs" id="manager-business-period-tabs"><button class="selected" type="button" data-business-period="daily" aria-pressed="true">当日</button><button type="button" data-business-period="monthly" aria-pressed="false">当月</button></div></div>
+          <div class="manager-service-group" data-business-period-panel="daily"><div class="manager-service-grid" id="manager-service-daily"></div></div>
+          <div class="manager-service-group" data-business-period-panel="monthly" hidden><div class="manager-service-grid" id="manager-service-monthly"></div></div>
         </section>
 
         <section class="manager-section manager-commission-section" id="manager-commission-section" data-manager-page-panel="commission" data-manager-permission="REPORT_VIEW">
@@ -132,8 +121,7 @@
           </div>
         </section>
         <section class="manager-rewards-entry" data-manager-page-panel="more" data-manager-permission="MANAGER_REWARD_VIEW"><button type="button" data-manager-shortcut="rewards"><span>店长奖励与约客</span><img src="./assets/lucide/chevron-right.svg" alt="" /></button></section>
-        <section class="manager-section manager-business-operation" data-manager-page-panel="business"><div class="section-heading manager-business-section-heading"><div><p class="manager-section-kicker">当前门店</p><h2>运营状态</h2></div><small>实时</small></div><div class="manager-business-operation-grid"><article><span class="idle"></span><div><small>空闲房间</small><strong id="manager-business-room-idle">0</strong></div></article><article><span class="serving"></span><div><small>服务中房间</small><strong id="manager-business-room-serving">0</strong></div></article><article><span class="cleaning"></span><div><small>待清理房间</small><strong id="manager-business-room-cleaning">0</strong></div></article><article><span class="tech"></span><div><small>服务中技师</small><strong id="manager-business-active-tech">0</strong></div></article></div></section>
-        <section class="manager-section manager-business-channels" data-manager-page-panel="business"><div class="section-heading manager-business-section-heading"><div><p class="manager-section-kicker">收款构成</p><h2>资金渠道</h2></div><small>收入减退款</small></div><div id="manager-channel-list" class="manager-channel-list"></div></section>
+        <section class="manager-section manager-business-channels" data-manager-page-panel="business"><div class="section-heading manager-business-section-heading"><h2>资金渠道</h2><small>收入减退款</small></div><div id="manager-channel-list" class="manager-channel-list"></div></section>
         <section class="manager-section store-comparison-section" data-manager-page-panel="more"><div class="section-heading"><div><h2>多门店经营对比</h2><p>仅显示当前账号已授权的门店</p></div><select id="manager-comparison-sort" aria-label="对比排序"><option value="SALES">按订单实收</option><option value="SERVICE">按服务业绩</option><option value="CASH">按现金净额</option></select></div><div id="manager-store-comparison" class="manager-store-comparison"></div></section>
         <section class="manager-section manager-alert-section" data-manager-page-panel="more"><div class="section-heading"><div><h2>经营预警与待办</h2><p id="manager-alert-subtitle">正在同步待处理事项</p></div></div><div id="manager-store-alerts" class="manager-store-alerts"></div></section>
         <section class="manager-section manager-cross-store-section" data-manager-page-panel="more"><div class="section-heading"><div><h2>跨门店订单与消费</h2><p>搜索已授权门店内的会员记录</p></div></div><div class="manager-cross-store-filters"><input id="manager-cross-store-search" placeholder="订单号、会员或手机号" /><select id="manager-cross-store-type" aria-label="记录类型"><option value="ALL">全部记录</option><option value="ORDER">订单</option><option value="REFUND">退款</option><option value="CONSUMPTION">会员消费</option></select></div><div id="manager-cross-store-records" class="manager-cross-store-records"></div></section>

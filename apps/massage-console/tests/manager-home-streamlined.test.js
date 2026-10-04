@@ -84,13 +84,84 @@ test('home amounts follow the frontdesk daily report, with recharge and card cou
 });
 
 test('home remains on the live business day when the business tab selects a historical date', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, { respond: (request, data) => {
+    if (request.url.pathname.endsWith('/daily-reports')) data.currentValues.dailyCustomerCount = request.url.searchParams.get('date') === '2026-09-01' ? 7 : 23;
+    return data;
+  } });
   f.$('#manager-report-date').value = '2026-09-01';
-  await f.w.loadManagerDashboard();
+  assert.equal(await f.w.loadManagerDashboard(), true);
   assert.equal(f.$('#manager-report-date').value, '2026-09-01');
-  assert.equal(f.$('#manager-business-sales').textContent, '\u00a51.00');
+  assert.equal(f.$('#manager-service-daily .traffic strong').textContent, '7');
+  assert.equal(f.$('#manager-business-page-date').textContent, '2026-09-01 营业日');
   assert.equal(f.$('#metric-sales').textContent, '\u00a51421.00');
   assert.equal(f.$('#manager-business-date').textContent, '2026-10-03');
+});
+
+test('business tab has only service counts and payment channels without duplicate home data', async t => {
+  const f = await fixture(t);
+  f.$('[data-manager-nav="business"]').click();
+  assert.deepEqual([...f.w.document.querySelectorAll('[data-manager-page-panel="business"] h2')].map(node => node.textContent), ['客流与钟数', '资金渠道']);
+  assert.equal(f.$('.manager-business-metrics'), null);
+  assert.equal(f.$('.manager-business-operation'), null);
+  assert.equal(f.$('#manager-business-sales'), null);
+  assert.equal(f.$('#manager-business-room-idle'), null);
+  assert.equal(f.$('#manager-service-section').hidden, false);
+  assert.equal(f.$('.manager-business-channels').hidden, false);
+  assert.equal(f.$('.manager-metrics').hidden, true);
+  assert.equal(await f.w.loadManagerDashboard(), true);
+});
+
+test('business day and month toggle preserves all counts and rates across refresh', async t => {
+  const f = await fixture(t, { respond: (request, data) => {
+    if (request.url.pathname.endsWith('/daily-reports')) return { currentValues: { dailyCustomerCount: 23 }, monthly: { customerCount: 312 }, derived: { dailyServiceClockRate: 27.5, monthlyServiceClockRate: 36.25 } };
+    if (request.url.pathname.endsWith('/service-clock-summary')) return { daily: { queueCount: 15, callCount: 6, extensionCount: 4 }, monthly: { queueCount: 180, callCount: 85, extensionCount: 49 } };
+    return data;
+  } });
+  const metrics = id => [...f.$(id).querySelectorAll('strong')].map(node => node.textContent);
+  assert.deepEqual(metrics('#manager-service-daily'), ['23', '15', '6', '4', '27.50%']);
+  assert.deepEqual(metrics('#manager-service-monthly'), ['312', '180', '85', '49', '36.25%']);
+  f.$('[data-business-period="monthly"]').click();
+  assert.equal(f.$('[data-business-period-panel="daily"]').hidden, true);
+  assert.equal(f.$('[data-business-period-panel="monthly"]').hidden, false);
+  assert.equal(f.$('[data-business-period="monthly"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(await f.w.loadManagerDashboard(), true);
+  assert.equal(f.$('[data-business-period-panel="monthly"]').hidden, false);
+  assert.deepEqual(metrics('#manager-service-monthly'), ['312', '180', '85', '49', '36.25%']);
+  f.$('[data-business-period="daily"]').click();
+  assert.equal(f.$('[data-business-period-panel="daily"]').hidden, false);
+  assert.equal(f.$('[data-business-period-panel="monthly"]').hidden, true);
+  assert.equal(f.$('[data-business-period="monthly"]').getAttribute('aria-pressed'), 'false');
+});
+
+test('compact payment rows retain configured channels, refunds, recharge net and negative net amounts', async t => {
+  const f = await fixture(t);
+  f.w.renderManagerChannels({
+    sales: [{ paymentMethod: 'CASH', amountCents: 20000 }, { paymentMethod: 'WECHAT', amountCents: 10000 }],
+    refunds: [{ paymentMethod: 'CASH', amountCents: 3000 }, { paymentMethod: 'WECHAT', amountCents: 15000 }],
+    recharges: [{ paymentMethod: 'CASH', amountCents: 5000 }, { paymentMethod: 'WECHAT', amountCents: -1000 }], cashNetCents: 22000
+  }, [{ code: 'CASH', name: '现金', active: true }, { code: 'WECHAT', name: '微信支付', active: false },
+    { code: 'MEMBER_BALANCE', name: '会员余额', active: true }, { code: 'HIDDEN', name: '无流水停用渠道', active: false },
+    { code: 'CUSTOM', name: '<img src=x>', active: true }]);
+  const rows = [...f.$('#manager-channel-list').querySelectorAll('.manager-channel-row')];
+  assert.equal(rows.length, 4);
+  assert.deepEqual(rows.map(row => row.querySelector('.manager-channel-name').textContent), ['现金', '微信支付', '会员余额', '<img src=x>']);
+  assert.deepEqual(rows.map(row => row.querySelector('strong').textContent), ['¥220.00', '-¥60.00', '¥0.00', '¥0.00']);
+  assert.deepEqual(rows.map(row => row.querySelector('small').textContent), ['退款 ¥30.00', '退款 ¥150.00', '退款 ¥0.00', '退款 ¥0.00']);
+  assert.equal(f.$('.manager-channel-cash strong').textContent, '¥220.00');
+  assert.equal(f.$('#manager-channel-list img'), null);
+  assert.equal(f.$('.manager-channel-track'), null);
+});
+
+test('empty business data renders zero counts, rates and channels without losing the date control', async t => {
+  const f = await fixture(t);
+  f.w.renderManagerServiceStructure(null, null);
+  f.w.renderManagerChannels({});
+  for (const id of ['manager-service-daily', 'manager-service-monthly']) {
+    assert.deepEqual([...f.$(`#${id}`).querySelectorAll('strong')].map(node => node.textContent), ['0', '0', '0', '0', '0.00%']);
+  }
+  assert.equal(f.$('#manager-channel-list').querySelectorAll('.manager-channel-row').length, 4);
+  assert.equal(f.$('.manager-channel-cash strong').textContent, '¥0.00');
+  assert.equal(f.$('#manager-report-date').type, 'date');
 });
 
 test('live-state drives counts and occupancy includes pending payment and reserved rooms', async t => {

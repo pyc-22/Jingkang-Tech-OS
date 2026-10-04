@@ -78,7 +78,7 @@ test('recharge movements retain their payment channel and flow into daily totals
   assert.match(controller, /rechargeCents\(\)/);
   assert.match(daily, /rechargeCents/);
   assert.match(daily, /rechargeRefundCents/);
-  assert.match(manager, /充值净额/);
+  assert.match(manager, /amount:channelNetAmount\(summary,method\.code\)/);
 });
 
 test('monthly turnover excludes card sales while cash flow separates member balance orders', () => {

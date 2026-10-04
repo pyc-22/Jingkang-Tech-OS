@@ -11,7 +11,7 @@ test('manager business data supports a selected business date and all clock type
   assert.match(html, /id="manager-report-date"[^>]*type="date"/);
   assert.match(manager, /operations\/service-clock-summary\$\{dateQuery\}/);
   assert.match(manager, /managerServiceMetric\('排钟'/);
-  assert.match(manager, /managerServiceMetric\('累计排钟'/);
+  assert.match(manager, /monthly\.innerHTML=.*managerServiceMetric\('排钟',monthlyClocks\.queueCount/);
   assert.match(manager, /managerJson\(`\/operations\/daily-report\$\{dateQuery\}`/);
   assert.match(manager, /managerOptionalJson\(`\/operations\/payment-channel-summary\$\{dateQuery\}`/);
 });

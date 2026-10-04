@@ -459,11 +459,6 @@ function renderManagerHomeBusiness(report,dailyReport){
 function renderManagerDashboard(report,dailyReport,pending,liveRooms=[],liveTechnicians={},homeExpenses=null,homeReport=report,homeDailyReport=dailyReport) {
   managerCurrentBusinessDate=homeReport?.businessDate||managerToday();
   const roomCount=liveRooms.reduce((count,room)=>{count[room.status]=(count[room.status]||0)+1;return count;},{});
-  const dailyValues=dailyReport?.currentValues;
-  const hasDailyReport=Number.isFinite(Number(dailyValues?.dailySalesCents))&&Number.isFinite(Number(dailyValues?.dailyCashFlowCents));
-  const dailySalesText=hasDailyReport?managerMoney(dailyValues.dailySalesCents):'--';
-  const dailyCashFlowText=hasDailyReport?managerMoney(dailyValues.dailyCashFlowCents):'--';
-  const dailyReportLabel=hasDailyReport?'前台日报同步':'前台日报暂不可用';
   renderManagerHomeBusiness(homeReport,homeDailyReport);
   document.querySelectorAll('[data-manager-sync]').forEach(element=>{element.textContent=`${managerTime(new Date())} 已同步`;});
   document.querySelector('#room-idle-count').textContent=roomCount.IDLE||0;
@@ -475,19 +470,6 @@ function renderManagerDashboard(report,dailyReport,pending,liveRooms=[],liveTech
   document.querySelector('#technician-count').textContent=`启用技师 ${activeTechnicianCount} 位`;
   renderManagerHomeActivity(liveRooms,roomCount,pending.length,homeExpenses);
   document.querySelector('#manager-business-page-date').textContent=`${report.businessDate} 营业日`;
-  document.querySelector('#manager-business-sales').textContent=dailySalesText;
-  document.querySelector('#manager-business-order-count').textContent=dailyReportLabel;
-  document.querySelector('#manager-business-service').textContent=dailyCashFlowText;
-  document.querySelector('#manager-business-service-count').textContent=dailyReportLabel;
-  document.querySelector('#manager-business-recharge').textContent=managerMoney(report.rechargeAmountCents);
-  document.querySelector('#manager-business-bonus').textContent=`赠送 ${managerMoney(report.bonusAmountCents)}`;
-  document.querySelector('#manager-business-card-open-count').textContent=Number(report.cardOpenCount||0).toLocaleString('zh-CN');
-  document.querySelector('#manager-business-consumption').textContent=managerMoney(report.consumptionAmountCents);
-  document.querySelector('#manager-business-net-sales').textContent=`净收入 ${managerMoney(report.netSalesAmountCents)}`;
-  document.querySelector('#manager-business-room-idle').textContent=roomCount.IDLE||0;
-  document.querySelector('#manager-business-room-serving').textContent=roomCount.IN_SERVICE||0;
-  document.querySelector('#manager-business-room-cleaning').textContent=roomCount.CLEANING||0;
-  document.querySelector('#manager-business-active-tech').textContent=liveTechnicianCount;
   renderManagerLiveRooms(liveRooms);
   renderManagerLiveTechnicians(liveTechnicians);
 }
@@ -503,7 +485,7 @@ function renderManagerServiceStructure(report,clockSummary){
   const dailyClocks=clockSummary?.daily||{};
   const monthlyClocks=clockSummary?.monthly||{};
   daily.innerHTML=[managerServiceMetric('总客流',values.dailyCustomerCount,'traffic'),managerServiceMetric('排钟',dailyClocks.queueCount,'queue'),managerServiceMetric('点钟',dailyClocks.callCount,'call'),managerServiceMetric('加钟',dailyClocks.extensionCount,'extension'),managerServiceMetric('加点钟率',derived.dailyServiceClockRate,'rate',true)].join('');
-  monthly.innerHTML=[managerServiceMetric('总客流',month.customerCount,'traffic'),managerServiceMetric('累计排钟',monthlyClocks.queueCount,'queue'),managerServiceMetric('累计点钟',monthlyClocks.callCount,'call'),managerServiceMetric('累计加钟',monthlyClocks.extensionCount,'extension'),managerServiceMetric('加点钟率',derived.monthlyServiceClockRate,'rate',true)].join('');
+  monthly.innerHTML=[managerServiceMetric('总客流',month.customerCount,'traffic'),managerServiceMetric('排钟',monthlyClocks.queueCount,'queue'),managerServiceMetric('点钟',monthlyClocks.callCount,'call'),managerServiceMetric('加钟',monthlyClocks.extensionCount,'extension'),managerServiceMetric('加点钟率',derived.monthlyServiceClockRate,'rate',true)].join('');
 }
 const managerEscape=value=>String(value??'').replace(/[&<>"']/g,character=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
 const managerSignedMoney=cents=>`${Number(cents||0)<0?'-':''}${managerMoney(Math.abs(Number(cents||0)))}`;
@@ -560,7 +542,13 @@ async function loadManagerCommissions(){
 }
 function channelAmount(items,method){return (items.find(item=>item.paymentMethod===method)||{}).amountCents||0;}
 function channelNetAmount(summary,method){return channelAmount(summary.sales||[],method)-channelAmount(summary.refunds||[],method)+channelAmount(summary.recharges||[],method);}
-function renderManagerChannels(summary,methods=[]){const configured=methods.length?methods:[{code:'CASH',name:'现金'},{code:'WECHAT',name:'微信'},{code:'MEMBER_BALANCE',name:'会员余额'},{code:'OTHER',name:'其他'}];const sales=summary.sales||[],refunds=summary.refunds||[],recharges=summary.recharges||[];const activeCodes=new Set([...sales,...refunds,...recharges].map(item=>item.paymentMethod));const rows=configured.filter(method=>method.active!==false||activeCodes.has(method.code)).map(method=>({method:method.code,label:method.name,amount:channelNetAmount(summary,method.code),refund:channelAmount(refunds,method.code),recharge:channelAmount(recharges,method.code)}));const maximum=Math.max(1,...rows.map(row=>Math.abs(Number(row.amount||0))));document.querySelector('#manager-channel-list').innerHTML=rows.map(row=>`<article><div class="manager-channel-head"><span>${managerEscape(row.label)}</span><strong>${managerSignedMoney(row.amount)}</strong></div><div class="manager-channel-track"><i style="width:${Math.max(3,Math.round(Math.abs(Number(row.amount||0))/maximum*100))}%"></i></div><small>充值净额 ${managerSignedMoney(row.recharge)} · 订单退款 ${managerMoney(row.refund)}</small></article>`).join('')+`<article class="manager-channel-cash"><div class="manager-channel-head"><span>现金净额</span><strong>${managerSignedMoney(summary.cashNetCents)}</strong></div><small>订单现金收款减订单现金退款，再加现金充值净额</small></article>`;}
+function renderManagerChannels(summary,methods=[]){
+  const configured=methods.length?methods:[{code:'CASH',name:'现金'},{code:'WECHAT',name:'微信'},{code:'MEMBER_BALANCE',name:'会员余额'},{code:'OTHER',name:'其他'}];
+  const sales=summary.sales||[],refunds=summary.refunds||[],recharges=summary.recharges||[];
+  const activeCodes=new Set([...sales,...refunds,...recharges].map(item=>item.paymentMethod));
+  const rows=configured.filter(method=>method.active!==false||activeCodes.has(method.code)).map(method=>({label:method.name,amount:channelNetAmount(summary,method.code),refund:channelAmount(refunds,method.code)}));
+  document.querySelector('#manager-channel-list').innerHTML=rows.map(row=>`<article class="manager-channel-row"><i class="manager-channel-dot" aria-hidden="true"></i><span class="manager-channel-name">${managerEscape(row.label)}</span><small>退款 ${managerMoney(row.refund)}</small><strong>${managerSignedMoney(row.amount)}</strong></article>`).join('')+`<div class="manager-channel-cash"><span>现金净额</span><strong>${managerSignedMoney(summary.cashNetCents)}</strong></div>`;
+}
 function renderManagerStoreComparison(rows){const target=document.querySelector('#manager-store-comparison');target.innerHTML=rows.map((row,index)=>`<article><div class="comparison-store"><span>${index+1}</span><b>${managerEscape(row.storeName)}</b><small>${managerEscape(row.storeCode)}</small></div><div class="comparison-metrics"><div><span>净营业额</span><strong>${managerMoney(row.salesAmountCents)}</strong></div><div><span>服务业绩</span><strong>${managerMoney(row.serviceAmountCents)} / ${managerEscape(row.completedServiceCount)} 次</strong></div><div><span>会员充值</span><strong>${managerMoney(row.rechargeAmountCents)}</strong></div><div><span>现金净额</span><strong>${managerMoney(row.cashNetCents)}</strong></div></div><p class="comparison-operation">服务中 ${managerEscape(row.roomServingCount)}/${managerEscape(row.activeRoomCount)} 间 · 清洁 ${managerEscape(row.roomCleaningCount)} 间 · 技师 ${managerEscape(row.activeTechnicianCount)} 位 · 待结算 ${managerEscape(row.pendingSettlementCount)} · 待退款 ${managerEscape(row.pendingRefundCount)}</p></article>`).join('')||'<p class="comparison-empty">当前账号未分配可对比门店</p>';}
 async function loadManagerStoreComparison(){const sort=document.querySelector('#manager-comparison-sort').value;const rows=await managerJson(`/operations/store-comparison?sort=${encodeURIComponent(sort)}`,managerHeaders());renderManagerStoreComparison(rows);}
 const managerAlertLabel={PENDING_REFUND:'待确认退款',PENDING_SETTLEMENT:'待结算服务',CLEANING_ROOM:'待完成清洁'};
@@ -688,7 +676,7 @@ document.querySelector('#manager-clock-type').addEventListener('change',event=>{
 document.querySelector('#manager-clock-service').addEventListener('change',event=>{const service=managerFoundationServices.find(item=>String(item.id)===String(event.target.value));const duration=document.querySelector('#manager-clock-duration');if(duration)duration.value=Number(service?.defaultDurationMinutes||0)||'';});
 document.querySelector('#manager-clock-room').addEventListener('change',event=>{managerClockingRoomId=event.target.value;renderManagerClockBeds();});
 document.querySelector('#manager-clock-tech-list').addEventListener('click',event=>{const button=event.target.closest('[data-manager-clock-tech]');if(!button)return;const id=button.dataset.managerClockTech;const selectedIndex=managerClockingTechIds.findIndex(item=>String(item)===String(id));const reservation=['BOOKED_QUEUE','BOOKED_CALL'].includes(document.querySelector('#manager-clock-type').value);if(selectedIndex>=0)managerClockingTechIds.splice(selectedIndex,1);else if(reservation&&managerClockingTechIds.length)managerClockingTechIds=[id];else if(managerClockingTechIds.length>=4)return managerToast('一单最多安排 4 位技师');else managerClockingTechIds.push(id);renderManagerClockDialog();});
-document.querySelector('#manager-business-period-tabs').addEventListener('click',event=>{const button=event.target.closest('[data-business-period]');if(!button)return;const period=button.dataset.businessPeriod;document.querySelectorAll('[data-business-period]').forEach(item=>item.classList.toggle('selected',item===button));document.querySelectorAll('[data-business-period-panel]').forEach(panel=>{panel.hidden=panel.dataset.businessPeriodPanel!==period;});});
+document.querySelector('#manager-business-period-tabs').addEventListener('click',event=>{const button=event.target.closest('[data-business-period]');if(!button)return;const period=button.dataset.businessPeriod;document.querySelectorAll('[data-business-period]').forEach(item=>{const selected=item===button;item.classList.toggle('selected',selected);item.setAttribute('aria-pressed',String(selected));});document.querySelectorAll('[data-business-period-panel]').forEach(panel=>{panel.hidden=panel.dataset.businessPeriodPanel!==period;});});
 document.querySelector('#manager-commission-month').addEventListener('change',()=>loadManagerCommissions().catch(()=>managerToast('提成数据暂时无法加载')));
 document.querySelector('#manager-commission-technician').addEventListener('change',renderManagerCommissions);
 document.querySelector('#manager-commission-records').addEventListener('click',event=>{const button=event.target.closest('[data-manager-commission-tech]');if(!button)return;const select=document.querySelector('#manager-commission-technician');select.value=button.dataset.managerCommissionTech;renderManagerCommissions();});
