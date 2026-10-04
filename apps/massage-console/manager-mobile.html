@@ -95,13 +95,6 @@
             <button class="manager-primary-button" id="manager-open-dispatch" type="button"><span aria-hidden="true">＋</span> 安排技师上钟</button>
           </section>
         </section>
-        <section class="manager-section manager-backfill-section" id="manager-backfill-section" data-manager-page-panel="more" data-manager-permission="HISTORICAL_ORDER_CREATE">
-          <div class="section-heading manager-home-section-heading"><div><p class="manager-section-kicker">历史补录</p><h2>历史补单记录</h2><small>店长端仅查看本门店补单记录，创建补单请在前台端完成</small></div></div>
-          <div class="manager-backfill-result hidden" id="manager-historical-result" role="status"></div>
-          <div class="manager-expense-list-heading"><b>本门店补单记录</b><div class="manager-inline-actions"><input id="manager-historical-filter-date" type="date" aria-label="补单日期筛选" title="补单日期筛选"><button class="manager-secondary-button" id="manager-refresh-historical-backfills" type="button" title="刷新历史补单记录">刷新</button></div></div>
-          <div id="manager-historical-backfill-list" class="manager-expense-list"><p class="comparison-empty">正在加载历史补单记录</p></div>
-        </section>
-
         <section class="manager-home-attention" data-manager-page-panel="home">
           <div class="section-heading manager-home-section-heading"><h2>待处理事项</h2></div>
           <div class="manager-home-todo" id="manager-todo-settlement" data-manager-permission="FRONTDESK_SETTLE" hidden><span class="manager-todo-mark settlement" aria-hidden="true">结</span><b>待结算</b><span><strong id="pending-service-count">0</strong> 项</span><button type="button" data-manager-shortcut="rooms" aria-label="查看待结算">查看</button></div>
@@ -120,9 +113,15 @@
         </section>
         <section class="manager-rewards-entry" data-manager-page-panel="more" data-manager-permission="MANAGER_REWARD_VIEW"><button type="button" data-manager-shortcut="rewards"><span>店长奖励与约客</span><img src="./assets/lucide/chevron-right.svg" alt="" /></button></section>
         <section class="manager-section manager-business-channels" data-manager-page-panel="business"><div class="section-heading manager-business-section-heading"><h2>资金渠道</h2><small>收入减退款</small></div><div id="manager-channel-list" class="manager-channel-list"></div></section>
-        <section class="manager-section store-comparison-section" data-manager-page-panel="more"><div class="section-heading"><div><h2>多门店经营对比</h2><p>仅显示当前账号已授权的门店</p></div><select id="manager-comparison-sort" aria-label="对比排序"><option value="SALES">按订单实收</option><option value="SERVICE">按服务业绩</option><option value="CASH">按现金净额</option></select></div><div id="manager-store-comparison" class="manager-store-comparison"></div></section>
-        <section class="manager-section manager-alert-section" data-manager-page-panel="more"><div class="section-heading"><div><h2>经营预警与待办</h2><p id="manager-alert-subtitle">正在同步待处理事项</p></div></div><div id="manager-store-alerts" class="manager-store-alerts"></div></section>
-        <section class="manager-section manager-cross-store-section" data-manager-page-panel="more"><div class="section-heading"><div><h2>跨门店订单与消费</h2><p>搜索已授权门店内的会员记录</p></div></div><div class="manager-cross-store-filters"><input id="manager-cross-store-search" placeholder="订单号、会员或手机号" /><select id="manager-cross-store-type" aria-label="记录类型"><option value="ALL">全部记录</option><option value="ORDER">订单</option><option value="REFUND">退款</option><option value="CONSUMPTION">会员消费</option></select></div><div id="manager-cross-store-records" class="manager-cross-store-records"></div></section>
+        <section class="manager-section manager-more-section store-comparison-section" data-manager-page-panel="more"><div class="section-heading"><h2>多门店经营对比</h2><div id="manager-comparison-sort" class="manager-comparison-sort" role="group" aria-label="对比排序"><button type="button" data-manager-comparison-sort="SALES" aria-pressed="true">按订单实收</button><button type="button" data-manager-comparison-sort="CASH" aria-pressed="false">按现金流</button></div></div><div id="manager-store-comparison" class="manager-store-comparison"></div></section>
+        <section class="manager-section manager-more-section manager-alert-section" data-manager-page-panel="more"><div class="section-heading"><h2>经营预警与待办</h2><small id="manager-alert-subtitle">正在同步待处理事项</small></div><div id="manager-store-alerts" class="manager-store-alerts"></div></section>
+        <section class="manager-section manager-more-section manager-cross-store-section" data-manager-page-panel="more"><div class="section-heading"><h2>跨门店订单与消费</h2></div><div class="manager-cross-store-filters"><input id="manager-cross-store-search" type="search" aria-label="搜索跨门店记录" placeholder="订单号、会员或手机号" /><select id="manager-cross-store-type" aria-label="记录类型"><option value="ALL">全部记录</option><option value="ORDER">订单</option><option value="REFUND">退款</option><option value="CONSUMPTION">会员消费</option></select></div><details id="manager-cross-store-recent" class="manager-cross-store-recent"><summary id="manager-cross-store-summary">最近记录（0 条）</summary><div id="manager-cross-store-records" class="manager-cross-store-records"></div></details></section>
+        <section class="manager-section manager-more-section manager-backfill-section" id="manager-backfill-section" data-manager-page-panel="more" data-manager-permission="HISTORICAL_ORDER_CREATE">
+          <div class="section-heading"><h2>历史补单记录</h2></div>
+          <div class="manager-backfill-result hidden" id="manager-historical-result" role="status"></div>
+          <div class="manager-expense-list-heading"><b>本门店补单记录</b><div class="manager-inline-actions"><input id="manager-historical-filter-date" type="date" aria-label="补单日期筛选" title="补单日期筛选"><button class="manager-secondary-button" id="manager-refresh-historical-backfills" type="button" title="刷新历史补单记录">刷新</button></div></div>
+          <div id="manager-historical-backfill-list" class="manager-expense-list"><p class="comparison-empty">正在加载历史补单记录</p></div>
+        </section>
         <section class="manager-section expense-section" data-manager-page-panel="expense" data-manager-permission="EXPENSE_STORE_VIEW">
           <div class="section-heading expense-heading"><h2>费用报销</h2><button class="manager-primary-button" id="manager-expense-new" type="button" data-manager-permission="EXPENSE_SUBMIT"><span aria-hidden="true">＋</span>新增报销</button></div>
           <div id="manager-expense-browser">

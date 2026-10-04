@@ -571,3 +571,76 @@ test('commission row escapes snapshots and marks missing technician code without
   assert.match(f.$('#manager-commission-records').textContent, /工号未录入 · <img/);
   assert.equal(f.$('#manager-commission-record-count').textContent, '1');
 });
+
+test('management comparison switches sales and cash sorting while keeping four metrics and live state', async t => {
+  const f = await fixture(t, { respond: (request, data) => request.url.pathname.endsWith('/operations/store-comparison')
+    ? [{ storeId: 'store-a', storeName: 'Store A', storeCode: '0004', salesAmountCents: 140300,
+      serviceAmountCents: 97300, completedServiceCount: 1, rechargeAmountCents: 20000,
+      cashNetCents: 15000, roomServingCount: 2, activeRoomCount: 9, roomCleaningCount: 1,
+      activeTechnicianCount: 3, pendingSettlementCount: 1, pendingRefundCount: 0 }]
+    : data });
+  f.$('[data-manager-nav="more"]').click();
+  const store = f.$('#manager-store-comparison article');
+  assert.equal(store.querySelectorAll('.comparison-metrics > div').length, 4);
+  assert.match(store.textContent, /净营业额¥1403\.00/);
+  assert.match(store.textContent, /服务业绩¥973\.00 \/ 1 次/);
+  assert.match(store.textContent, /会员充值¥200\.00/);
+  assert.match(store.textContent, /现金净额¥150\.00/);
+  assert.match(store.textContent, /服务中 2\/9 间 · 清洁 1 间 · 技师 3 位 · 待结算 1/);
+  assert.equal(f.requests.find(request => request.url.pathname.endsWith('/operations/store-comparison')).url.searchParams.get('sort'), 'SALES');
+  f.$('[data-manager-comparison-sort="CASH"]').click();
+  await flush();
+  assert.equal(f.requests.at(-1).url.searchParams.get('sort'), 'CASH');
+  assert.equal(f.$('[data-manager-comparison-sort="CASH"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(f.$('[data-manager-comparison-sort="SALES"]').getAttribute('aria-pressed'), 'false');
+});
+
+test('management alerts stay compact and recent cross-store records start collapsed', async t => {
+  const f = await fixture(t, { respond: (request, data) => {
+    if (request.url.pathname.endsWith('/operations/store-alerts')) return [
+      { storeId: 'store-a', storeName: 'Store A', storeCode: '0004', alertType: 'PENDING_SETTLEMENT', alertCount: 1 },
+      { storeId: 'store-a', storeName: 'Store A', storeCode: '0004', alertType: 'CLEANING_ROOM', alertCount: 2 }
+    ];
+    if (request.url.pathname.endsWith('/operations/cross-store-transactions')) return [
+      { storeId: 'store-a', storeName: 'Store A', memberName: 'Customer', referenceNo: 'O-1', transactionType: 'ORDER', amountCents: 15900 }
+    ];
+    return data;
+  } });
+  assert.equal(f.$('#manager-store-alerts').querySelectorAll('article').length, 2);
+  assert.match(f.$('#manager-store-alerts').textContent, /待结算服务/);
+  assert.match(f.$('#manager-store-alerts').textContent, /待完成清洁/);
+  assert.equal(f.$('#manager-alert-subtitle').textContent, '2 项需要处理');
+  assert.equal(f.$('#manager-cross-store-recent').open, false);
+  assert.equal(f.$('#manager-cross-store-summary').textContent, '最近记录（1 条）');
+  f.$('#manager-cross-store-summary').click();
+  assert.equal(f.$('#manager-cross-store-recent').open, true);
+  assert.match(f.$('#manager-cross-store-records').textContent, /O-1/);
+});
+
+test('cross-store search and type filter open results and send existing query parameters', async t => {
+  const f = await fixture(t, { respond: (request, data) => request.url.pathname.endsWith('/operations/cross-store-transactions')
+    ? [{ storeId: 'store-b', storeName: 'Store B', memberName: 'Filtered', referenceNo: 'O-2', transactionType: 'CONSUMPTION', amountCents: 5000 }]
+    : data });
+  f.$('#manager-cross-store-search').value = '13800000000';
+  f.$('#manager-cross-store-search').dispatchEvent(new f.w.Event('input', { bubbles: true }));
+  assert.equal(f.$('#manager-cross-store-recent').open, true);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(f.requests.at(-1).url.searchParams.get('query'), '13800000000');
+  f.$('#manager-cross-store-type').value = 'CONSUMPTION';
+  f.$('#manager-cross-store-type').dispatchEvent(new f.w.Event('change', { bubbles: true }));
+  await flush();
+  assert.equal(f.requests.at(-1).url.searchParams.get('type'), 'CONSUMPTION');
+  assert.match(f.$('#manager-cross-store-records').textContent, /Filtered/);
+});
+
+test('historical backfills are the last management section with an empty state and full read-only rows', async t => {
+  const f = await fixture(t, { permissions: [...permissions, 'HISTORICAL_ORDER_CREATE'] });
+  const sections = [...f.w.document.querySelectorAll('.manager-more-section')];
+  assert.equal(sections.at(-1).id, 'manager-backfill-section');
+  assert.match(f.$('#manager-historical-backfill-list').textContent, /暂无匹配的历史补单记录/);
+  f.w.renderManagerHistoricalBackfills([{ orderId: 'order-1', orderNo: 'O-1', backfillDate: '2026-09-26',
+    paymentMethods: '现金', paidCents: 15900, status: 'SETTLED', backfillByName: 'Manager', backfillAt: '2026-10-03' }]);
+  assert.match(f.$('#manager-historical-backfill-list').textContent, /O-1/);
+  assert.match(f.$('#manager-historical-backfill-list').textContent, /¥159\.00/);
+  assert.equal(f.$('#manager-backfill-section button[data-manager-shortcut]'), null);
+});

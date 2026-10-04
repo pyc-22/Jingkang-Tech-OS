@@ -30,7 +30,7 @@ function assertTextOnly(dom) {
 test('R01: manager member, store, trace and attribute payloads remain literal text', () => {
   const dom = page('manager-mobile.js', ['managerEscape','managerMoney','managerCrossStoreLabel',
     'renderManagerCrossStoreTransactions','renderManagerStoreComparison','managerAlertLabel','renderManagerStoreAlerts'],
-    '<div id="manager-cross-store-records"></div><div id="manager-store-comparison"></div><div id="manager-alert-subtitle"></div><div id="manager-store-alerts"></div>');
+    '<div id="manager-cross-store-summary"></div><div id="manager-cross-store-records"></div><div id="manager-store-comparison"></div><div id="manager-alert-subtitle"></div><div id="manager-store-alerts"></div>');
   const row = { memberName: attack, storeName: attack, storeCode: attack, serviceTrace: attack,
     storeId: attack, referenceNo: attack, transactionType:'ORDER', amountCents: 100,
     alertType: attack, alertTitle: attack };
