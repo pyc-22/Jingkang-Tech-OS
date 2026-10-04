@@ -411,3 +411,88 @@ test('both refresh buttons reload live-state and logout hides all operational co
   assert.equal(f.$('#manager-login-screen').classList.contains('hidden'), false);
   assert.equal(f.w.localStorage.getItem('chengxin-manager-mobile-access-token'), null);
 });
+
+test('commission tab shows four compact totals and technician code, avatar and amounts with report-only permission', async t => {
+  const f = await fixture(t, { permissions: ['REPORT_VIEW'], respond: (request, data) => {
+    if (request.url.pathname.endsWith('/commissions/summary')) return [
+      { technicianId: 'tech-1', technicianNameSnapshot: '圈圈', recordCount: 3, baseAmountCents: 50700, commissionCents: 16000 },
+      { technicianId: 'tech-2', technicianNameSnapshot: '小李', recordCount: 2, baseAmountCents: 10000, commissionCents: 2000 }
+    ];
+    if (request.url.pathname.endsWith('/technician-performance')) {
+      return [{ technicianId: 'tech-1', technicianCode: '18' }, { technicianId: 'tech-2', technicianCode: '21' }];
+    }
+    return data;
+  } });
+  assert.equal(f.w.document.querySelectorAll('.manager-commission-metrics article').length, 4);
+  assert.equal(f.$('#manager-commission-base').textContent, '¥607.00');
+  assert.equal(f.$('#manager-commission-total').textContent, '¥180.00');
+  assert.equal(f.$('#manager-commission-tech-count').textContent, '2');
+  assert.equal(f.$('#manager-commission-record-count').textContent, '5');
+  assert.equal(f.w.document.querySelectorAll('#manager-commission-records article.summary').length, 2);
+  assert.match(f.$('#manager-commission-records').textContent, /18 · 圈圈/);
+  assert.match(f.$('#manager-commission-records').textContent, /21 · 小李/);
+  assert.match(f.$('#manager-commission-records').textContent, /3 条有效提成 · 项目业绩 ¥507.00/);
+  assert.equal(f.w.document.querySelectorAll('#manager-commission-records .manager-commission-avatar').length, 2);
+  assert.equal(f.requests.some(request => request.url.pathname.endsWith('/foundation/technicians')), false);
+});
+
+test('commission detail action keeps existing technician filter and matching totals', async t => {
+  const f = await fixture(t, { respond: (request, data) => {
+    if (request.url.pathname.endsWith('/commissions/summary')) return [
+      { technicianId: 'tech-1', technicianNameSnapshot: '圈圈', recordCount: 3, baseAmountCents: 50700, commissionCents: 16000 },
+      { technicianId: 'tech-2', technicianNameSnapshot: '小李', recordCount: 2, baseAmountCents: 10000, commissionCents: 2000 }
+    ];
+    if (request.url.pathname.endsWith('/commissions/records')) return [
+      { technicianId: 'tech-1', serviceNameSnapshot: '肩颈', clockType: 'QUEUE', orderNoSnapshot: 'O1', baseAmountCents: 50700, commissionCents: 16000 }
+    ];
+    return data;
+  } });
+  f.$('[data-manager-commission-tech="tech-1"]').click();
+  assert.equal(f.$('#manager-commission-technician').value, 'tech-1');
+  assert.match(f.$('#manager-commission-record-title').textContent, /圈圈 · 项目明细/);
+  assert.match(f.$('#manager-commission-records').textContent, /肩颈/);
+  assert.equal(f.$('#manager-commission-base').textContent, '¥507.00');
+  assert.equal(f.$('#manager-commission-total').textContent, '¥160.00');
+  assert.equal(f.$('#manager-commission-tech-count').textContent, '1');
+  assert.equal(f.$('#manager-commission-record-count').textContent, '3');
+  f.$('#manager-commission-technician').value = '';
+  f.$('#manager-commission-technician').dispatchEvent(new f.w.Event('change'));
+  assert.equal(f.w.document.querySelectorAll('#manager-commission-records article.summary').length, 2);
+});
+
+test('commission summary keeps one row per technician when their name snapshot changed', async t => {
+  const f = await fixture(t, { respond: (request, data) => request.url.pathname.endsWith('/commissions/summary')
+    ? [
+      { technicianId: 'tech-1', technicianNameSnapshot: '圈圈', recordCount: 2, baseAmountCents: 20000, commissionCents: 6000 },
+      { technicianId: 'tech-1', technicianNameSnapshot: '圈圈旧名', recordCount: 1, baseAmountCents: 10000, commissionCents: 3000 }
+    ]
+    : data });
+  assert.equal(f.w.document.querySelectorAll('#manager-commission-records article.summary').length, 1);
+  assert.equal(f.$('#manager-commission-tech-count').textContent, '1');
+  assert.equal(f.$('#manager-commission-record-count').textContent, '3');
+  f.$('[data-manager-commission-tech="tech-1"]').click();
+  assert.equal(f.$('#manager-commission-base').textContent, '¥300.00');
+  assert.equal(f.$('#manager-commission-total').textContent, '¥90.00');
+});
+
+test('commission adjustments are collapsed by default and can expand', async t => {
+  const f = await fixture(t, { respond: (request, data) => request.url.pathname.endsWith('/commissions/adjustments')
+    ? [{ technicianId: 'tech-1', recordType: 'REFUND_REVERSAL', serviceNameSnapshot: '肩颈', commissionCents: -1000, baseAmountCents: -5000 }]
+    : data });
+  const panel = f.$('#manager-commission-adjustment-panel');
+  assert.equal(panel.open, false);
+  assert.match(f.$('#manager-commission-adjustments').textContent, /退款冲回/);
+  panel.querySelector('summary').click();
+  assert.equal(panel.open, true);
+  panel.querySelector('summary').click();
+  assert.equal(panel.open, false);
+});
+
+test('commission row escapes snapshots and marks missing technician code without inventing one', async t => {
+  const f = await fixture(t, { respond: (request, data) => request.url.pathname.endsWith('/commissions/summary')
+    ? [{ technicianId: 'old-tech', technicianNameSnapshot: '<img src=x onerror=alert(1)>', recordCount: 1, baseAmountCents: 100, commissionCents: 20 }]
+    : data });
+  assert.equal(f.$('#manager-commission-records img'), null);
+  assert.match(f.$('#manager-commission-records').textContent, /工号未录入 · <img/);
+  assert.equal(f.$('#manager-commission-record-count').textContent, '1');
+});

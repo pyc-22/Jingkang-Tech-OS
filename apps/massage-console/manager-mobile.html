@@ -47,14 +47,12 @@
         </section>
 
         <section class="manager-section manager-commission-section" id="manager-commission-section" data-manager-page-panel="commission" data-manager-permission="REPORT_VIEW">
-          <div class="section-heading manager-commission-heading"><div><p class="manager-section-kicker">结算数据</p><h2>技师项目提成</h2><p>按项目规则、钟类和退款结果同步</p></div><label class="manager-commission-month"><span>统计月份</span><input id="manager-commission-month" type="month" aria-label="提成月份"></label></div>
-          <div class="manager-commission-sync"><i aria-hidden="true"></i><span>数据来自已结算订单</span><small>退款会自动冲减</small></div>
-          <div class="manager-commission-metrics"><article class="project"><span>项目业绩</span><strong id="manager-commission-base">¥0.00</strong><small>结算项目金额</small></article><article class="actual"><span>实际提成</span><strong id="manager-commission-total">¥0.00</strong><small>按当前月份</small></article><article class="tech-count"><span>技师人数</span><strong id="manager-commission-tech-count">0</strong><small>有结算记录</small></article></div>
+          <div class="section-heading manager-commission-heading"><h2>技师项目提成</h2><label class="manager-commission-month"><span>统计月份</span><input id="manager-commission-month" type="month" aria-label="提成月份"></label></div>
+          <div class="manager-commission-metrics"><article class="project"><strong id="manager-commission-base">¥0.00</strong><span>项目业绩</span></article><article class="actual"><strong id="manager-commission-total">¥0.00</strong><span>实际提成</span></article><article><strong id="manager-commission-tech-count">0</strong><span>技师人数</span></article><article><strong id="manager-commission-record-count">0</strong><span>提成记录</span></article></div>
           <label class="manager-commission-filter"><span>筛选技师</span><select id="manager-commission-technician"><option value="">全部技师汇总</option></select></label>
           <div class="manager-commission-list-heading"><b id="manager-commission-record-title">技师汇总</b><small>点击技师查看项目明细</small></div>
           <div id="manager-commission-records" class="manager-commission-records"><p class="comparison-empty">正在加载提成数据</p></div>
-          <div class="manager-commission-list-heading"><b>提成调整记录</b><small>退款、作废和改单冲回单独展示</small></div>
-          <div id="manager-commission-adjustments" class="manager-commission-records"><p class="comparison-empty">正在加载调整记录</p></div>
+          <details class="manager-commission-adjustment-panel" id="manager-commission-adjustment-panel"><summary>提成调整记录<img src="./assets/lucide/chevron-right.svg" alt="" /></summary><div id="manager-commission-adjustments" class="manager-commission-records"><p class="comparison-empty">正在加载调整记录</p></div></details>
         </section>
 
         <section class="manager-home-operation" id="manager-operation-section" data-manager-page-panel="home">

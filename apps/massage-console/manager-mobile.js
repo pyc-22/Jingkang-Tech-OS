@@ -18,6 +18,7 @@ let managerRequestSequence=0;
 let managerCommissionSummaries=[];
 let managerCommissionDetails=[];
 let managerCommissionAdjustments=[];
+let managerCommissionTechnicianCodes=new Map();
 let managerPaymentMethods=[];
 let managerFoundationRooms=[];
 let managerFoundationBeds=[];
@@ -505,12 +506,13 @@ function renderManagerCommissions(){
   const totalCommission=selectedSummary?Number(selectedSummary.commissionCents||0):managerCommissionSummaries.reduce((sum,row)=>sum+Number(row.commissionCents||0),0);
   document.querySelector('#manager-commission-base').textContent=managerSignedMoney(totalBase);
   document.querySelector('#manager-commission-total').textContent=managerSignedMoney(totalCommission);
-  document.querySelector('#manager-commission-tech-count').textContent=managerCommissionSummaries.length;
+  document.querySelector('#manager-commission-tech-count').textContent=selectedSummary?1:managerCommissionSummaries.length;
+  document.querySelector('#manager-commission-record-count').textContent=selectedSummary?Number(selectedSummary.recordCount||0):managerCommissionSummaries.reduce((sum,row)=>sum+Number(row.recordCount||0),0);
   const selectedName=selectedSummary?.technicianNameSnapshot||'';
   document.querySelector('#manager-commission-record-title').textContent=selectedName?`${selectedName} · 项目明细`:'技师汇总';
   const target=document.querySelector('#manager-commission-records');
   if(!technicianId){
-    target.innerHTML=managerCommissionSummaries.map(row=>`<article><div><b>${managerEscape(row.technicianNameSnapshot)}</b><small>${managerEscape(row.recordCount)} 条有效提成记录 · 项目业绩 ${managerSignedMoney(row.baseAmountCents)}</small></div><div><strong>${managerSignedMoney(row.commissionCents)}</strong><em>实际提成</em></div><button type="button" data-manager-commission-tech="${managerEscape(row.technicianId)}">查看项目明细</button></article>`).join('')||'<p class="comparison-empty">本月暂无有效技师提成</p>';
+    target.innerHTML=managerCommissionSummaries.map(row=>`<article class="summary"><div class="manager-commission-summary-main"><span class="manager-commission-avatar" aria-hidden="true">${managerEscape(String(row.technicianNameSnapshot||'技').slice(0,1))}</span><div class="manager-commission-person"><b>${managerEscape(managerCommissionTechnicianCodes.get(String(row.technicianId))||'工号未录入')} · ${managerEscape(row.technicianNameSnapshot)}</b><small>${managerEscape(row.recordCount)} 条有效提成 · 项目业绩 ${managerSignedMoney(row.baseAmountCents)}</small></div><div class="manager-commission-amount"><strong>${managerSignedMoney(row.commissionCents)}</strong><em>实际提成</em></div></div><button type="button" data-manager-commission-tech="${managerEscape(row.technicianId)}">查看项目明细</button></article>`).join('')||'<p class="comparison-empty">本月暂无有效技师提成</p>';
   } else {
     const rows=managerCommissionDetails.filter(row=>row.technicianId===technicianId);
     target.innerHTML=rows.map(row=>{const tier=row.commissionTierNameSnapshot||'基础档';const multiplier=(Number(row.commissionMultiplierBpSnapshot||10000)/100).toFixed(2).replace(/\.00$/,'');return `<article><div><b>${managerEscape(row.serviceNameSnapshot)}</b><small>${managerEscape(managerClockTypeLabel[row.clockType]||row.clockType||'—')} · ${managerEscape(row.orderNoSnapshot)} · ${managerEscape(tier)} ${multiplier}%</small></div><div><strong>${managerSignedMoney(row.commissionCents)}</strong><em>业绩 ${managerSignedMoney(row.baseAmountCents)}</em></div></article>`;}).join('')||'<p class="comparison-empty">该技师本月暂无有效提成明细</p>';
@@ -526,18 +528,25 @@ function renderManagerCommissionAdjustments(){
 }
 async function loadManagerCommissions(){
   const {from,to}=managerCommissionPeriod();
-  const [summaries,details,adjustments]=await Promise.all([
+  const [summaries,details,adjustments,technicians]=await Promise.all([
     managerJson(`/commissions/summary?from=${from}&to=${to}`),
     managerJson(`/commissions/records?from=${from}&to=${to}`),
-    managerJson(`/commissions/adjustments?from=${from}&to=${to}`)
+    managerJson(`/commissions/adjustments?from=${from}&to=${to}`),
+    managerOptionalJson(`/technician-performance?from=${from}&to=${to}`,[])
   ]);
-  managerCommissionSummaries=summaries;
+  (technicians||[]).forEach(item=>managerCommissionTechnicianCodes.set(String(item.technicianId),item.technicianCode));
+  const byTechnician=new Map();
+  for(const row of summaries){
+    const previous=byTechnician.get(row.technicianId);
+    byTechnician.set(row.technicianId,previous?{...previous,recordCount:Number(previous.recordCount||0)+Number(row.recordCount||0),baseAmountCents:Number(previous.baseAmountCents||0)+Number(row.baseAmountCents||0),commissionCents:Number(previous.commissionCents||0)+Number(row.commissionCents||0)}:row);
+  }
+  managerCommissionSummaries=[...byTechnician.values()];
   managerCommissionDetails=details;
   managerCommissionAdjustments=adjustments;
   const select=document.querySelector('#manager-commission-technician');
   const selected=select.value;
-  select.innerHTML='<option value="">全部技师汇总</option>'+summaries.map(row=>`<option value="${managerEscape(row.technicianId)}">${managerEscape(row.technicianNameSnapshot)}</option>`).join('');
-  select.value=summaries.some(row=>row.technicianId===selected)?selected:'';
+  select.innerHTML='<option value="">全部技师汇总</option>'+managerCommissionSummaries.map(row=>`<option value="${managerEscape(row.technicianId)}">${managerEscape(row.technicianNameSnapshot)}</option>`).join('');
+  select.value=managerCommissionSummaries.some(row=>row.technicianId===selected)?selected:'';
   renderManagerCommissions();
 }
 function channelAmount(items,method){return (items.find(item=>item.paymentMethod===method)||{}).amountCents||0;}
@@ -607,6 +616,7 @@ async function loadManagerDashboard({manual=false}={}) {
     managerFoundationRoomStatuses=new Map((liveState?.rooms||[]).map(item=>[String(item.roomId),item.status]));
     managerLiveRoomsSnapshot=liveState?.rooms||[];
     managerLiveTechnicianOverview={businessDate:liveState?.businessDate,reassignmentRequiredCount:liveState?.reassignmentRequiredCount||0,dispatchCancelledCount:liveState?.dispatchCancelledCount||0,technicians:liveState?.technicians||[]};
+    managerCommissionTechnicianCodes=new Map((liveState?.technicians||[]).map(item=>[String(item.technicianId),item.technicianCode]));
     managerTechnicianEligibility=new Map((eligibility?.technicians||[]).map(item=>[String(item.technicianId),item]));
     managerQueuePositions=new Map((queueSnapshot?.technicians||[]).map(item=>[String(item.technicianId),item.queuePosition]));
     renderManagerDashboard(report,dailyReport,pending,managerLiveRoomsSnapshot,managerLiveTechnicianOverview,homeExpenses,homeReport,homeDailyReport);
